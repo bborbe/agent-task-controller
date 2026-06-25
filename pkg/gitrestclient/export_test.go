@@ -7,7 +7,7 @@ package gitrestclient
 import (
 	"time"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 // NewGitRestClientForTest creates a GitRestClient with a custom backoff for use in tests.

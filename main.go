@@ -28,14 +28,14 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	lib "github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/pkg/factory"
-	"github.com/bborbe/agent/task/controller/pkg/gitrestclient"
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
-	"github.com/bborbe/agent/task/controller/pkg/publisher"
-	"github.com/bborbe/agent/task/controller/pkg/result"
-	"github.com/bborbe/agent/task/controller/pkg/routing"
-	"github.com/bborbe/agent/task/controller/pkg/scanner"
-	pkgsync "github.com/bborbe/agent/task/controller/pkg/sync"
+	"github.com/bborbe/agent-task-controller/pkg/factory"
+	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/publisher"
+	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	pkgsync "github.com/bborbe/agent-task-controller/pkg/sync"
 )
 
 const vaultLocalPath = "/data/vault"

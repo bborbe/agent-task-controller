@@ -19,8 +19,8 @@ import (
 
 	"github.com/bborbe/agent/lib"
 	task "github.com/bborbe/agent/lib/command/task"
-	"github.com/bborbe/agent/task/controller/mocks"
-	"github.com/bborbe/agent/task/controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
 var _ = Describe("Frontmatter sequence integration", func() {

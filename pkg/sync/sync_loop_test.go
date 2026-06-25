@@ -13,10 +13,10 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/mocks"
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
-	"github.com/bborbe/agent/task/controller/pkg/scanner"
-	pkgsync "github.com/bborbe/agent/task/controller/pkg/sync"
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	pkgsync "github.com/bborbe/agent-task-controller/pkg/sync"
 )
 
 var _ = Describe("SyncLoop", func() {

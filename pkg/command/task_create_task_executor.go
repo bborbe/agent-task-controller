@@ -19,8 +19,8 @@ import (
 
 	lib "github.com/bborbe/agent/lib"
 	task "github.com/bborbe/agent/lib/command/task"
-	gitclient "github.com/bborbe/agent/task/controller/pkg/gitrestclient"
-	"github.com/bborbe/agent/task/controller/pkg/routing"
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes

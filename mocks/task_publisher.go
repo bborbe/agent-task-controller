@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/pkg/publisher"
+	"github.com/bborbe/agent-task-controller/pkg/publisher"
 )
 
 type TaskPublisher struct {

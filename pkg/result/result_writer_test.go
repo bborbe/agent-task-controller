@@ -19,8 +19,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/mocks"
-	"github.com/bborbe/agent/task/controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
 var errTest = errors.New("test error")

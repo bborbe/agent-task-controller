@@ -15,8 +15,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/mocks"
-	"github.com/bborbe/agent/task/controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
 var _ = Describe("NewTaskResultExecutor", func() {

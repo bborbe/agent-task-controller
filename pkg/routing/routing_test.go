@@ -15,7 +15,7 @@ import (
 
 	lib "github.com/bborbe/agent/lib"
 	task "github.com/bborbe/agent/lib/command/task"
-	"github.com/bborbe/agent/task/controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6@v6.12.2 -generate

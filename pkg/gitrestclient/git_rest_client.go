@@ -16,7 +16,7 @@ import (
 
 	"github.com/bborbe/errors"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 //counterfeiter:generate -o ../../mocks/git_rest_client.go --fake-name GitRestClient . GitRestClient

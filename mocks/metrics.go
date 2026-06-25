@@ -4,7 +4,7 @@ package mocks
 import (
 	"sync"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

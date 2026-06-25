@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	synca "github.com/bborbe/agent/task/controller/pkg/sync"
+	synca "github.com/bborbe/agent-task-controller/pkg/sync"
 )
 
 type SyncLoop struct {

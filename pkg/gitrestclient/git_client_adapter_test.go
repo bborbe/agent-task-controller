@@ -11,8 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent/task/controller/mocks"
-	"github.com/bborbe/agent/task/controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 )
 
 var _ = Describe("gitRestGitClientAdapter", func() {

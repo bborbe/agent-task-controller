@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bborbe/agent/task/controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/scanner"
 )
 
 type VaultScanner struct {

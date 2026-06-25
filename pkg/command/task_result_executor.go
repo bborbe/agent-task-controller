@@ -14,7 +14,7 @@ import (
 	"github.com/golang/glog"
 
 	lib "github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
 // TaskResultCommandOperation is the CQRS command operation name for task result updates.

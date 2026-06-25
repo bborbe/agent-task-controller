@@ -11,9 +11,9 @@ import (
 	"github.com/bborbe/run"
 	"github.com/golang/glog"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
-	"github.com/bborbe/agent/task/controller/pkg/publisher"
-	"github.com/bborbe/agent/task/controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/publisher"
+	"github.com/bborbe/agent-task-controller/pkg/scanner"
 )
 
 //counterfeiter:generate -o ../../mocks/sync_loop.go --fake-name SyncLoop . SyncLoop

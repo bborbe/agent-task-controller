@@ -1,13 +1,9 @@
-module github.com/bborbe/agent/task/controller
+module github.com/bborbe/agent-task-controller
 
 go 1.26.4
 
-replace (
-	github.com/bborbe/agent/lib => ../../lib
-)
-
 require (
-	github.com/bborbe/agent/lib v0.0.0-00010101000000-000000000000
+	github.com/bborbe/agent/lib v0.68.1-0.20260620151314-c45d3ab0ee3c
 	github.com/bborbe/boltkv v1.14.1
 	github.com/bborbe/cqrs v0.5.2
 	github.com/bborbe/errors v1.5.13
@@ -135,6 +131,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-exclude (
-	cloud.google.com/go v0.26.0
-)
+exclude cloud.google.com/go v0.26.0

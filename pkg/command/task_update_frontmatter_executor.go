@@ -18,9 +18,9 @@ import (
 	lib "github.com/bborbe/agent/lib"
 	task "github.com/bborbe/agent/lib/command/task"
 	delivery "github.com/bborbe/agent/lib/delivery"
-	gitclient "github.com/bborbe/agent/task/controller/pkg/gitrestclient"
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
-	"github.com/bborbe/agent/task/controller/pkg/result"
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
 // UpdateFrontmatterCommandOperation is the CQRS command operation name for partial frontmatter update.

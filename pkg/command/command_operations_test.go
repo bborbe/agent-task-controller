@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent/task/controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
 var _ = Describe("controller CommandOperation validation", func() {

@@ -17,7 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent/lib"
-	"github.com/bborbe/agent/task/controller/pkg/publisher"
+	"github.com/bborbe/agent-task-controller/pkg/publisher"
 )
 
 var _ = Describe("TaskPublisher", func() {

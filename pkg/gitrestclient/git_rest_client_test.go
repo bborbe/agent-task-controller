@@ -13,8 +13,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent/task/controller/pkg/gitrestclient"
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 // zeroBackoff returns 0 duration so retry tests run instantly.

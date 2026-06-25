@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 var _ = Describe("injectAndStore", func() {

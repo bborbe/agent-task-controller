@@ -23,8 +23,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
-	"github.com/bborbe/agent/task/controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/scanner"
 )
 
 func extractFrontmatterStr(fileContent string) string {

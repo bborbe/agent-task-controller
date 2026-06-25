@@ -17,8 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent/lib"
-	gitclient "github.com/bborbe/agent/task/controller/pkg/gitrestclient"
-	"github.com/bborbe/agent/task/controller/pkg/metrics"
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 //counterfeiter:generate -o ../../mocks/result_writer.go --fake-name ResultWriter . ResultWriter
