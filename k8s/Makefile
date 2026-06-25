@@ -1,6 +1,6 @@
-include ../../../Makefile.variables
-include ../../../Makefile.env
-include ../../../Makefile.k8s
+include ../Makefile.variables
+include ../Makefile.env
+include ../Makefile.k8s
 
 # VAULTS tuple: '<vault-name>=<gateway-secret-teamvault-id>=<task-dir>'
 # Stage-split: tvids differ per environment. Pattern mirrors trading/mt5/connector/k8s/Makefile.
