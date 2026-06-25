@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	lib "github.com/bborbe/agent/lib"
+	task "github.com/bborbe/agent/lib/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
@@ -17,8 +19,6 @@ import (
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
 
-	lib "github.com/bborbe/agent/lib"
-	task "github.com/bborbe/agent/lib/command/task"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 )

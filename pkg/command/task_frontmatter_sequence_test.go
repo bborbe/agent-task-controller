@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bborbe/agent/lib"
+	task "github.com/bborbe/agent/lib/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/vault-cli/pkg/domain"
@@ -17,8 +19,6 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent/lib"
-	task "github.com/bborbe/agent/lib/command/task"
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )

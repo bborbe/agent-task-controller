@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bborbe/agent/lib"
 	libtime "github.com/bborbe/time"
 	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )

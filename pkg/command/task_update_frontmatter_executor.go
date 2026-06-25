@@ -9,15 +9,15 @@ import (
 	"fmt"
 	"path/filepath"
 
+	lib "github.com/bborbe/agent/lib"
+	task "github.com/bborbe/agent/lib/command/task"
+	delivery "github.com/bborbe/agent/lib/delivery"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
 	"github.com/golang/glog"
 
-	lib "github.com/bborbe/agent/lib"
-	task "github.com/bborbe/agent/lib/command/task"
-	delivery "github.com/bborbe/agent/lib/delivery"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"

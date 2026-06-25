@@ -7,13 +7,13 @@ package command
 import (
 	"context"
 
+	lib "github.com/bborbe/agent/lib"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
 	"github.com/golang/glog"
 
-	lib "github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 

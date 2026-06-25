@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	lib "github.com/bborbe/agent/lib"
+	task "github.com/bborbe/agent/lib/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
@@ -16,8 +18,6 @@ import (
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
-	lib "github.com/bborbe/agent/lib"
-	task "github.com/bborbe/agent/lib/command/task"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"

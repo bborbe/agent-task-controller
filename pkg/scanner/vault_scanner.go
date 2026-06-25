@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent/lib"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )

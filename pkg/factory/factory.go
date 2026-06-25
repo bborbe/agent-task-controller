@@ -5,13 +5,13 @@
 package factory
 
 import (
+	lib "github.com/bborbe/agent/lib"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	libkafka "github.com/bborbe/kafka"
 	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/run"
 
-	lib "github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/result"

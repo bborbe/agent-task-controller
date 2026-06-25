@@ -9,10 +9,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/bborbe/agent/lib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"

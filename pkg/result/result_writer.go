@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent/lib"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )

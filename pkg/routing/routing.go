@@ -11,10 +11,9 @@ import (
 	"context"
 	"regexp"
 
+	task "github.com/bborbe/agent/lib/command/task"
 	"github.com/bborbe/errors"
 	"github.com/bborbe/validation"
-
-	task "github.com/bborbe/agent/lib/command/task"
 )
 
 // LegacyDefaultVault is the vault a controller acts on when a command

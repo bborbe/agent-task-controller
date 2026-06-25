@@ -7,13 +7,12 @@ package publisher
 import (
 	"context"
 
+	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
 	"github.com/google/uuid"
-
-	"github.com/bborbe/agent/lib"
 )
 
 //counterfeiter:generate -o ../../mocks/task_publisher.go --fake-name TaskPublisher . TaskPublisher

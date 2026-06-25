@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	lib "github.com/bborbe/agent/lib"
 	boltkv "github.com/bborbe/boltkv"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
@@ -27,7 +28,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	bolt "go.etcd.io/bbolt"
 
-	lib "github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/pkg/factory"
 	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"

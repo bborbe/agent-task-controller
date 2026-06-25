@@ -8,13 +8,13 @@ import (
 	"context"
 	"errors"
 
+	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	libtimetest "github.com/bborbe/time/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent/lib"
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )
