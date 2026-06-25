@@ -6,8 +6,8 @@ github.com/alecthomas/kingpin/v2 v2.4.0 h1:f48lwail6p8zpO1bC4TxtqACaGqHYA22qkHjH
 github.com/alecthomas/kingpin/v2 v2.4.0/go.mod h1:0gyi0zQnjuFk8xrkNKamJoyUo382HRL7ATRpFZCw6tE=
 github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b h1:mimo19zliBX/vSQ6PWWSL9lK8qwHozUj03+zLoEB8O0=
 github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b/go.mod h1:fvzegU4vN3H1qMT+8wDmzjAcDONcgo2/SZ/TyfdUOFs=
-github.com/bborbe/agent/lib v0.68.1-0.20260620151314-c45d3ab0ee3c h1:62AvW7phaI0q08EaltWZLbgKOnGINaCPokJ+O+dLmXw=
-github.com/bborbe/agent/lib v0.68.1-0.20260620151314-c45d3ab0ee3c/go.mod h1:hH1XLRZlSuSMplvp8f7JafKbADHCU9da5+TuHqCynyQ=
+github.com/bborbe/agent v0.70.0 h1:TtnXeQ7AplrWpy41ZyJYbdkucyStKa9xWN6Zhex+mfk=
+github.com/bborbe/agent v0.70.0/go.mod h1:DVdulalTDVVixulIz+LrLuYXbm34y335yxS9vGxnfJ0=
 github.com/bborbe/argument/v2 v2.12.27 h1:utahD9wtelfepQr3OanWy7tWkPWZp0EyZDqG61rmhNI=
 github.com/bborbe/argument/v2 v2.12.27/go.mod h1:R/61J5LW6sqbtEGPDSKiYOqLyXwBkwFQebaIpoX/AlM=
 github.com/bborbe/boltkv v1.14.1 h1:8Ztavb9NeCGH7X0E4P6enMO+QaHjRB9iEj8iFNgJers=

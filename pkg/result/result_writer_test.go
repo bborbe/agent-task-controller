@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bborbe/agent/lib"
+	lib "github.com/bborbe/agent"
 	libtime "github.com/bborbe/time"
 	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"

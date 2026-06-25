@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	lib "github.com/bborbe/agent/lib"
-	task "github.com/bborbe/agent/lib/command/task"
-	delivery "github.com/bborbe/agent/lib/delivery"
+	lib "github.com/bborbe/agent"
+	task "github.com/bborbe/agent/command/task"
+	delivery "github.com/bborbe/agent/delivery"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"

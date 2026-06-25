@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/bborbe/agent/lib"
+	lib "github.com/bborbe/agent"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	libtimetest "github.com/bborbe/time/test"

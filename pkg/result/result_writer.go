@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bborbe/agent/lib"
+	lib "github.com/bborbe/agent"
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"

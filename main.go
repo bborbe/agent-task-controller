@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	lib "github.com/bborbe/agent/lib"
+	lib "github.com/bborbe/agent"
 	boltkv "github.com/bborbe/boltkv"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"

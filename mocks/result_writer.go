@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
+	lib "github.com/bborbe/agent"
 	"github.com/bborbe/agent-task-controller/pkg/result"
-	"github.com/bborbe/agent/lib"
 )
 
 type ResultWriter struct {
