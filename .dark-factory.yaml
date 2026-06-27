@@ -5,5 +5,3 @@ autoRelease: false
 autoGeneratePrompts: true
 defaultBranch: master
 validationPrompt: docs/dod.md
-preflightCommand: "true"
-preflightInterval: "8h"
