@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [001-scanner-auto-inject-flag]
+summary: Gated three injectAndStore trigger sites in vaultScanner.processFile on the autoInject boolean; when false each site emits the frozen warn log, increments ReasonAutoInjectDisabled counter, and returns (nil, "", false) without calling writeFile.
+execution_id: agent-task-controller-scanner-flag-exec-002-spec-001-scanner-gate-and-tests
+dark-factory-version: v0.187.10-3-g508361f-dirty
 created: "2026-06-28T00:00:00Z"
 queued: "2026-06-27T22:36:59Z"
+started: "2026-06-27T22:43:52Z"
+completed: "2026-06-27T22:48:25Z"
 ---
 
 <summary>

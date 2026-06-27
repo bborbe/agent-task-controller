@@ -150,6 +150,7 @@ const (
 	ReasonEmptyStatus                 = "empty_status"
 	ReasonInjectTaskIdentifierFailed  = "inject_task_identifier_failed"
 	ReasonReadFailed                  = "read_failed"
+	ReasonAutoInjectDisabled          = "auto_inject_disabled"
 )
 
 // SkippedFilesTotal counts vault task files the scanner skipped during a scan cycle,
@@ -204,6 +205,7 @@ func init() {
 		ReasonEmptyStatus,
 		ReasonInjectTaskIdentifierFailed,
 		ReasonReadFailed,
+		ReasonAutoInjectDisabled,
 	} {
 		SkippedFilesTotal.WithLabelValues(reason).Add(0)
 	}
