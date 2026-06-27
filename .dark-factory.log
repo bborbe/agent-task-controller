@@ -1,0 +1,30 @@
+time=2026-06-28T00:31:40.264+02:00 level=INFO msg="effective config" maxContainers=5 maxContainersSource=global containerImage=docker.io/bborbe/claude-yolo:v0.11.1 model=MiniMax-M2.7-highspeed modelSource=global workflow=direct workflowSource=project pr=false prSource=project autoRelease=false autoReleaseSource=arg autoMerge=false autoMergeSource=project verificationGate=false validationCommand="make precommit" testCommand="make test" debounceMs=500 hideGit=true hideGitSource=arg autoApprovePrompts=false autoApprovePromptsSource=default autoGeneratePrompts=true autoGeneratePromptsSource=project dirtyFileThreshold=0 dirtyFileThresholdSource=default promptsInboxDir=prompts promptsInProgressDir=prompts/in-progress promptsCompletedDir=prompts/completed promptsLogDir=prompts/log preflightCommand="make precommit" preflightInterval=8h healthcheckEnabled=true healthcheckEnabledSource=default healthcheckInterval=8h healthcheckIntervalSource=default envFromGlobal=[] envProjectOverrides="[ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL]" envProjectOnly=[]
+time=2026-06-28T00:31:40.264+02:00 level=INFO msg="watching for queued prompts" dir=prompts/in-progress
+time=2026-06-28T00:31:40.267+02:00 level=INFO msg="migrated spec refs to full slugs" file=1-spec-001-config-and-factory-wiring.md updated=1
+time=2026-06-28T00:31:40.267+02:00 level=INFO msg="migrated spec refs to full slugs" file=2-spec-001-scanner-gate-and-tests.md updated=1
+time=2026-06-28T00:31:40.268+02:00 level=INFO msg="preflight: running baseline check" command="make precommit"
+time=2026-06-28T00:31:58.869+02:00 level=INFO msg="preflight: baseline check passed"
+time=2026-06-28T00:31:58.870+02:00 level=INFO msg="healthcheck cache hit, skipping"
+time=2026-06-28T00:31:58.870+02:00 level=INFO msg="processor started"
+time=2026-06-28T00:31:58.870+02:00 level=INFO msg="spec watcher started" dir=/Users/bborbe/Documents/workspaces/agent-task-controller-scanner-flag/specs/in-progress
+time=2026-06-28T00:31:58.870+02:00 level=INFO msg="watcher started" dir=/Users/bborbe/Documents/workspaces/agent-task-controller-scanner-flag/prompts/in-progress
+time=2026-06-28T00:31:58.871+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:32:03.877+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-06-28T00:32:58.872+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:33:08.872+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-06-28T00:33:58.872+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:34:13.872+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-06-28T00:34:58.871+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:35:13.872+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-06-28T00:35:58.872+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:36:18.872+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-06-28T00:36:58.872+02:00 level=INFO msg="startup: checking prompted spec" spec=001-scanner-auto-inject-flag
+time=2026-06-28T00:37:00.329+02:00 level=INFO msg="lock acquired" prompt_id=001-spec-001-config-and-factory-wiring.md
+time=2026-06-28T00:37:00.329+02:00 level=INFO msg="found queued prompt" prompt_id=001-spec-001-config-and-factory-wiring.md
+time=2026-06-28T00:37:00.332+02:00 level=INFO msg="executing prompt" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct title=001-spec-001-config-and-factory-wiring
+time=2026-06-28T00:37:00.334+02:00 level=INFO msg="syncing with remote default branch" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct
+time=2026-06-28T00:37:00.926+02:00 level=INFO msg="container assigned" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct container_old="" container=agent-task-controller-scanner-flag-exec-001-spec-001-config-and-factory-wiring workflow_step=acquire_container
+time=2026-06-28T00:43:50.970+02:00 level=INFO msg="stopping stuck container: completion report found but container still running" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct container=agent-task-controller-scanner-flag-exec-001-spec-001-config-and-factory-wiring container=agent-task-controller-scanner-flag-exec-001-spec-001-config-and-factory-wiring
+time=2026-06-28T00:43:51.807+02:00 level=INFO msg="docker container exited" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct container=agent-task-controller-scanner-flag-exec-001-spec-001-config-and-factory-wiring exit_code=0 workflow_step=run_claude
+time=2026-06-28T00:43:51.807+02:00 level=INFO msg="completion report" status=success summary="Added required AUTO_INJECT_TASK_IDENTIFIER env flag to application config, plumbed boolean into vaultScanner constructors"
+time=2026-06-28T00:43:51.819+02:00 level=INFO msg="moved to completed" prompt_id=001-spec-001-config-and-factory-wiring spec_id=001-scanner-auto-inject-flag container="" workflow_type=direct container=agent-task-controller-scanner-flag-exec-001-spec-001-config-and-factory-wiring

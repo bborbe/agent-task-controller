@@ -46,6 +46,7 @@ var _ = Describe("injectAndStore", func() {
 						return nil
 					},
 				},
+				autoInject: true,
 			}
 
 			initial := counterValue(metrics.ReasonInjectTaskIdentifierFailed)

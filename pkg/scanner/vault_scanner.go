@@ -59,6 +59,7 @@ type vaultScanner struct {
 	trigger      <-chan struct{}
 	metrics      metrics.Metrics
 	ops          fileOps
+	autoInject   bool
 }
 
 // newLocalFileOps creates fileOps backed by the local filesystem rooted at basePath.
@@ -101,6 +102,7 @@ func NewVaultScanner(
 	pollInterval time.Duration,
 	trigger <-chan struct{},
 	m metrics.Metrics,
+	autoInject bool,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -110,6 +112,7 @@ func NewVaultScanner(
 		trigger:      trigger,
 		metrics:      m,
 		ops:          newLocalFileOps(gitClient.Path()),
+		autoInject:   autoInject,
 	}
 }
 
@@ -122,6 +125,7 @@ func NewGitRestVaultScanner(
 	pollInterval time.Duration,
 	trigger <-chan struct{},
 	m metrics.Metrics,
+	autoInject bool,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -135,6 +139,7 @@ func NewGitRestVaultScanner(
 			readFile:  gitClient.ReadFile,
 			writeFile: gitClient.WriteFile,
 		},
+		autoInject: autoInject,
 	}
 }
 

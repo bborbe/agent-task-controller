@@ -188,6 +188,7 @@ var _ = Describe("VaultScanner", func() {
 			time.Second,
 			make(chan struct{}),
 			metrics.New(),
+			true,
 		)
 	})
 
@@ -499,7 +500,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("NewVaultScanner", func() {
 		It("returns a non-nil VaultScanner", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
 			Expect(vs).NotTo(BeNil())
 		})
 	})
@@ -508,7 +509,7 @@ var _ = Describe("VaultScanner", func() {
 		It("uses fileOps (ListFiles/ReadFile/WriteFile) through the fileOps interface", func() {
 			// fileOpsTestGitClient provides real ListFiles/ReadFile/WriteFile implementations
 			gitClient := &fileOpsTestGitClient{path: tmpDir}
-			vs := scanner.NewGitRestVaultScanner(gitClient, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewGitRestVaultScanner(gitClient, taskDir, time.Hour, nil, metrics.New(), true)
 			Expect(vs).NotTo(BeNil())
 
 			// Write a task file and run a cycle to exercise ListFiles/ReadFile/WriteFile
@@ -528,7 +529,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("Run", func() {
 		It("returns nil when context is cancelled", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
 			runCtx, cancel := context.WithCancel(ctx)
 			done := make(chan error, 1)
 			go func() {
@@ -544,7 +545,7 @@ var _ = Describe("VaultScanner", func() {
 			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
 
 			trigger := make(chan struct{}, 1)
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New(), true)
 			scanResults := make(chan scanner.ScanResult, 1)
 			runCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -950,6 +951,7 @@ var _ = Describe("VaultScanner", func() {
 					time.Hour,
 					make(chan struct{}),
 					metrics.New(),
+					true,
 				)
 				scanResults := make(chan scanner.ScanResult, 1)
 
