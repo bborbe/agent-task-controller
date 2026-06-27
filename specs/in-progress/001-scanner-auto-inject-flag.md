@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-06-27T21:07:10Z"
 generating: "2026-06-27T21:29:41Z"
 prompted: "2026-06-27T21:36:53Z"
+verifying: "2026-06-27T22:48:25Z"
 branch: dark-factory/scanner-auto-inject-flag
 ---
 
