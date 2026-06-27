@@ -70,6 +70,8 @@ spec:
               value: /data/bolt
             - name: NO_SYNC
               value: "false"
+            - name: AUTO_INJECT_TASK_IDENTIFIER
+              value: '{{ "AUTO_INJECT_TASK_IDENTIFIER" | env }}'
           image: '{{"DOCKER_REGISTRY" | env}}/agent-task-controller:{{"BRANCH" | env}}'
           imagePullPolicy: Always
           livenessProbe:
