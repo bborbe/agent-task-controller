@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -188,6 +189,7 @@ var _ = Describe("VaultScanner", func() {
 			time.Second,
 			make(chan struct{}),
 			metrics.New(),
+			true,
 		)
 	})
 
@@ -499,7 +501,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("NewVaultScanner", func() {
 		It("returns a non-nil VaultScanner", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
 			Expect(vs).NotTo(BeNil())
 		})
 	})
@@ -508,7 +510,7 @@ var _ = Describe("VaultScanner", func() {
 		It("uses fileOps (ListFiles/ReadFile/WriteFile) through the fileOps interface", func() {
 			// fileOpsTestGitClient provides real ListFiles/ReadFile/WriteFile implementations
 			gitClient := &fileOpsTestGitClient{path: tmpDir}
-			vs := scanner.NewGitRestVaultScanner(gitClient, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewGitRestVaultScanner(gitClient, taskDir, time.Hour, nil, metrics.New(), true)
 			Expect(vs).NotTo(BeNil())
 
 			// Write a task file and run a cycle to exercise ListFiles/ReadFile/WriteFile
@@ -528,7 +530,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("Run", func() {
 		It("returns nil when context is cancelled", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
 			runCtx, cancel := context.WithCancel(ctx)
 			done := make(chan error, 1)
 			go func() {
@@ -544,7 +546,7 @@ var _ = Describe("VaultScanner", func() {
 			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
 
 			trigger := make(chan struct{}, 1)
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New())
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New(), true)
 			scanResults := make(chan scanner.ScanResult, 1)
 			runCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -950,6 +952,7 @@ var _ = Describe("VaultScanner", func() {
 					time.Hour,
 					make(chan struct{}),
 					metrics.New(),
+					true,
 				)
 				scanResults := make(chan scanner.ScanResult, 1)
 
@@ -1032,7 +1035,7 @@ var _ = Describe("VaultScanner", func() {
 			)
 		})
 
-		It("maintains counter-call parity with skip-site log lines (AC#6 invariant)", func() {
+		It("maintains counter-call parity with skip-site log lines (AC#6 invariant (raised to 9 after per-site auto-inject gate, spec 001))", func() {
 			// vault_scanner.go is in pkg/scanner/ so the test file at pkg/scanner/vault_scanner_test.go
 			// finds the source at pkg/scanner/vault_scanner.go (same directory).
 			scannerSrc, err := filepath.Abs("vault_scanner.go")
@@ -1047,14 +1050,16 @@ var _ = Describe("VaultScanner", func() {
 			Expect(err).NotTo(HaveOccurred())
 			body := string(out)
 
+			autoInjectGateRe := regexp.MustCompile(`glog\.Warningf\(\s*"AUTO_INJECT_TASK_IDENTIFIER=false; skipping`)
 			skipCount := strings.Count(body, `glog.Warningf("skipping`) +
 				strings.Count(body, `glog.Errorf("skipping`) +
-				strings.Count(body, `glog.Warningf("failed to read`)
+				strings.Count(body, `glog.Warningf("failed to read`) +
+				len(autoInjectGateRe.FindAllStringIndex(body, -1))
 			counterCount := strings.Count(body, `SkippedFilesTotal(`)
-			Expect(skipCount).To(Equal(6), "expected 6 skip-site log lines, got %d", skipCount)
+			Expect(skipCount).To(Equal(9), "expected 9 skip-site log lines (6 existing + 3 auto-inject gate sites), got %d", skipCount)
 			Expect(
 				counterCount,
-			).To(Equal(6), "expected 6 counter increment calls, got %d", counterCount)
+			).To(Equal(9), "expected 9 counter increment calls (6 existing + 3 auto-inject gate sites), got %d", counterCount)
 		})
 	})
 })

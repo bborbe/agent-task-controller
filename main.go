@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -46,27 +47,36 @@ func main() {
 }
 
 type application struct {
-	SentryDSN       string            `required:"true"  arg:"sentry-dsn"        env:"SENTRY_DSN"        usage:"SentryDSN"                                                                                                  display:"length"`
-	SentryProxy     string            `required:"false" arg:"sentry-proxy"      env:"SENTRY_PROXY"      usage:"Sentry Proxy"`
-	Listen          string            `required:"true"  arg:"listen"            env:"LISTEN"            usage:"address to listen to"`
-	KafkaBrokers    string            `required:"true"  arg:"kafka-brokers"     env:"KAFKA_BROKERS"     usage:"comma-separated Kafka broker addresses"`
-	Branch          base.Branch       `required:"true"  arg:"branch"            env:"BRANCH"            usage:"Kafka topic prefix branch (develop/live)"`
-	PollInterval    time.Duration     `required:"false" arg:"poll-interval"     env:"POLL_INTERVAL"     usage:"vault polling interval"                                                                                                      default:"60s"`
-	TaskDir         string            `required:"true"  arg:"task-dir"          env:"TASK_DIR"          usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
-	DataDir         string            `required:"true"  arg:"data-dir"          env:"DATA_DIR"          usage:"directory for BoltDB offset storage"`
-	NoSync          bool              `required:"false" arg:"no-sync"           env:"NO_SYNC"           usage:"disable BoltDB fsync (for testing only)"`
-	GitRestURL      string            `required:"false" arg:"git-rest-url"      env:"GIT_REST_URL"      usage:"git-rest HTTP API base URL"                                                                                                  default:"http://vault-obsidian-openclaw:9090"`
-	GatewaySecret   string            `required:"false" arg:"gateway-secret"    env:"GATEWAY_SECRET"    usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                  display:"length" default:""`
-	BuildGitVersion string            `required:"false" arg:"build-git-version" env:"BUILD_GIT_VERSION" usage:"Build Git version (git describe --tags --always --dirty)"                                                                    default:"dev"`
-	BuildGitCommit  string            `required:"false" arg:"build-git-commit"  env:"BUILD_GIT_COMMIT"  usage:"Build Git commit hash"                                                                                                       default:"none"`
-	BuildDate       *libtime.DateTime `required:"false" arg:"build-date"        env:"BUILD_DATE"        usage:"Build timestamp (RFC3339)"`
-	VaultName       string            `required:"true"  arg:"vault-name"        env:"VAULT_NAME"        usage:"vault slug this controller serves (e.g. openclaw, personal); legacy empty targetVault defaults to openclaw"`
+	SentryDSN                string            `required:"true"  arg:"sentry-dsn"        env:"SENTRY_DSN"        usage:"SentryDSN"                                                                                                  display:"length"`
+	SentryProxy              string            `required:"false" arg:"sentry-proxy"      env:"SENTRY_PROXY"      usage:"Sentry Proxy"`
+	Listen                   string            `required:"true"  arg:"listen"            env:"LISTEN"            usage:"address to listen to"`
+	KafkaBrokers             string            `required:"true"  arg:"kafka-brokers"     env:"KAFKA_BROKERS"     usage:"comma-separated Kafka broker addresses"`
+	Branch                   base.Branch       `required:"true"  arg:"branch"            env:"BRANCH"            usage:"Kafka topic prefix branch (develop/live)"`
+	PollInterval             time.Duration     `required:"false" arg:"poll-interval"     env:"POLL_INTERVAL"     usage:"vault polling interval"                                                                                                      default:"60s"`
+	TaskDir                  string            `required:"true"  arg:"task-dir"          env:"TASK_DIR"          usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
+	DataDir                  string            `required:"true"  arg:"data-dir"          env:"DATA_DIR"          usage:"directory for BoltDB offset storage"`
+	NoSync                   bool              `required:"false" arg:"no-sync"           env:"NO_SYNC"           usage:"disable BoltDB fsync (for testing only)"`
+	GitRestURL               string            `required:"false" arg:"git-rest-url"      env:"GIT_REST_URL"      usage:"git-rest HTTP API base URL"                                                                                                  default:"http://vault-obsidian-openclaw:9090"`
+	GatewaySecret            string            `required:"false" arg:"gateway-secret"    env:"GATEWAY_SECRET"    usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                  display:"length" default:""`
+	BuildGitVersion          string            `required:"false" arg:"build-git-version" env:"BUILD_GIT_VERSION" usage:"Build Git version (git describe --tags --always --dirty)"                                                                    default:"dev"`
+	BuildGitCommit           string            `required:"false" arg:"build-git-commit"  env:"BUILD_GIT_COMMIT"  usage:"Build Git commit hash"                                                                                                       default:"none"`
+	BuildDate                *libtime.DateTime `required:"false" arg:"build-date"        env:"BUILD_DATE"        usage:"Build timestamp (RFC3339)"`
+	VaultName                string            `required:"true"  arg:"vault-name"        env:"VAULT_NAME"        usage:"vault slug this controller serves (e.g. openclaw, personal); legacy empty targetVault defaults to openclaw"`
+	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop; extraction would split tightly-coupled wiring.
 func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) error {
 	if err := routing.ValidateVaultName(ctx, a.VaultName); err != nil {
 		return err
+	}
+	autoInject, err := strconv.ParseBool(a.AutoInjectTaskIdentifier)
+	if err != nil {
+		return errors.Errorf(
+			ctx,
+			"AUTO_INJECT_TASK_IDENTIFIER must be parseable as bool (true/false), got %q",
+			a.AutoInjectTaskIdentifier,
+		)
 	}
 	libmetrics.NewBuildInfoMetrics().SetBuildInfo(a.BuildGitVersion, a.BuildGitCommit, a.BuildDate)
 	glog.V(1).
@@ -109,6 +119,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 			a.PollInterval,
 			trigger,
 			metrics.New(),
+			autoInject,
 		),
 		publisher.NewTaskPublisher(eventObjectSender, lib.TaskV1SchemaID, currentDateTime),
 		trigger,

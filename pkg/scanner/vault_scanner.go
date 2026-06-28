@@ -59,6 +59,7 @@ type vaultScanner struct {
 	trigger      <-chan struct{}
 	metrics      metrics.Metrics
 	ops          fileOps
+	autoInject   bool
 }
 
 // newLocalFileOps creates fileOps backed by the local filesystem rooted at basePath.
@@ -101,6 +102,7 @@ func NewVaultScanner(
 	pollInterval time.Duration,
 	trigger <-chan struct{},
 	m metrics.Metrics,
+	autoInject bool,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -110,6 +112,7 @@ func NewVaultScanner(
 		trigger:      trigger,
 		metrics:      m,
 		ops:          newLocalFileOps(gitClient.Path()),
+		autoInject:   autoInject,
 	}
 }
 
@@ -122,6 +125,7 @@ func NewGitRestVaultScanner(
 	pollInterval time.Duration,
 	trigger <-chan struct{},
 	m metrics.Metrics,
+	autoInject bool,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -135,6 +139,7 @@ func NewGitRestVaultScanner(
 			readFile:  gitClient.ReadFile,
 			writeFile: gitClient.WriteFile,
 		},
+		autoInject: autoInject,
 	}
 }
 
@@ -219,7 +224,7 @@ func (v *vaultScanner) scanFiles(
 // processFile handles a single .md file during a scan cycle.
 // Returns (task, writtenRelPath, writeError).
 //
-//nolint:funlen // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.
+//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.
 func (v *vaultScanner) processFile(
 	ctx context.Context,
 	relPath string,
@@ -259,13 +264,37 @@ func (v *vaultScanner) processFile(
 	taskID, _ := fmMap["task_identifier"].(string)
 	currentFMAssignee := frontmatter.Assignee()
 	if taskID == "" {
+		if !v.autoInject {
+			glog.Warningf(
+				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
+				relPath,
+			)
+			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
+			return nil, "", false
+		}
 		return v.injectAndStore(ctx, content, relPath, currentFMAssignee)
 	}
 	if !isValidUUID(taskID) {
+		if !v.autoInject {
+			glog.Warningf(
+				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
+				relPath,
+			)
+			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
+			return nil, "", false
+		}
 		glog.Warningf("replacing non-UUID task_identifier %q in %s", taskID, relPath)
 		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
+		if !v.autoInject {
+			glog.Warningf(
+				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
+				relPath,
+			)
+			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
+			return nil, "", false
+		}
 		glog.Warningf("replacing duplicate task_identifier %q in %s", taskID, relPath)
 		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
 	}
