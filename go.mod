@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/bborbe/agent v0.70.0
+	github.com/bborbe/argument/v2 v2.12.27
 	github.com/bborbe/boltkv v1.14.1
 	github.com/bborbe/cqrs v0.5.2
 	github.com/bborbe/errors v1.5.13
@@ -39,7 +40,6 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/alecthomas/kingpin/v2 v2.4.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
-	github.com/bborbe/argument/v2 v2.12.27 // indirect
 	github.com/bborbe/collection v1.20.13 // indirect
 	github.com/bborbe/k8s v1.14.2 // indirect
 	github.com/bborbe/math v1.3.11 // indirect

@@ -83,7 +83,10 @@ func TestApplicationAutoInjectTaskIdentifierFieldExists(t *testing.T) {
 		t.Fatalf("application struct is missing AutoInjectTaskIdentifier field")
 	}
 	if f.Type.Kind() != reflect.String {
-		t.Fatalf("AutoInjectTaskIdentifier must be string (required:\"true\" on bool is silently bypassed by the argument library), got %s", f.Type.Kind())
+		t.Fatalf(
+			"AutoInjectTaskIdentifier must be string (required:\"true\" on bool is silently bypassed by the argument library), got %s",
+			f.Type.Kind(),
+		)
 	}
 	if got, want := f.Tag.Get("env"), "AUTO_INJECT_TASK_IDENTIFIER"; got != want {
 		t.Errorf("AutoInjectTaskIdentifier env tag = %q, want %q", got, want)
@@ -95,6 +98,9 @@ func TestApplicationAutoInjectTaskIdentifierFieldExists(t *testing.T) {
 		t.Errorf("AutoInjectTaskIdentifier required tag = %q, want %q", got, want)
 	}
 	if got := f.Tag.Get("default"); got != "" {
-		t.Errorf("AutoInjectTaskIdentifier default tag = %q, want empty (no default per spec Non-goals)", got)
+		t.Errorf(
+			"AutoInjectTaskIdentifier default tag = %q, want empty (no default per spec Non-goals)",
+			got,
+		)
 	}
 }

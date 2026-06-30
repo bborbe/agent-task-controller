@@ -7,11 +7,11 @@ package scanner
 import (
 	"context"
 
+	lib "github.com/bborbe/agent"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	lib "github.com/bborbe/agent"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
@@ -140,7 +140,9 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
-					return []byte("---\ntask_identifier: not-a-uuid\nstatus: in_progress\nassignee: claude\n---\n# body\n"), nil
+					return []byte(
+						"---\ntask_identifier: not-a-uuid\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+					), nil
 				},
 				writeFile: func(_ context.Context, _ string, _ []byte) error {
 					writeCount++
@@ -171,7 +173,9 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 			},
 			ops: fileOps{
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
-					return []byte("---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n"), nil
+					return []byte(
+						"---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+					), nil
 				},
 				writeFile: func(_ context.Context, _ string, _ []byte) error {
 					writeCount++
@@ -191,41 +195,48 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 		Expect(counterValue(metrics.ReasonAutoInjectDisabled)).To(Equal(before + 1))
 	})
 
-	It("injects UUIDs at all three trigger sites and does not tick the disabled counter when autoInject=true", func() {
-		ctx := context.Background()
-		var writeCount int
-		dup := "11111111-1111-4111-8111-111111111111"
-		fixtures := map[string][]byte{
-			"empty-id.md": []byte("---\nstatus: in_progress\nassignee: claude\n---\n# body\n"),
-			"non-uuid.md": []byte("---\ntask_identifier: not-a-uuid\nstatus: in_progress\nassignee: claude\n---\n# body\n"),
-			"dup.md":      []byte("---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n"),
-		}
-		v := &vaultScanner{
-			metrics: metrics.New(),
-			hashes: map[string]fileEntry{
-				"other.md": {taskIdentifier: lib.TaskIdentifier(dup)},
-			},
-			ops: fileOps{
-				readFile: func(_ context.Context, relPath string) ([]byte, error) {
-					return fixtures[relPath], nil
+	It(
+		"injects UUIDs at all three trigger sites and does not tick the disabled counter when autoInject=true",
+		func() {
+			ctx := context.Background()
+			var writeCount int
+			dup := "11111111-1111-4111-8111-111111111111"
+			fixtures := map[string][]byte{
+				"empty-id.md": []byte("---\nstatus: in_progress\nassignee: claude\n---\n# body\n"),
+				"non-uuid.md": []byte(
+					"---\ntask_identifier: not-a-uuid\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+				),
+				"dup.md": []byte(
+					"---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+				),
+			}
+			v := &vaultScanner{
+				metrics: metrics.New(),
+				hashes: map[string]fileEntry{
+					"other.md": {taskIdentifier: lib.TaskIdentifier(dup)},
 				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
+				ops: fileOps{
+					readFile: func(_ context.Context, relPath string) ([]byte, error) {
+						return fixtures[relPath], nil
+					},
+					writeFile: func(_ context.Context, _ string, _ []byte) error {
+						writeCount++
+						return nil
+					},
 				},
-			},
-			autoInject: true,
-		}
-		before := counterValue(metrics.ReasonAutoInjectDisabled)
+				autoInject: true,
+			}
+			before := counterValue(metrics.ReasonAutoInjectDisabled)
 
-		for _, relPath := range []string{"empty-id.md", "non-uuid.md", "dup.md"} {
-			_, written, werr := v.processFile(ctx, relPath)
-			Expect(werr).To(BeFalse(), "site %s: write error", relPath)
-			Expect(written).To(Equal(relPath), "site %s: should have written", relPath)
-		}
-		Expect(writeCount).To(Equal(3))
-		Expect(counterValue(metrics.ReasonAutoInjectDisabled)).To(Equal(before))
-	})
+			for _, relPath := range []string{"empty-id.md", "non-uuid.md", "dup.md"} {
+				_, written, werr := v.processFile(ctx, relPath)
+				Expect(werr).To(BeFalse(), "site %s: write error", relPath)
+				Expect(written).To(Equal(relPath), "site %s: should have written", relPath)
+			}
+			Expect(writeCount).To(Equal(3))
+			Expect(counterValue(metrics.ReasonAutoInjectDisabled)).To(Equal(before))
+		},
+	)
 
 	It("does NOT gate the writeCounterReset path when autoInject=false (AC7)", func() {
 		ctx := context.Background()
@@ -242,7 +253,9 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 			},
 			ops: fileOps{
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
-					return []byte("---\ntask_identifier: " + taskID + "\nstatus: in_progress\nassignee: claude\n---\n# body\n"), nil
+					return []byte(
+						"---\ntask_identifier: " + taskID + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+					), nil
 				},
 				writeFile: func(_ context.Context, _ string, _ []byte) error {
 					writeCount++

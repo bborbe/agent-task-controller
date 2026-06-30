@@ -41,14 +41,14 @@ linters:
               desc: "use sigs.k8s.io/structured-merge-diff/v6 instead"
             - pkg: "github.com/pkg/errors"
               desc: "use github.com/bborbe/errors instead"
-            - pkg: "github.com/bborbe/argument"
-              desc: "use github.com/bborbe/argument/v2 instead"
             - pkg: "golang.org/x/net/context"
               desc: "use context from standard library instead"
             - pkg: "golang.org/x/lint/golint"
               desc: "deprecated, use revive or staticcheck instead"
             - pkg: "io/ioutil"
               desc: "deprecated since Go 1.16, use io and os packages instead"
+            - pkg: "github.com/bborbe/argument$"
+              desc: "use github.com/bborbe/argument/v2 instead (the v2 suffix is allowed)"
 
     funlen:
       lines: 80
