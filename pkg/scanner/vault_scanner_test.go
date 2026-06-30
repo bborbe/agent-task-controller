@@ -510,7 +510,14 @@ var _ = Describe("VaultScanner", func() {
 		It("uses fileOps (ListFiles/ReadFile/WriteFile) through the fileOps interface", func() {
 			// fileOpsTestGitClient provides real ListFiles/ReadFile/WriteFile implementations
 			gitClient := &fileOpsTestGitClient{path: tmpDir}
-			vs := scanner.NewGitRestVaultScanner(gitClient, taskDir, time.Hour, nil, metrics.New(), true)
+			vs := scanner.NewGitRestVaultScanner(
+				gitClient,
+				taskDir,
+				time.Hour,
+				nil,
+				metrics.New(),
+				true,
+			)
 			Expect(vs).NotTo(BeNil())
 
 			// Write a task file and run a cycle to exercise ListFiles/ReadFile/WriteFile
@@ -1035,32 +1042,39 @@ var _ = Describe("VaultScanner", func() {
 			)
 		})
 
-		It("maintains counter-call parity with skip-site log lines (AC#6 invariant (raised to 9 after per-site auto-inject gate, spec 001))", func() {
-			// vault_scanner.go is in pkg/scanner/ so the test file at pkg/scanner/vault_scanner_test.go
-			// finds the source at pkg/scanner/vault_scanner.go (same directory).
-			scannerSrc, err := filepath.Abs("vault_scanner.go")
-			Expect(err).NotTo(HaveOccurred())
+		It(
+			"maintains counter-call parity with skip-site log lines (AC#6 invariant (raised to 9 after per-site auto-inject gate, spec 001))",
+			func() {
+				// vault_scanner.go is in pkg/scanner/ so the test file at pkg/scanner/vault_scanner_test.go
+				// finds the source at pkg/scanner/vault_scanner.go (same directory).
+				scannerSrc, err := filepath.Abs("vault_scanner.go")
+				Expect(err).NotTo(HaveOccurred())
 
-			cmd := exec.Command(
-				"awk",
-				`/^func \(v \*vaultScanner\) (processFile|injectAndStore)\(/,/^}/`,
-				scannerSrc,
-			)
-			out, err := cmd.Output()
-			Expect(err).NotTo(HaveOccurred())
-			body := string(out)
+				cmd := exec.Command(
+					"awk",
+					`/^func \(v \*vaultScanner\) (processFile|injectAndStore)\(/,/^}/`,
+					scannerSrc,
+				)
+				out, err := cmd.Output()
+				Expect(err).NotTo(HaveOccurred())
+				body := string(out)
 
-			autoInjectGateRe := regexp.MustCompile(`glog\.Warningf\(\s*"AUTO_INJECT_TASK_IDENTIFIER=false; skipping`)
-			skipCount := strings.Count(body, `glog.Warningf("skipping`) +
-				strings.Count(body, `glog.Errorf("skipping`) +
-				strings.Count(body, `glog.Warningf("failed to read`) +
-				len(autoInjectGateRe.FindAllStringIndex(body, -1))
-			counterCount := strings.Count(body, `SkippedFilesTotal(`)
-			Expect(skipCount).To(Equal(9), "expected 9 skip-site log lines (6 existing + 3 auto-inject gate sites), got %d", skipCount)
-			Expect(
-				counterCount,
-			).To(Equal(9), "expected 9 counter increment calls (6 existing + 3 auto-inject gate sites), got %d", counterCount)
-		})
+				autoInjectGateRe := regexp.MustCompile(
+					`glog\.Warningf\(\s*"AUTO_INJECT_TASK_IDENTIFIER=false; skipping`,
+				)
+				skipCount := strings.Count(body, `glog.Warningf("skipping`) +
+					strings.Count(body, `glog.Errorf("skipping`) +
+					strings.Count(body, `glog.Warningf("failed to read`) +
+					len(autoInjectGateRe.FindAllStringIndex(body, -1))
+				counterCount := strings.Count(body, `SkippedFilesTotal(`)
+				Expect(
+					skipCount,
+				).To(Equal(9), "expected 9 skip-site log lines (6 existing + 3 auto-inject gate sites), got %d", skipCount)
+				Expect(
+					counterCount,
+				).To(Equal(9), "expected 9 counter increment calls (6 existing + 3 auto-inject gate sites), got %d", counterCount)
+			},
+		)
 	})
 })
 

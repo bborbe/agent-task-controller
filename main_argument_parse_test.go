@@ -8,7 +8,6 @@ import (
 	"context"
 	"os"
 
-	//nolint:depguard // false positive: rule denies github.com/bborbe/argument (no /v2) but prefix-matches github.com/bborbe/argument/v2; this IS the v2 the rule recommends
 	libargument "github.com/bborbe/argument/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
