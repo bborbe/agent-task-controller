@@ -16,10 +16,10 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	libtime "github.com/bborbe/time"
 	libtimemocks "github.com/bborbe/time/mocks"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
@@ -446,8 +446,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})
@@ -462,7 +462,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 
 				// Capture modify args.
-				_, absPath, modifyFn, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				_, absPath, modifyFn, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(
+					0,
+				)
 				Expect(absPath).To(HaveSuffix("Aquascape PWC - 2026W26.md"))
 				Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
 
@@ -472,8 +474,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(string(resultBytes)).To(ContainSubstring("status: aborted"))
 				Expect(string(resultBytes)).To(ContainSubstring("phase: done"))
 				Expect(string(resultBytes)).To(ContainSubstring("completed_date:"))
-				Expect(string(resultBytes)).To(ContainSubstring("superseded_by: tasks/Aquascape PWC - 2026W27.md"))
-				Expect(string(resultBytes)).To(ContainSubstring("created_by: recurring-task-creator"))
+				Expect(
+					string(resultBytes),
+				).To(ContainSubstring("superseded_by: tasks/Aquascape PWC - 2026W27.md"))
+				Expect(
+					string(resultBytes),
+				).To(ContainSubstring("created_by: recurring-task-creator"))
 			})
 
 			It("AC audit_style true: skips prior-file read entirely", func() {
@@ -485,9 +491,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27-audit"),
 					Title:          "check-prometheus-alerts - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":    "claude",
+						"status":      "next",
+						"created_by":  "recurring-task-creator",
 						"audit_style": true,
 					},
 				})
@@ -531,8 +537,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27-first"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})
@@ -555,8 +561,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})
@@ -567,43 +573,49 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
-			It("AC prior status aborted (redelivery 2nd pass): no AtomicReadModifyWriteAndCommitPush", func() {
-				priorAbortedContent := []byte(
-					"---\ntask_identifier: prior-id\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody text\n",
-				)
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				fakeGit.ReadFileReturnsOnCall(1, priorAbortedContent, nil)
+			It(
+				"AC prior status aborted (redelivery 2nd pass): no AtomicReadModifyWriteAndCommitPush",
+				func() {
+					priorAbortedContent := []byte(
+						"---\ntask_identifier: prior-id\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody text\n",
+					)
+					fakeGit.ReadFileReturnsOnCall(0,
+						nil, errors.New("GET tasks returned 404: not found"))
+					fakeGit.ReadFileReturnsOnCall(1, priorAbortedContent, nil)
 
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27"),
-					Title:          "Aquascape PWC - 2026W27",
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
-						"created_by": "recurring-task-creator",
-					},
-				})
-				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("task-w27"),
+						Title:          "Aquascape PWC - 2026W27",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "recurring-task-creator",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-			})
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
 
 			It("AC prior read non-404 error swallowed: handler returns nil error", func() {
 				fakeGit.ReadFileReturnsOnCall(0,
 					nil, errors.New("GET tasks returned 404: not found"))
 				// Transient server error on prior-file read.
-				fakeGit.ReadFileReturnsOnCall(1,
-					nil, errors.New("GET tasks/Aquascape PWC - 2026W26.md returned 500: server error"))
+				fakeGit.ReadFileReturnsOnCall(
+					1,
+					nil,
+					errors.New("GET tasks/Aquascape PWC - 2026W26.md returned 500: server error"),
+				)
 
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})
@@ -614,25 +626,28 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
-			It("AC unrecognized title (no period token): skips prior-file read beyond collision check", func() {
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
+			It(
+				"AC unrecognized title (no period token): skips prior-file read beyond collision check",
+				func() {
+					fakeGit.ReadFileReturnsOnCall(0,
+						nil, errors.New("GET tasks returned 404: not found"))
 
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-random"),
-					Title:          "My Random Task",
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
-						"created_by": "recurring-task-creator",
-					},
-				})
-				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("task-random"),
+						Title:          "My Random Task",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "recurring-task-creator",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-			})
+					Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
 
 			It("AC supersede write failure swallowed: handler returns nil error", func() {
 				fakeGit.ReadFileReturnsOnCall(0,
@@ -645,8 +660,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})
@@ -667,8 +682,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27-slash"),
 					Title:          "Reports/Weekly - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":  "claude",
-						"status":    "next",
+						"assignee":   "claude",
+						"status":     "next",
 						"created_by": "recurring-task-creator",
 					},
 				})

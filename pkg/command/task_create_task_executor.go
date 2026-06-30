@@ -17,13 +17,13 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
-	libtime "github.com/bborbe/time"
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
-	"github.com/bborbe/agent-task-controller/pkg/routing"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
@@ -71,55 +71,71 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			relPath := resolveCreateTaskRelPath(ctx, taskDir, cmd)
-			if existing, err := gitClient.ReadFile(ctx, relPath); err == nil {
-				// File present at the title path → collision. Write nothing; return the
-				// sentinel so the CQRS framework emits a benign Failure on the result topic.
-				glog.V(2).Infof(
-					"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
-					relPath,
-					len(existing),
-					cmd.TaskIdentifier,
-				)
-				return nil, nil, errors.Wrapf(
-					ctx, task.ErrTaskAlreadyExists, "title path %s occupied", relPath,
-				)
-			} else if !isNotFoundReadError(err) {
-				// Transient / unexpected git-rest read error → propagate, do NOT write.
-				return nil, nil, errors.Wrapf(
-					ctx, err, "check existing task file at %s for %s", relPath, cmd.TaskIdentifier,
-				)
+			if err := checkTitlePathFree(ctx, gitClient, relPath, cmd.TaskIdentifier); err != nil {
+				return nil, nil, err
 			}
-			// err is a "not found" read error → title path is free, proceed to write.
-
-			content, err := buildCreateTaskContent(ctx, cmd)
-			if err != nil {
-				return nil, nil, errors.Wrapf(
-					ctx,
-					err,
-					"build task file content for %s",
-					cmd.TaskIdentifier,
-				)
+			if err := writeTaskFile(ctx, gitClient, relPath, cmd); err != nil {
+				return nil, nil, err
 			}
-			absPath := filepath.Join(gitClient.Path(), relPath)
-			if err := gitClient.AtomicWriteAndCommitPush(
-				ctx,
-				absPath,
-				content,
-				"[agent-task-controller] create task "+string(cmd.TaskIdentifier),
-			); err != nil {
-				return nil, nil, errors.Wrapf(
-					ctx,
-					err,
-					"atomic write and push for task %s",
-					cmd.TaskIdentifier,
-				)
-			}
-			glog.V(2).
-				Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
+}
+
+// checkTitlePathFree returns ErrTaskAlreadyExists when the title path is
+// already occupied (benign Failure on the result topic — no overwrite, no
+// git write). A transient git-rest read error is propagated. A "not found"
+// read error is swallowed (title path is free).
+func checkTitlePathFree(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	taskIdentifier lib.TaskIdentifier,
+) error {
+	existing, err := gitClient.ReadFile(ctx, relPath)
+	if err == nil {
+		glog.V(2).Infof(
+			"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
+			relPath,
+			len(existing),
+			taskIdentifier,
+		)
+		return errors.Wrapf(
+			ctx, task.ErrTaskAlreadyExists, "title path %s occupied", relPath,
+		)
+	}
+	if !isNotFoundReadError(err) {
+		return errors.Wrapf(
+			ctx, err, "check existing task file at %s for %s", relPath, taskIdentifier,
+		)
+	}
+	return nil
+}
+
+// writeTaskFile builds the task content and writes it atomically to the vault
+// via git-rest, then logs the creation.
+func writeTaskFile(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	cmd task.CreateCommand,
+) error {
+	content, err := buildCreateTaskContent(ctx, cmd)
+	if err != nil {
+		return errors.Wrapf(ctx, err, "build task file content for %s", cmd.TaskIdentifier)
+	}
+	absPath := filepath.Join(gitClient.Path(), relPath)
+	if err := gitClient.AtomicWriteAndCommitPush(
+		ctx,
+		absPath,
+		content,
+		"[agent-task-controller] create task "+string(cmd.TaskIdentifier),
+	); err != nil {
+		return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
+	}
+	glog.V(2).Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
+	return nil
 }
 
 // resolveCreateTaskRelPath returns the repo-root-relative path where the task
@@ -200,73 +216,159 @@ func supersedePriorRecurringTask(
 	cmd task.CreateCommand,
 	newRelPath string,
 ) {
-	// DB1: eligibility gate — only auto-supersede instances created by the recurring-task publisher.
-	createdBy, _ := cmd.Frontmatter.String("created_by")
-	if createdBy != "recurring-task-creator" {
-		glog.V(3).Infof("auto-supersede: skip %s (created_by=%q != recurring-task-creator)", cmd.TaskIdentifier, createdBy)
+	if !isEligibleForSupersede(cmd) {
 		return
 	}
-	// audit_style true → opt-out (spec Non-goal: no per-feature tunable on controller side).
-	if b, _ := cmd.Frontmatter["audit_style"].(bool); b {
-		return
-	}
-	if s, _ := cmd.Frontmatter["audit_style"].(string); s == "true" {
-		return
-	}
-
-	// DB2: compute prior title.
 	priorTitle, err := decrementRecurringTaskTitle(ctx, cmd.Title)
 	if err != nil {
-		glog.Warningf("auto-supersede: cannot decrement title %q for %s: %v", cmd.Title, cmd.TaskIdentifier, err)
+		glog.Warningf(
+			"auto-supersede: cannot decrement title %q for %s: %v",
+			cmd.Title,
+			cmd.TaskIdentifier,
+			err,
+		)
 		return
 	}
-
-	// Security: reject path-separator-bearing prior title (defense-in-depth).
 	if strings.ContainsAny(priorTitle, "/\\") {
-		glog.Warningf("auto-supersede: computed prior title %q contains path separator; skipping for %s", priorTitle, cmd.TaskIdentifier)
+		glog.Warningf(
+			"auto-supersede: computed prior title %q contains path separator; skipping for %s",
+			priorTitle,
+			cmd.TaskIdentifier,
+		)
 		return
 	}
-
 	priorRelPath := filepath.Join(taskDir, priorTitle+".md")
-
-	// DB3: read the prior file.
-	content, err := gitClient.ReadFile(ctx, priorRelPath)
-	if err != nil {
-		if isNotFoundReadError(err) {
-			glog.V(3).Infof("auto-supersede: no prior instance at %s for %s (first-ever instance)", priorRelPath, cmd.TaskIdentifier)
-			return
-		}
-		glog.Warningf("auto-supersede: read prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+	priorContent, err := readPriorForSupersede(ctx, gitClient, priorRelPath, cmd.TaskIdentifier)
+	if err != nil || priorContent == nil {
 		return
 	}
+	if !priorIsInProgress(ctx, priorContent, priorRelPath, cmd.TaskIdentifier) {
+		return
+	}
+	transitionPrior(
+		ctx,
+		gitClient,
+		currentDateTime,
+		priorRelPath,
+		priorTitle,
+		newRelPath,
+		cmd.TaskIdentifier,
+	)
+}
 
-	// DB4: parse prior frontmatter and check status.
+// isEligibleForSupersede reports whether cmd is a recurring-task instance
+// that should auto-supersede its prior. Returns false when created_by is not
+// the recurring-task publisher or when audit_style opts out.
+func isEligibleForSupersede(cmd task.CreateCommand) bool {
+	createdBy, _ := cmd.Frontmatter.String("created_by")
+	if createdBy != "recurring-task-creator" {
+		glog.V(3).
+			Infof("auto-supersede: skip %s (created_by=%q != recurring-task-creator)", cmd.TaskIdentifier, createdBy)
+		return false
+	}
+	if b, _ := cmd.Frontmatter["audit_style"].(bool); b {
+		return false
+	}
+	if s, _ := cmd.Frontmatter["audit_style"].(string); s == "true" {
+		return false
+	}
+	return true
+}
+
+// readPriorForSupersede reads the prior file. Returns (nil, nil) on a
+// not-found (first-ever instance — benign no-op). Returns (nil, err) on a
+// transient git-rest error (logged by caller).
+func readPriorForSupersede(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	priorRelPath string,
+	taskIdentifier lib.TaskIdentifier,
+) ([]byte, error) {
+	content, err := gitClient.ReadFile(ctx, priorRelPath)
+	if err == nil {
+		return content, nil
+	}
+	if isNotFoundReadError(err) {
+		glog.V(3).
+			Infof("auto-supersede: no prior instance at %s for %s (first-ever instance)", priorRelPath, taskIdentifier)
+		return nil, nil
+	}
+	glog.Warningf(
+		"auto-supersede: read prior %s failed for %s: %v",
+		priorRelPath,
+		taskIdentifier,
+		err,
+	)
+	return nil, err
+}
+
+// priorIsInProgress parses the prior file's frontmatter and reports whether
+// its status is in_progress. Returns false (no-op) on parse error or any
+// non-in_progress status.
+func priorIsInProgress(
+	ctx context.Context,
+	content []byte,
+	priorRelPath string,
+	taskIdentifier lib.TaskIdentifier,
+) bool {
 	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
 	if err != nil {
-		glog.Warningf("auto-supersede: extract frontmatter from prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
-		return
+		glog.Warningf(
+			"auto-supersede: extract frontmatter from prior %s failed for %s: %v",
+			priorRelPath,
+			taskIdentifier,
+			err,
+		)
+		return false
 	}
 	priorFm, err := parseTaskFrontmatter(frontmatterStr)
 	if err != nil {
-		glog.Warningf("auto-supersede: parse prior frontmatter %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
-		return
+		glog.Warningf(
+			"auto-supersede: parse prior frontmatter %s failed for %s: %v",
+			priorRelPath,
+			taskIdentifier,
+			err,
+		)
+		return false
 	}
 	status, _ := priorFm.String("status")
 	if status != "in_progress" {
-		glog.V(3).Infof("auto-supersede: prior %s status=%q (not in_progress), no-op for %s", priorRelPath, status, cmd.TaskIdentifier)
-		return
+		glog.V(3).
+			Infof("auto-supersede: prior %s status=%q (not in_progress), no-op for %s", priorRelPath, status, taskIdentifier)
+		return false
 	}
+	return true
+}
 
-	// DB5/DB6: transition the prior file.
+// transitionPrior performs the read-modify-write that transitions the prior
+// file to aborted. Best-effort: write errors are logged and swallowed.
+func transitionPrior(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	priorRelPath string,
+	priorTitle string,
+	newRelPath string,
+	taskIdentifier lib.TaskIdentifier,
+) {
 	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
 	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
 	modify := buildSupersedeModifyFn(ctx, newRelPath, ts)
 	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
 	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
-		glog.Warningf("auto-supersede: write prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+		glog.Warningf(
+			"auto-supersede: write prior %s failed for %s: %v",
+			priorRelPath,
+			taskIdentifier,
+			err,
+		)
 		return
 	}
-	glog.Infof("auto-supersede: %s -> %s (prior superseded by new instance)", priorRelPath, newRelPath)
+	glog.Infof(
+		"auto-supersede: %s -> %s (prior superseded by new instance)",
+		priorRelPath,
+		newRelPath,
+	)
 }
 
 // buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
