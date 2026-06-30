@@ -1,9 +1,10 @@
 ---
-status: approved
+status: generating
 tags:
     - dark-factory
     - spec
 approved: "2026-06-30T09:34:18Z"
+generating: "2026-06-30T09:39:59Z"
 branch: dark-factory/auto-supersede-prior-recurring-task
 ---
 
