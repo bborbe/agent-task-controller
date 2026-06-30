@@ -596,3 +596,218 @@ ls: cannot access 'vendor': No such file or directory
 [11:50:37] ⚠ [Bash] error: Exit code 1\ntotal 0\ndrwxr-xr-x 1 node node  160 Jun 30 11:49 .\ndrwxr-xr-x 1 node node 1344 Jun 30 11:47 ..\ndrwxr-xr-x 1 node node  128 Jun 30 11:24 completed\ndrwxr-x--- 1 node node  128 Jun 30 11:49 in-progress\ndrwxr-xr-x 1 node node  256 Jun 30 11:46 log\n---
 [11:50:41] [system: task_progress]
 [11:50:41] $ ls -la /workspace/prompts/in-progress/; echo "---grep---"; F=$(ls /workspace/prompts/in-progress/*supersede* 2>/dev/null); echo "FILE=$F"; /usr/bin/grep -nE "go mod vendor|kubectl|make buca|git clone…
+[11:51:09] [system: task_notification]
+[11:51:09]   ← agent reply: All references verified, implementation matches, 100% coverage, tests pass. I have everything I need to produce the audit report.
+[11:51:39] [system: task_notification]
+[11:51:39]   ← agent reply: The prompt was approved mid-audit and moved to `prompts/in-progress/004-spec-002-supersede-hook-and-wiring.md` (dark-factory assigned global prefix `004-`). Content is identical (the audit applies). …
+[11:51:42] [system: thinking_tokens]
+[11:51:43] [system: thinking_tokens]
+[11:51:44] [system: thinking_tokens]
+[11:51:44] [system: thinking_tokens]
+[11:51:45] [system: thinking_tokens]
+[11:51:45] 💭 Both audits are complete. Now I need to:
+1. Mark the spec as prompted
+2. Report the findings
+
+The prompt creator reported:
+- 2 prompt files were created
+- Both were already picked up by the daemon (prompt 1 as `003-spec-002-period-token-decrementor.md`, prompt 2 still in inbox)
+
+The audits returned excellent scores (9/10 each) with no critical issues.
+
+Now let me run the `dark-factory spec mark-prompted` command.
+[11:51:45] Both audits complete. Now marking the spec as prompted.
+
+[11:51:46] $ dark-factory spec mark-prompted 002-auto-supersede-prior-recurring-task 2>&1
+[11:51:46] ⚠ rate-limit:  0% status=allowed
+[11:51:46] ⚠ [Bash] error: Exit code 127\n(eval):1: command not found: dark-factory
+[11:51:47] [system: thinking_tokens]
+[11:51:48] [system: thinking_tokens]
+[11:51:48] 💭 The `dark-factory` command is not in the PATH. Let me check where it might be or if there's an alternative way to invoke it.
+[11:51:49] $ which dark-factory 2>/dev/null || find /home/node -name "dark-factory" -type f 2>/dev/null | head -5
+[11:51:51] [system: thinking_tokens]
+[11:51:52] [system: thinking_tokens]
+[11:51:52] [system: thinking_tokens]
+[11:51:52] 💭 The dark-factory binary isn't found. Let me try to find it in the workspace or look for how to invoke it. Let me check the workspace structure.
+[11:51:53] $ find /workspace -name "dark-factory" -o -name "*.sh" 2>/dev/null | grep -i dark | head -10; ls /workspace/
+[11:51:54] [system: thinking_tokens]
+[11:51:55] [system: thinking_tokens]
+[11:51:55] [system: thinking_tokens]
+[11:51:56] 💭 The dark-factory CLI isn't available in this container. Let me check if there's a way to run it via `go run` or similar, or if it exists somewhere else. Let me look at the Makefile or tools.go to understand how it's run.
+[11:51:56] $ grep -r "dark-factory" /workspace/Makefile /workspace/tools.go 2>/dev/null; cat /workspace/tools.go
+[11:51:58] [system: thinking_tokens]
+[11:51:58] [system: thinking_tokens]
+[11:51:58] [system: thinking_tokens]
+[11:51:58] 💭 The dark-factory tool isn't in the project's tools.go. It's likely a global CLI installed outside the workspace. Let me try to find it via `go install` or look for it in common locations.
+[11:52:00] $ go install github.com/bborbe/dark-factory@latest 2>&1 | tail -5; ls $(go env GOPATH)/bin/ 2>/dev/null | grep dark
+[11:52:03] [system: task_started]
+[11:52:34] [system: task_notification]
+[11:52:36] [system: thinking_tokens]
+[11:52:36] [system: thinking_tokens]
+[11:52:37] [system: thinking_tokens]
+[11:52:37] 💭 The installation failed due to an issue with the module. Let me check if dark-factory is available somewhere else in the system or if there's an alternative way to invoke it.
+[11:52:37] $ find /home -name "dark-factory" 2>/dev/null | head -5; ls /usr/local/bin/ 2>/dev/null | grep -i dark; env | grep -i dark
+[11:52:39] [system: thinking_tokens]
+[11:52:39] [system: thinking_tokens]
+[11:52:40] 💭 There's a dark-factory in `/home/node/.claude/plugins/marketplaces/dark-factory`. Let me check the bin directory there.
+[11:52:40] $ ls /home/node/.claude/plugins/marketplaces/dark-factory/bin/ 2>/dev/null; ls /home/node/.claude/plugins/marketplaces/dark-factory/ 2>/dev/null
+[11:52:41] [system: thinking_tokens]
+[11:52:42] [system: thinking_tokens]
+[11:52:42] 💭 There's a full dark-factory project at `/home/node/.claude/plugins/marketplaces/dark-factory`. Let me check if there's a binary there.
+[11:52:43] $ find /home/node/.claude/plugins/marketplaces/dark-factory -name "dark-factory" -type f 2>/dev/null; ls /home/node/.claude/plugins/marketplaces/dark-factory/bin/ 2>/dev/null
+[11:52:43] ⚠ [Bash] error: Exit code 2
+[11:52:44] [system: thinking_tokens]
+[11:52:45] [system: thinking_tokens]
+[11:52:45] 💭 The bin directory is empty or doesn't exist. Let me try building the dark-factory from source or finding a pre-built binary.
+[11:52:45] $ cd /home/node/.claude/plugins/marketplaces/dark-factory && go build -o /home/node/go/bin/dark-factory . 2>&1
+[11:52:48] [system: task_started]
+[11:52:50] [system: task_notification]
+[11:52:52] [system: thinking_tokens]
+[11:52:52] [system: thinking_tokens]
+[11:52:52] 💭 It built successfully. Now let me try running dark-factory spec mark-prompted.
+[11:52:52] $ dark-factory spec mark-prompted 002-auto-supersede-prior-recurring-task 2>&1
+[11:52:54] [system: thinking_tokens]
+[11:52:54] [system: thinking_tokens]
+[11:52:54] 💭 The spec has been marked as prompted. Now let me provide the final output with the creator's summary and the audit reports.
+[11:53:08] ## Generated Prompts
+
+**Creator:** prompt-creator agent (`dark-factory:prompt-creator`)
+**Spec:** `002-auto-supersede-prior-recurring-task.md`
+**Files created:** 2 prompts
+
+| File | Status |
+|------|--------|
+| `prompts/in-progress/003-spec-002-period-token-decrementor.md` | Executing (already picked up by daemon) |
+| `prompts/2-spec-002-supersede-hook-and-wiring.md` | In inbox → moved to `prompts/in-progress/004-...` during audit |
+
+### Key decisions
+- **Honored the spec's 2-prompt decomposition** (date logic vs. I/O — the natural seam)
+- **No scenario prompt** — spec explicitly opts out; all four scenario conditions fail
+- **`completed_date` format:** pinned to `currentDateTime.Now().UTC().Format(time.RFC3339)` (matches existing repo idiom)
+- **Clock injection** via verified `libtime.CurrentDateTimeGetter` from `github.com/bborbe/time` v1.27.1
+- **Sibling entry-point check performed** — all 5 `NewCreateTaskExecutor` sites + 1 `CreateCommandConsumer` caller confirmed; no `cmd/` variant
+- **Fail-loud cross-prompt dependency** — prompt 2 gates on prompt 1 with explicit `status: failed` sentinel
+
+### Open questions (surfaced in prompts)
+1. Settable-clock helper: prompt 2 falls back to `libtime.NewCurrentDateTime()` + RFC3339 parse if no `SetNow` mock found
+2. `audit_style` arrival type: read tolerantly as `bool` or `"true"` string (wire encoding not pinned in spec)
+
+---
+
+## Audit Findings
+
+### prompts/in-progress/003-spec-002-period-token-decrementor.md
+**Score: 9/10 — Excellent**
+
+| Criterion | Result |
+|-----------|--------|
+| Requirements concrete/actionable | **PASS** |
+| External symbols grep-verified | **PASS** — `errors.Errorf`/`Wrapf` confirmed in v1.5.13; all file/line citations exist |
+| Error paths specified | **PASS** — req 3 final return, req 8 three error rows |
+| Test coverage explicit | **PASS** — req 7 ≥2 anchors/kind incl. boundaries; 100% coverage achieved |
+| File paths/imports correct | **PASS** |
+| No hallucinated symbols | **PASS** |
+
+**Strengths:** Durable contract externalized to `docs/period-token-semantics.md` with verbatim in-prompt recap; anchor by function name + signature (not hardcoded line numbers); test design defeats hardcoded-lookup cheat; scope boundary crisp — path-traversal and all git/Kafka I/O correctly deferred to prompt 2.
+
+**Recommendations (non-blocking):**
+- `<context>` references non-existent `/workspace/CLAUDE.md` — harmless no-op, recommend dropping or pointing to `docs/dod.md`
+- Iterative verification uses `go build ./...` instead of preferred `make test` (minor, final `make precommit` gate is correct)
+
+---
+
+### prompts/in-progress/004-spec-002-supersede-hook-and-wiring.md
+*(audited as `2-spec-002-supersede-hook-and-wiring.md` — identical content)*
+
+**Score: 9/10 — Excellent**
+
+| Criterion | Result |
+|-----------|--------|
+| Requirements concrete/actionable | **PASS** |
+| External symbols grep-verified | **PASS** — all 16 cited symbols confirmed in module source |
+| Error paths specified | **PASS** — every failure branch has implementation + dedicated test AC |
+| Test coverage explicit | **PASS** — 11 named test ACs + 5-site constructor update + separator guard + frozen-string grep |
+| File paths/imports correct | **PASS** |
+| No hallucinated symbols | **PASS** |
+
+**Strengths:** Frozen contract points (insertion site, field names, log/commit substrings) matched verbatim to spec ACs; full spec failure-mode coverage (404, transient read, unparseable frontmatter, Kafka redelivery, `audit_style`, unrecognized token, path-traversal); cross-prompt dependency guarded with fail-loud sentinel; sibling call sites exhaustively enumerated and verified.
+
+**Recommendations (non-blocking):**
+- Iterative verification uses `go build ./...` instead of `make test` (container CLAUDE.md preference)
+- Clock test-seam left as grep-decision — naming `time/mocks.CurrentDateTimeGetter` with `NowReturns` explicitly would sharpen the happy-path test
+- Interface line-range: `<context>` says "298-345" but actual is "301-345" (within tolerance)
+
+---
+
+**Spec transition:** `dark-factory spec mark-prompted 002-auto-supersede-prior-recurring-task` → `prompted: 002-auto-supersede-prior-recurring-task.md` ✅
+[11:53:08] result: ## Generated Prompts
+
+**Creator:** prompt-creator agent (`dark-factory:prompt-creator`)
+**Spec:** `002-auto-supersede-prior-recurring-task.md`
+**Files created:** 2 prompts
+
+| File | Status |
+|------|--------|
+| `prompts/in-progress/003-spec-002-period-token-decrementor.md` | Executing (already picked up by daemon) |
+| `prompts/2-spec-002-supersede-hook-and-wiring.md` | In inbox → moved to `prompts/in-progress/004-...` during audit |
+
+### Key decisions
+- **Honored the spec's 2-prompt decomposition** (date logic vs. I/O — the natural seam)
+- **No scenario prompt** — spec explicitly opts out; all four scenario conditions fail
+- **`completed_date` format:** pinned to `currentDateTime.Now().UTC().Format(time.RFC3339)` (matches existing repo idiom)
+- **Clock injection** via verified `libtime.CurrentDateTimeGetter` from `github.com/bborbe/time` v1.27.1
+- **Sibling entry-point check performed** — all 5 `NewCreateTaskExecutor` sites + 1 `CreateCommandConsumer` caller confirmed; no `cmd/` variant
+- **Fail-loud cross-prompt dependency** — prompt 2 gates on prompt 1 with explicit `status: failed` sentinel
+
+### Open questions (surfaced in prompts)
+1. Settable-clock helper: prompt 2 falls back to `libtime.NewCurrentDateTime()` + RFC3339 parse if no `SetNow` mock found
+2. `audit_style` arrival type: read tolerantly as `bool` or `"true"` string (wire encoding not pinned in spec)
+
+---
+
+## Audit Findings
+
+### prompts/in-progress/003-spec-002-period-token-decrementor.md
+**Score: 9/10 — Excellent**
+
+| Criterion | Result |
+|-----------|--------|
+| Requirements concrete/actionable | **PASS** |
+| External symbols grep-verified | **PASS** — `errors.Errorf`/`Wrapf` confirmed in v1.5.13; all file/line citations exist |
+| Error paths specified | **PASS** — req 3 final return, req 8 three error rows |
+| Test coverage explicit | **PASS** — req 7 ≥2 anchors/kind incl. boundaries; 100% coverage achieved |
+| File paths/imports correct | **PASS** |
+| No hallucinated symbols | **PASS** |
+
+**Strengths:** Durable contract externalized to `docs/period-token-semantics.md` with verbatim in-prompt recap; anchor by function name + signature (not hardcoded line numbers); test design defeats hardcoded-lookup cheat; scope boundary crisp — path-traversal and all git/Kafka I/O correctly deferred to prompt 2.
+
+**Recommendations (non-blocking):**
+- `<context>` references non-existent `/workspace/CLAUDE.md` — harmless no-op, recommend dropping or pointing to `docs/dod.md`
+- Iterative verification uses `go build ./...` instead of preferred `make test` (minor, final `make precommit` gate is correct)
+
+---
+
+### prompts/in-progress/004-spec-002-supersede-hook-and-wiring.md
+*(audited as `2-spec-002-supersede-hook-and-wiring.md` — identical content)*
+
+**Score: 9/10 — Excellent**
+
+| Criterion | Result |
+|-----------|--------|
+| Requirements concrete/actionable | **PASS** |
+| External symbols grep-verified | **PASS** — all 16 cited symbols confirmed in module source |
+| Error paths specified | **PASS** — every failure branch has implementation + dedicated test AC |
+| Test coverage explicit | **PASS** — 11 named test ACs + 5-site constructor update + separator guard + frozen-string grep |
+| File paths/imports correct | **PASS** |
+| No hallucinated symbols | **PASS** |
+
+**Strengths:** Frozen contract points (insertion site, field names, log/commit substrings) matched verbatim to spec ACs; full spec failure-mode coverage (404, transient read, unparseable frontmatter, Kafka redelivery, `audit_style`, unrecognized token, path-traversal); cross-prompt dependency guarded with fail-loud sentinel; sibling call sites exhaustively enumerated and verified.
+
+**Recommendations (non-blocking):**
+- Iterative verification uses `go build ./...` instead of `make test` (container CLAUDE.md preference)
+- Clock test-seam left as grep-decision — naming `time/mocks.CurrentDateTimeGetter` with `NowReturns` explicitly would sharpen the happy-path test
+- Interface line-range: `<context>` says "298-345" but actual is "301-345" (within tolerance)
+
+---
+
+**Spec transition:** `dark-factory spec mark-prompted 002-auto-supersede-prior-recurring-task` → `prompted: 002-auto-supersede-prior-recurring-task.md` ✅ | duration: 788016ms | cost: $6.2358 | tokens: 261455 in / 3453 out

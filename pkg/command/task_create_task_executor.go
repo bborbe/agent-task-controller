@@ -9,6 +9,7 @@ import (
 	"maps"
 	"path/filepath"
 	"strings"
+	"time"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
@@ -18,9 +19,11 @@ import (
 	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
+	libtime "github.com/bborbe/time"
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	result "github.com/bborbe/agent-task-controller/pkg/result"
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
@@ -35,6 +38,7 @@ func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		task.CreateCommandOperation,
@@ -112,6 +116,7 @@ func NewCreateTaskExecutor(
 			}
 			glog.V(2).
 				Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
+			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
@@ -179,4 +184,116 @@ func buildCreateTaskContent(ctx context.Context, cmd task.CreateCommand) ([]byte
 	maps.Copy(fm, cmd.Frontmatter)
 	fm["task_identifier"] = string(cmd.TaskIdentifier)
 	return marshalFileContent(ctx, fm, cmd.Body)
+}
+
+// supersedePriorRecurringTask transitions the prior-period recurring-task instance
+// to status: aborted after a new instance is materialized. It is a best-effort
+// hook: every failure path (ineligible, no prior, read/parse/write error) is logged
+// and swallowed so the already-written new instance is never rolled back.
+// newRelPath is the repo-root-relative path of the just-written new instance
+// (used as the superseded_by back-pointer).
+func supersedePriorRecurringTask(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	cmd task.CreateCommand,
+	newRelPath string,
+) {
+	// DB1: eligibility gate — only auto-supersede instances created by the recurring-task publisher.
+	createdBy, _ := cmd.Frontmatter.String("created_by")
+	if createdBy != "recurring-task-creator" {
+		glog.V(3).Infof("auto-supersede: skip %s (created_by=%q != recurring-task-creator)", cmd.TaskIdentifier, createdBy)
+		return
+	}
+	// audit_style true → opt-out (spec Non-goal: no per-feature tunable on controller side).
+	if b, _ := cmd.Frontmatter["audit_style"].(bool); b {
+		return
+	}
+	if s, _ := cmd.Frontmatter["audit_style"].(string); s == "true" {
+		return
+	}
+
+	// DB2: compute prior title.
+	priorTitle, err := decrementRecurringTaskTitle(ctx, cmd.Title)
+	if err != nil {
+		glog.Warningf("auto-supersede: cannot decrement title %q for %s: %v", cmd.Title, cmd.TaskIdentifier, err)
+		return
+	}
+
+	// Security: reject path-separator-bearing prior title (defense-in-depth).
+	if strings.ContainsAny(priorTitle, "/\\") {
+		glog.Warningf("auto-supersede: computed prior title %q contains path separator; skipping for %s", priorTitle, cmd.TaskIdentifier)
+		return
+	}
+
+	priorRelPath := filepath.Join(taskDir, priorTitle+".md")
+
+	// DB3: read the prior file.
+	content, err := gitClient.ReadFile(ctx, priorRelPath)
+	if err != nil {
+		if isNotFoundReadError(err) {
+			glog.V(3).Infof("auto-supersede: no prior instance at %s for %s (first-ever instance)", priorRelPath, cmd.TaskIdentifier)
+			return
+		}
+		glog.Warningf("auto-supersede: read prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+		return
+	}
+
+	// DB4: parse prior frontmatter and check status.
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		glog.Warningf("auto-supersede: extract frontmatter from prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+		return
+	}
+	priorFm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		glog.Warningf("auto-supersede: parse prior frontmatter %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+		return
+	}
+	status, _ := priorFm.String("status")
+	if status != "in_progress" {
+		glog.V(3).Infof("auto-supersede: prior %s status=%q (not in_progress), no-op for %s", priorRelPath, status, cmd.TaskIdentifier)
+		return
+	}
+
+	// DB5/DB6: transition the prior file.
+	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
+	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
+	modify := buildSupersedeModifyFn(ctx, newRelPath, ts)
+	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
+	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
+		glog.Warningf("auto-supersede: write prior %s failed for %s: %v", priorRelPath, cmd.TaskIdentifier, err)
+		return
+	}
+	glog.Infof("auto-supersede: %s -> %s (prior superseded by new instance)", priorRelPath, newRelPath)
+}
+
+// buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
+// that transitions a prior-period recurring-task instance to aborted.
+func buildSupersedeModifyFn(
+	ctx context.Context,
+	newRelPath string,
+	ts string,
+) func([]byte) ([]byte, error) {
+	return func(current []byte) ([]byte, error) {
+		fmStr, err := result.ExtractFrontmatter(ctx, current)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
+		}
+		body, err := result.ExtractBody(ctx, current)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "extract body")
+		}
+		fm, err := parseTaskFrontmatter(fmStr)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "parse frontmatter")
+		}
+		fm["status"] = "aborted"
+		fm["phase"] = "done"
+		fm["completed_date"] = ts
+		fm["superseded_by"] = newRelPath
+		fm["created_by"] = "recurring-task-creator"
+		return marshalFileContent(ctx, fm, body)
+	}
 }

@@ -158,6 +158,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		gitClient,
 		a.TaskDir,
 		a.VaultName,
+		currentDateTime,
 	)
 
 	return service.Run(

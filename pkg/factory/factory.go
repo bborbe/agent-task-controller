@@ -11,6 +11,7 @@ import (
 	libkafka "github.com/bborbe/kafka"
 	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/run"
+	libtime "github.com/bborbe/time"
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
@@ -27,12 +28,13 @@ func CreateCommandConsumer(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) run.Func {
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter),
 		command.NewIncrementFrontmatterExecutor(gitClient, taskDir),
 		command.NewUpdateFrontmatterExecutor(gitClient, taskDir),
-		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName),
+		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime),
 	}
 	return cdb.RunCommandConsumerTxDefault(
 		saramaClientProvider,
