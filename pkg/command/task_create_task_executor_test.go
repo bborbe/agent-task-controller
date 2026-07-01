@@ -446,9 +446,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
@@ -482,28 +483,32 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				).To(ContainSubstring("created_by: recurring-task-creator"))
 			})
 
-			It("AC audit_style true: skips prior-file read entirely", func() {
-				// Only title-collision check occurs; no prior-file ReadFile.
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
+			It(
+				"AC auto_abort_prior absent: skips prior-file read entirely (opt-in required)",
+				func() {
+					// Only title-collision check occurs; no prior-file ReadFile.
+					// auto_abort_prior is absent - opt-in not set, so no supersede.
+					fakeGit.ReadFileReturnsOnCall(0,
+						nil, errors.New("GET tasks returned 404: not found"))
 
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27-audit"),
-					Title:          "check-prometheus-alerts - 2026W27",
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":    "claude",
-						"status":      "next",
-						"created_by":  "recurring-task-creator",
-						"audit_style": true,
-					},
-				})
-				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("task-w27-audit"),
+						Title:          "check-prometheus-alerts - 2026W27",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "recurring-task-creator",
+							// auto_abort_prior intentionally absent - opt-in required
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-			})
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
 
 			It("AC not created by publisher: skips prior-file read entirely", func() {
 				fakeGit.ReadFileReturnsOnCall(0,
@@ -537,9 +542,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27-first"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
@@ -561,9 +567,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
@@ -614,9 +621,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				ret0, ret1, err := executor.HandleCommand(ctx, nil, cmdObj)
@@ -660,9 +668,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27"),
 					Title:          "Aquascape PWC - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				ret0, ret1, err := executor.HandleCommand(ctx, nil, cmdObj)
@@ -682,9 +691,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					TaskIdentifier: lib.TaskIdentifier("task-w27-slash"),
 					Title:          "Reports/Weekly - 2026W27",
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":   "claude",
-						"status":     "next",
-						"created_by": "recurring-task-creator",
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
