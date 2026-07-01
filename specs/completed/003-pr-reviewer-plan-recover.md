@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-07-01T12:08:19Z"
 generating: "2026-07-01T12:08:20Z"
 prompted: "2026-07-01T12:22:35Z"
 verifying: "2026-07-01T13:43:56Z"
+completed: "2026-07-01T14:31:04Z"
 branch: dark-factory/pr-reviewer-plan-recover
 ---
 
