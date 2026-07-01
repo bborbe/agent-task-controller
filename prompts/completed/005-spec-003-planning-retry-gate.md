@@ -1,14 +1,13 @@
 ---
-status: failed
+status: completed
 spec: [003-pr-reviewer-plan-recover]
 execution_id: agent-task-controller-plan-recover-exec-005-spec-003-planning-retry-gate
 dark-factory-version: dev
 created: "2026-07-01T12:11:43Z"
 queued: "2026-07-01T12:26:40Z"
 started: "2026-07-01T12:26:42Z"
-completed: "2026-07-01T13:01:33Z"
+completed: "2026-07-01T13:33:07Z"
 branch: dark-factory/pr-reviewer-plan-recover
-lastFailReason: 'execute prompt: docker run failed: wait command: exit status 137'
 ---
 
 <summary>
