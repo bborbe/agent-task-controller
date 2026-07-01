@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -19,6 +20,10 @@ import (
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/errors"
 )
+
+// maxResponseBodyBytes bounds how much of a GitHub API response we read before
+// closing — defense in depth against a compromised or misconfigured upstream.
+const maxResponseBodyBytes = 1 << 20 // 1 MiB
 
 // PRCommenter posts a plain COMMENT review on a GitHub pull request. It never
 // approves or requests changes — the controller never gates the PR merge.
@@ -98,7 +103,10 @@ func (c *prCommenter) PostComment(
 	if err != nil {
 		return errors.Wrapf(ctx, err, "planning-retry: github COMMENT post failed")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return errors.Errorf(

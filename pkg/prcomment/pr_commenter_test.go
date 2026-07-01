@@ -78,7 +78,7 @@ var _ = Describe("PRCommenter", func() {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"id": 123, "owner": %q, "repo": %q}`, owner, repo)
 		}))
 		baseURL = server.URL
