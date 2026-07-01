@@ -90,6 +90,17 @@ var TasksPublishedTotal = promauto.NewCounterVec(
 	[]string{"type"},
 )
 
+// PlanningRetryTotal counts controller-side pr-review planning-retry gate outcomes
+// by result ("retry" | "exhausted"). "passthrough" is intentionally NOT a label —
+// the metric fires only when the retry gate matches (spec DB 7).
+var PlanningRetryTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_planning_retry_total",
+		Help: "Total number of controller-side pr-review planning-retry gate outcomes, by result.",
+	},
+	[]string{"result"},
+)
+
 // ResultsWrittenTotal counts result write attempts by outcome.
 var ResultsWrittenTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
@@ -178,6 +189,9 @@ func init() {
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)
 	ResultsWrittenTotal.WithLabelValues("error").Add(0)
+
+	PlanningRetryTotal.WithLabelValues("retry").Add(0)
+	PlanningRetryTotal.WithLabelValues("exhausted").Add(0)
 
 	GitPushTotal.WithLabelValues("success").Add(0)
 	GitPushTotal.WithLabelValues("retry_success").Add(0)

@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["002"]
+spec: [002-auto-supersede-prior-recurring-task]
 summary: Added pure period-token decrementor helper in pkg/command/ recognizing 6 token shapes with correct boundary-case handling
 execution_id: agent-task-controller-auto-supersede-exec-003-spec-002-period-token-decrementor
 dark-factory-version: dev

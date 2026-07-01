@@ -22,7 +22,10 @@ const TaskResultCommandOperation base.CommandOperation = "update"
 
 // NewTaskResultExecutor creates a cdb.CommandObjectExecutorTx for update commands.
 // Uses cdb.CommandObjectExecutorTxFunc adapter — same pattern as trading command handlers.
-func NewTaskResultExecutor(writer result.ResultWriter) cdb.CommandObjectExecutorTx {
+func NewTaskResultExecutor(
+	writer result.ResultWriter,
+	retryGate PlanningRetryGate,
+) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		TaskResultCommandOperation,
 		true,
@@ -52,6 +55,28 @@ func NewTaskResultExecutor(writer result.ResultWriter) cdb.CommandObjectExecutor
 					req.TaskIdentifier,
 					err,
 				)
+			}
+			handled, err := retryGate.Handle(ctx, req)
+			if err != nil {
+				return nil, nil, errors.Wrapf(
+					ctx,
+					err,
+					"planning retry gate for task %s",
+					req.TaskIdentifier,
+				)
+			}
+			if handled {
+				event, err := base.ParseEvent(ctx, req)
+				if err != nil {
+					return nil, nil, errors.Wrapf(
+						ctx,
+						err,
+						"parse result event for task %s",
+						req.TaskIdentifier,
+					)
+				}
+				eventID := base.EventID(req.TaskIdentifier)
+				return eventID.Ptr(), event, nil
 			}
 			if err := writer.WriteResult(ctx, req); err != nil {
 				return nil, nil, errors.Wrapf(

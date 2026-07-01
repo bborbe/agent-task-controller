@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["002"]
+spec: [002-auto-supersede-prior-recurring-task]
 summary: Added auto-supersede hook to create-task executor that transitions prior-period in_progress recurring-task instances to aborted after new instance write
 execution_id: agent-task-controller-auto-supersede-exec-004-spec-002-supersede-hook-and-wiring
 dark-factory-version: dev

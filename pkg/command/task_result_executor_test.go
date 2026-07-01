@@ -23,6 +23,7 @@ var _ = Describe("NewTaskResultExecutor", func() {
 	var (
 		ctx        context.Context
 		fakeWriter *mocks.ResultWriter
+		fakeGate   *mocks.PlanningRetryGate
 		executor   cdb.CommandObjectExecutorTx
 		schemaID   cdb.SchemaID
 	)
@@ -30,7 +31,9 @@ var _ = Describe("NewTaskResultExecutor", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		fakeWriter = &mocks.ResultWriter{}
-		executor = command.NewTaskResultExecutor(fakeWriter)
+		fakeGate = &mocks.PlanningRetryGate{}
+		fakeGate.HandleReturns(false, nil)
+		executor = command.NewTaskResultExecutor(fakeWriter, fakeGate)
 		schemaID = cdb.SchemaID{
 			Group:   "agent",
 			Kind:    "task",
@@ -155,6 +158,87 @@ var _ = Describe("NewTaskResultExecutor", func() {
 				_, _, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(handleErr).NotTo(BeNil())
 				Expect(handleErr.Error()).To(ContainSubstring("write result for task"))
+			})
+		})
+
+		Context("gate handled", func() {
+			It("WriteResult is skipped and event is returned", func() {
+				now := libtimetest.ParseDateTime("2026-01-15T10:00:00Z")
+				task := lib.Task{
+					Object: base.Object[base.Identifier]{
+						Identifier: base.Identifier("event-uuid-gate"),
+						Created:    now,
+						Modified:   now,
+					},
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter:    lib.TaskFrontmatter{"task_type": "pr-review"},
+					Content:        lib.TaskContent("## Result\nStatus: failed\n"),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+				fakeGate.HandleReturns(true, nil)
+
+				eventID, resultEvent, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(handleErr).To(BeNil())
+				Expect(eventID).NotTo(BeNil())
+				Expect(string(*eventID)).To(Equal(string(task.TaskIdentifier)))
+				Expect(resultEvent).NotTo(BeNil())
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("gate errors", func() {
+			It("returns the error wrapped and WriteResult is skipped", func() {
+				now := libtimetest.ParseDateTime("2026-01-15T10:00:00Z")
+				task := lib.Task{
+					Object: base.Object[base.Identifier]{
+						Identifier: base.Identifier("event-uuid-gate-err"),
+						Created:    now,
+						Modified:   now,
+					},
+					TaskIdentifier: lib.TaskIdentifier("pr-456"),
+					Frontmatter:    lib.TaskFrontmatter{"task_type": "pr-review"},
+					Content:        lib.TaskContent("## Result\nStatus: failed\n"),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+				fakeGate.HandleReturns(false, errors.New("git-rest 503"))
+
+				_, _, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(handleErr).NotTo(BeNil())
+				Expect(handleErr.Error()).To(ContainSubstring("planning retry gate for task"))
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("gate not handled", func() {
+			It("WriteResult runs (regression guard)", func() {
+				now := libtimetest.ParseDateTime("2026-01-15T10:00:00Z")
+				task := lib.Task{
+					Object: base.Object[base.Identifier]{
+						Identifier: base.Identifier("event-uuid-passthrough"),
+						Created:    now,
+						Modified:   now,
+					},
+					TaskIdentifier: lib.TaskIdentifier("pr-789"),
+					Frontmatter:    lib.TaskFrontmatter{"status": "done"},
+					Content:        lib.TaskContent("## Result\nStatus: done\n"),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+				fakeWriter.WriteResultReturns(nil)
+
+				eventID, resultEvent, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(handleErr).To(BeNil())
+				Expect(eventID).NotTo(BeNil())
+				Expect(resultEvent).NotTo(BeNil())
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(1))
 			})
 		})
 	})
