@@ -257,8 +257,10 @@ func supersedePriorRecurringTask(
 }
 
 // isEligibleForSupersede reports whether cmd is a recurring-task instance
-// that should auto-supersede its prior. Returns false when created_by is not
-// the recurring-task publisher or when audit_style opts out.
+// that should auto-supersede its prior. Returns true only when created_by is
+// the recurring-task publisher AND auto_abort_prior is explicitly true (opt-in).
+// Returns false (no supersede) when auto_abort_prior is absent or false — the
+// safe default that prevents accidental supersede of audit-style tasks.
 func isEligibleForSupersede(cmd task.CreateCommand) bool {
 	createdBy, _ := cmd.Frontmatter.String("created_by")
 	if createdBy != "recurring-task-creator" {
@@ -266,13 +268,15 @@ func isEligibleForSupersede(cmd task.CreateCommand) bool {
 			Infof("auto-supersede: skip %s (created_by=%q != recurring-task-creator)", cmd.TaskIdentifier, createdBy)
 		return false
 	}
-	if b, _ := cmd.Frontmatter["audit_style"].(bool); b {
-		return false
+	if b, _ := cmd.Frontmatter["auto_abort_prior"].(bool); b {
+		return true
 	}
-	if s, _ := cmd.Frontmatter["audit_style"].(string); s == "true" {
-		return false
+	if s, _ := cmd.Frontmatter["auto_abort_prior"].(string); s == "true" {
+		return true
 	}
-	return true
+	glog.V(3).
+		Infof("auto-supersede: skip %s (auto_abort_prior not true — opt-in required)", cmd.TaskIdentifier)
+	return false
 }
 
 // readPriorForSupersede reads the prior file. Returns (nil, nil) on a
