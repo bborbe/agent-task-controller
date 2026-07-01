@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	lib "github.com/bborbe/agent"
@@ -21,6 +22,7 @@ import (
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
@@ -48,11 +50,13 @@ func NewPlanningRetryGate(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	prCommenter prcomment.PRCommenter,
 ) PlanningRetryGate {
 	return &planningRetryGate{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
 		currentDateTime: currentDateTime,
+		prCommenter:     prCommenter,
 	}
 }
 
@@ -60,6 +64,7 @@ type planningRetryGate struct {
 	gitClient       gitclient.GitClient
 	taskDir         string
 	currentDateTime libtime.CurrentDateTimeGetter
+	prCommenter     prcomment.PRCommenter
 }
 
 func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled bool, err error) {
@@ -84,9 +89,7 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	}
 
 	if count >= maxControllerPlanningRetries {
-		glog.V(2).
-			Infof("planning-retry: counter at cap (%d) for %s; exhaustion escalation ships in prompt 2, falling through", count, req.TaskIdentifier)
-		return false, nil
+		return g.escalate(ctx, req, relPath, existingFrontmatter)
 	}
 
 	reason := g.extractReason(string(req.Content))
@@ -238,6 +241,71 @@ func (g *planningRetryGate) buildRetryModifyFn(
 			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
 		}
 		return []byte("---\n" + string(marshaled) + "---\n" + newBody), nil
+	}
+}
+
+func (g *planningRetryGate) escalate(ctx context.Context, req lib.Task, relPath string, existingFrontmatter lib.TaskFrontmatter) (bool, error) {
+	reason := g.extractReason(string(req.Content))
+	ts := g.currentDateTime.Now().UTC().Format(time.RFC3339)
+
+	msg := "[agent-task-controller] planning retry exhausted for task " + string(req.TaskIdentifier)
+	absPath := filepath.Join(g.gitClient.Path(), relPath)
+
+	firstEscalation := true
+	modifyErr := g.gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx, absPath, g.buildEscalationModifyFn(ctx, &firstEscalation, reason, ts), msg,
+	)
+	if modifyErr != nil {
+		return false, errors.Wrapf(ctx, modifyErr, "planning-retry: escalation write for task %s", req.TaskIdentifier)
+	}
+
+	if firstEscalation {
+		commentBody := "Automated pr-review planning failed after 3 controller retries and 3 in-agent retries. Last error: " + reason + ". Please investigate " + relPath + "."
+		if commentErr := g.prCommenter.PostComment(ctx, existingFrontmatter, commentBody); commentErr != nil {
+			glog.Warningf("planning-retry: github COMMENT post failed: task=%s err=%v", req.TaskIdentifier, commentErr)
+		}
+		metrics.PlanningRetryTotal.WithLabelValues("exhausted").Inc()
+		glog.Infof("planning-retry: exhausted after 3 retries for task %s; escalated to human_review", req.TaskIdentifier)
+	}
+
+	return true, nil
+}
+
+func (g *planningRetryGate) buildEscalationModifyFn(ctx context.Context, firstEscalation *bool, reason, ts string) func(current []byte) ([]byte, error) {
+	return func(current []byte) ([]byte, error) {
+		fmStr, err := result.ExtractFrontmatter(ctx, current)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
+		}
+		body, err := result.ExtractBody(ctx, current)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "extract body")
+		}
+		var fm lib.TaskFrontmatter
+		if err := yaml.Unmarshal([]byte(fmStr), &fm); err != nil {
+			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
+		}
+
+		// Idempotency: check if terminal retry line already present
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "retry 3/3:") {
+				*firstEscalation = false
+				break
+			}
+		}
+
+		if *firstEscalation {
+			body = appendProgressLine(body, "- retry 3/3: "+reason+" at "+ts)
+		}
+
+		fm["phase"] = "human_review"
+		result.ClearAssigneeIfHumanReview(fm)
+
+		marshaled, err := yaml.Marshal(map[string]any(fm))
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
+		}
+		return []byte("---\n" + string(marshaled) + "---\n" + body), nil
 	}
 }
 

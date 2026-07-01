@@ -32,6 +32,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/factory"
 	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/publisher"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
@@ -40,6 +41,8 @@ import (
 )
 
 const vaultLocalPath = "/data/vault"
+
+const githubAPIBaseURL = "https://api.github.com"
 
 func main() {
 	app := &application{}
@@ -63,6 +66,7 @@ type application struct {
 	BuildDate                *libtime.DateTime `required:"false" arg:"build-date"                  env:"BUILD_DATE"                  usage:"Build timestamp (RFC3339)"`
 	VaultName                string            `required:"true"  arg:"vault-name"                  env:"VAULT_NAME"                  usage:"vault slug this controller serves (e.g. openclaw, personal); legacy empty targetVault defaults to openclaw"`
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
+	GitHubToken             string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)" display:"length" default:""`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop; extraction would split tightly-coupled wiring.
@@ -110,6 +114,8 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	currentDateTime := libtime.NewCurrentDateTime()
+
+	prCommenter := prcomment.NewPRCommenter(&http.Client{Timeout: 30 * time.Second}, githubAPIBaseURL, a.GitHubToken)
 
 	trigger := make(chan struct{}, 1)
 	syncLoop := pkgsync.NewSyncLoop(
@@ -159,6 +165,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,
+		prCommenter,
 	)
 
 	return service.Run(

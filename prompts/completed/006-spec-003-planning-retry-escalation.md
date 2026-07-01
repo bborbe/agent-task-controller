@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [003-pr-reviewer-plan-recover]
+summary: 'Implemented Layer 3 escalation on planning-retry exhaustion: PRCommenter posts a GitHub COMMENT (best-effort), sets phase: human_review, clears assignee, and increments exhausted metric'
+execution_id: agent-task-controller-plan-recover-exec-006-spec-003-planning-retry-escalation
+dark-factory-version: dev
 created: "2026-07-01T12:11:43Z"
 queued: "2026-07-01T12:26:41Z"
+started: "2026-07-01T13:33:09Z"
+completed: "2026-07-01T13:43:55Z"
 branch: dark-factory/pr-reviewer-plan-recover
 ---
 
