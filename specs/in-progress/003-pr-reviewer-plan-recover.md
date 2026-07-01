@@ -153,3 +153,19 @@ Rationale: prompt 1 is pure controller-internal logic (git-rest write + Kafka ev
 ## Do-Nothing Option
 
 If we don't do this: pr-review planning failures continue to land the PR in silent `REVIEW_REQUIRED` limbo. Operators discover the failure hours later by noticing a stale PR review status or by scanning task files for `phase: done` with a failed body. The manual escape (SHA-bump) works but requires the operator to know the recovery pattern. Layer 0 + Layer 1 (already shipped, v0.42.0) reduce the frequency of MiniMax `B`-case failures reaching this seam, but the tail is not zero — real prod incidents on 2026-06-30 confirmed the silent-limbo mode. Do-nothing is acceptable in the sense that the pipeline is not on fire, but it leaks operator attention on every failure, and the [[Harden PR-Reviewer Planning Validation and Visibility]] goal is left half-shipped (Layer 0 + Layer 1 without Layer 2 + Layer 3).
+
+## Verification Result
+
+**Verified:** 2026-07-01T14:24:43Z (HEAD 0a79358)
+**Binary:** /Users/bborbe/Documents/workspaces/go/bin/dark-factory (dev)
+**Scenario:** No E2E scenario by design (spec §Acceptance Criteria: "NO new E2E scenario. All behavior is reachable via Ginkgo unit tests with mock `GitClient` and mock GitHub client"). Verified via 16 ACs against fresh test-run + grep evidence.
+**Evidence:**
+- `make precommit` fresh run → "ready to commit" (exit 0)
+- `go test ./pkg/command/...` → Ran 95 of 95 Specs, SUCCESS! 95 Passed
+- `go test ./pkg/prcomment/...` → Ran 7 of 7 Specs, SUCCESS! 7 Passed
+- `pkg/command/planning_retry.go:32:const maxControllerPlanningRetries = 3` (frozen constant)
+- `pkg/command/planning_retry.go` covers all DB 1-9 branches; 11 `planning_retry_count` references in pkg/command/
+- Ginkgo `PlanningRetryGate` Describe (`planning_retry_test.go`, 727 lines) covers passthroughs (non-planning, non-pr-review, success), retry attempts 1/2/3, cap escalation with COMMENT-template match, defensive counter>3, GitHub-error swallow, missing-PR swallow, negative-counter clamp, redelivery idempotency, reason sanitization (\n/\r strip + 200-rune truncate)
+- `pkg/prcomment/pr_commenter_test.go` (202 lines) verifies frozen error substrings `planning-retry: cannot resolve PR from task:` and `planning-retry: github COMMENT post failed:` on all resolution / transport / non-2xx paths
+- Merged PR #4 (commit 0a79358), Anthropic bot APPROVED on HEAD 83ea86f with "Ginkgo test coverage is thorough across all acceptance criteria"; CI test SUCCESS
+**Verdict:** PASS
