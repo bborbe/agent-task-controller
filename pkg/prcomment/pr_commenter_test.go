@@ -14,16 +14,17 @@ import (
 	"time"
 
 	lib "github.com/bborbe/agent"
-	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 )
 
 var _ = Describe("PRCommenter", func() {
 	var (
-		server *httptest.Server
-		client *http.Client
-		baseURL string
+		server    *httptest.Server
+		client    *http.Client
+		baseURL   string
 		commenter prcomment.PRCommenter
 	)
 
@@ -96,7 +97,11 @@ var _ = Describe("PRCommenter", func() {
 					"repository":          "bborbe/maintainer",
 					"pull_request_number": 62,
 				}
-				err := commenter.PostComment(context.Background(), fm, "Automated pr-review planning failed after 3 controller retries.")
+				err := commenter.PostComment(
+					context.Background(),
+					fm,
+					"Automated pr-review planning failed after 3 controller retries.",
+				)
 				Expect(err).To(BeNil())
 			})
 		})
@@ -107,7 +112,11 @@ var _ = Describe("PRCommenter", func() {
 				fm := lib.TaskFrontmatter{
 					"pr_url": "https://github.com/bborbe/maintainer/pull/62",
 				}
-				err := commenter.PostComment(context.Background(), fm, "Automated pr-review planning failed after 3 controller retries.")
+				err := commenter.PostComment(
+					context.Background(),
+					fm,
+					"Automated pr-review planning failed after 3 controller retries.",
+				)
 				Expect(err).To(BeNil())
 			})
 		})
@@ -131,7 +140,9 @@ var _ = Describe("PRCommenter", func() {
 				fm := lib.TaskFrontmatter{}
 				err := commenter.PostComment(context.Background(), fm, "test body")
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("planning-retry: cannot resolve PR from task:"))
+				Expect(
+					err.Error(),
+				).To(ContainSubstring("planning-retry: cannot resolve PR from task:"))
 			})
 		})
 
@@ -150,9 +161,11 @@ var _ = Describe("PRCommenter", func() {
 
 		Context("non-2xx response", func() {
 			It("returns an error containing the frozen substring and status", func() {
-				badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.WriteHeader(http.StatusInternalServerError)
-				}))
+				badServer := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(http.StatusInternalServerError)
+					}),
+				)
 				defer badServer.Close()
 				badClient := badServer.Client()
 
@@ -163,7 +176,9 @@ var _ = Describe("PRCommenter", func() {
 				}
 				err := commenter.PostComment(context.Background(), fm, "test body")
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("planning-retry: github COMMENT post failed:"))
+				Expect(
+					err.Error(),
+				).To(ContainSubstring("planning-retry: github COMMENT post failed:"))
 				Expect(err.Error()).To(ContainSubstring("status 500"))
 			})
 		})
@@ -178,7 +193,9 @@ var _ = Describe("PRCommenter", func() {
 				}
 				err := commenter.PostComment(context.Background(), fm, "test body")
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("planning-retry: github COMMENT post failed:"))
+				Expect(
+					err.Error(),
+				).To(ContainSubstring("planning-retry: github COMMENT post failed:"))
 			})
 		})
 	})

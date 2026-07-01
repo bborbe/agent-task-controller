@@ -244,7 +244,12 @@ func (g *planningRetryGate) buildRetryModifyFn(
 	}
 }
 
-func (g *planningRetryGate) escalate(ctx context.Context, req lib.Task, relPath string, existingFrontmatter lib.TaskFrontmatter) (bool, error) {
+func (g *planningRetryGate) escalate(
+	ctx context.Context,
+	req lib.Task,
+	relPath string,
+	existingFrontmatter lib.TaskFrontmatter,
+) (bool, error) {
 	reason := g.extractReason(string(req.Content))
 	ts := g.currentDateTime.Now().UTC().Format(time.RFC3339)
 
@@ -256,22 +261,38 @@ func (g *planningRetryGate) escalate(ctx context.Context, req lib.Task, relPath 
 		ctx, absPath, g.buildEscalationModifyFn(ctx, &firstEscalation, reason, ts), msg,
 	)
 	if modifyErr != nil {
-		return false, errors.Wrapf(ctx, modifyErr, "planning-retry: escalation write for task %s", req.TaskIdentifier)
+		return false, errors.Wrapf(
+			ctx,
+			modifyErr,
+			"planning-retry: escalation write for task %s",
+			req.TaskIdentifier,
+		)
 	}
 
 	if firstEscalation {
 		commentBody := "Automated pr-review planning failed after 3 controller retries and 3 in-agent retries. Last error: " + reason + ". Please investigate " + relPath + "."
 		if commentErr := g.prCommenter.PostComment(ctx, existingFrontmatter, commentBody); commentErr != nil {
-			glog.Warningf("planning-retry: github COMMENT post failed: task=%s err=%v", req.TaskIdentifier, commentErr)
+			glog.Warningf(
+				"planning-retry: github COMMENT post failed: task=%s err=%v",
+				req.TaskIdentifier,
+				commentErr,
+			)
 		}
 		metrics.PlanningRetryTotal.WithLabelValues("exhausted").Inc()
-		glog.Infof("planning-retry: exhausted after 3 retries for task %s; escalated to human_review", req.TaskIdentifier)
+		glog.Infof(
+			"planning-retry: exhausted after 3 retries for task %s; escalated to human_review",
+			req.TaskIdentifier,
+		)
 	}
 
 	return true, nil
 }
 
-func (g *planningRetryGate) buildEscalationModifyFn(ctx context.Context, firstEscalation *bool, reason, ts string) func(current []byte) ([]byte, error) {
+func (g *planningRetryGate) buildEscalationModifyFn(
+	ctx context.Context,
+	firstEscalation *bool,
+	reason, ts string,
+) func(current []byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		fmStr, err := result.ExtractFrontmatter(ctx, current)
 		if err != nil {
