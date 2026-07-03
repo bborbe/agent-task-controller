@@ -69,6 +69,25 @@ var _ = Describe("Published event topic (TopicPrefix golden test)", func() {
 		})
 	})
 
+	Context("with the master (prod) TopicPrefix", func() {
+		It("publishes to the prefixed topic", func() {
+			tp = buildPublisher(base.TopicPrefix("master"))
+
+			task := lib.Task{
+				TaskIdentifier: lib.TaskIdentifier("test-uuid-9012"),
+				Frontmatter: lib.TaskFrontmatter{
+					"status": "next",
+				},
+				Content: lib.TaskContent("# Test"),
+			}
+			Expect(tp.PublishChanged(ctx, task)).To(Succeed())
+
+			Expect(fakeProducer.SendMessageCallCount()).To(Equal(1))
+			_, msg := fakeProducer.SendMessageArgsForCall(0)
+			Expect(msg.Topic).To(Equal("master-agent-task-v1-event"))
+		})
+	})
+
 	Context("with an empty TopicPrefix", func() {
 		It("publishes to the unprefixed topic (no leading dash)", func() {
 			tp = buildPublisher(base.TopicPrefix(""))
