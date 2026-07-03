@@ -24,7 +24,7 @@ func CreateCommandConsumer(
 	saramaClientProvider libkafka.SaramaClientProvider,
 	syncProducer libkafka.SyncProducer,
 	db libkv.DB,
-	branch base.Branch,
+	topicPrefix base.TopicPrefix,
 	resultWriter result.ResultWriter,
 	gitClient gitclient.GitClient,
 	taskDir string,
@@ -44,7 +44,7 @@ func CreateCommandConsumer(
 		syncProducer,
 		db,
 		lib.TaskV1SchemaID,
-		branch,
+		topicPrefix,
 		true, // ignoreUnsupported: skip commands with unknown operations
 		executors,
 	)
