@@ -55,6 +55,7 @@ type application struct {
 	Listen                   string            `required:"true"  arg:"listen"                      env:"LISTEN"                      usage:"address to listen to"`
 	KafkaBrokers             string            `required:"true"  arg:"kafka-brokers"               env:"KAFKA_BROKERS"               usage:"comma-separated Kafka broker addresses"`
 	Branch                   base.Branch       `required:"true"  arg:"branch"                      env:"BRANCH"                      usage:"Kafka topic prefix branch (develop/live)"`
+	TopicPrefix              base.TopicPrefix  `required:"false" arg:"topic-prefix"                env:"TOPIC_PREFIX"                usage:"Explicit Kafka topic prefix; empty means unprefixed topics"`
 	PollInterval             time.Duration     `required:"false" arg:"poll-interval"               env:"POLL_INTERVAL"               usage:"vault polling interval"                                                                                                                                                   default:"60s"`
 	TaskDir                  string            `required:"true"  arg:"task-dir"                    env:"TASK_DIR"                    usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
 	DataDir                  string            `required:"true"  arg:"data-dir"                    env:"DATA_DIR"                    usage:"directory for BoltDB offset storage"`
@@ -109,7 +110,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 
 	eventObjectSender := cdb.NewEventObjectSender(
 		libkafka.NewJSONSender(syncProducer, log.DefaultSamplerFactory),
-		a.Branch,
+		a.TopicPrefix,
 		log.DefaultSamplerFactory,
 	)
 
@@ -163,7 +164,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		saramaClientProvider,
 		syncProducer,
 		db,
-		a.Branch,
+		a.TopicPrefix,
 		resultWriter,
 		gitClient,
 		a.TaskDir,
