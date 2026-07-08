@@ -90,20 +90,20 @@ After an eligible recurring-task instance is materialized, the vault contains ex
 - [ ] `CHANGELOG.md` has an `## Unreleased` (or next-version) entry describing the scan-and-collapse change — evidence: `grep -n "scan" CHANGELOG.md` returns a line under the top unreleased section.
 - [ ] The supersede scenario is added/updated to cover the collapse seam — evidence: a file under `scenarios/` referencing the collapse behavior (`grep -rln "collapse\|supersede" scenarios/` returns ≥1).
 - [ ] `make precommit` exits 0 — evidence: exit code.
-- [ ] **Post-Deploy (Rung-2):** after dev deploy, replaying `/trigger?date=2026-07-07` then `?date=2026-07-08` on the quant dev controller transitions `IBKR Swing Trading - 2026W28-mon` and `-tue` to `aborted` / `phase: done` / `superseded_by` set while `-wed` stays `in_progress` — evidence: the two `auto-supersede: … -> …` controller log lines + the two priors' vault frontmatter after replay.
+- [ ] **Post-Deploy (Rung-2):** after deploy (mirrored-semver model: `cd quant/agent && BRANCH=<stage> make apply`, NOT `make buca`), triggering the **next not-yet-materialized IBKR date** (`/trigger?date=2026-07-09`, thu) materializes a fresh `IBKR Swing Trading - 2026W28-thu` whose scan collapses the open same-week priors: `-mon`, `-tue`, AND `-wed` all transition to `aborted` / `phase: done` / `superseded_by` set, leaving `-thu` the single `in_progress` instance — evidence: the `auto-supersede: … -> …` controller log lines + the priors' vault frontmatter. **Do NOT re-trigger an already-materialized date (07-07/07-08): the controller returns `ErrTaskAlreadyExists` and the supersede hook runs only after a successful *new*-instance write, so an existing-date replay collapses nothing.**
 
 **Scenario coverage:** update the existing supersede seam coverage under `scenarios/`. No brand-new E2E scenario beyond the existing seam unless the live-verification step below cannot be expressed as a Ginkgo test (it covers real git-rest + Kafka replay, which unit tests cannot reach) — the live replay in Verification is the E2E evidence.
 
 ## Verification
 
 ```
-cd ~/Documents/workspaces/agent-task-controller-weekday-collapse
+cd ~/Documents/workspaces/agent-task-controller
 make precommit
 ```
 
 Expected: exit 0; all Ginkgo specs above pass; `grep -rn "period_token_decrementor" pkg/` returns nothing.
 
-Live (post dev deploy via `/make-buca task/controller dev`): replay `/trigger?date=2026-07-07` then `/trigger?date=2026-07-08` on the quant dev controller. Expected: `IBKR Swing Trading - 2026W28-mon` and `-tue` become `aborted` / `phase: done` with `superseded_by` set; `-wed` remains `in_progress`; controller log shows `auto-supersede: ... -> ...` lines for both closed instances.
+Live (post deploy — mirrored-semver model: `cd quant/agent && BRANCH=<stage> make apply`, NOT `make buca`): trigger the **next not-yet-materialized IBKR date**, `/trigger?date=2026-07-09` (thu), on the recurring-task-creator. A fresh `IBKR Swing Trading - 2026W28-thu` materializes and its scan collapses the open same-week priors: `-mon`, `-tue`, and `-wed` all become `aborted` / `phase: done` with `superseded_by` set, leaving `-thu` the single `in_progress` instance; controller log shows the `auto-supersede: ... -> ...` lines. Re-triggering an *existing* date (07-07/07-08) collapses nothing — the controller returns `ErrTaskAlreadyExists` and the supersede hook only fires after a successful new-instance write.
 
 ## Suggested Decomposition
 
