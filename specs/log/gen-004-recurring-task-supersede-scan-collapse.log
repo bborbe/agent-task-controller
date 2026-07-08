@@ -1,0 +1,883 @@
+[11:00:19] Starting headless session...
+[11:00:19] [init] session=39ee2fda model=MiniMax-M2.7-highspeed cwd=/workspace tools=29
+[11:00:22] [system: thinking_tokens]
+[11:00:22] [system: thinking_tokens]
+[11:00:23] [system: thinking_tokens]
+[11:00:23] [system: thinking_tokens]
+[11:00:23] 💭 The user wants me to generate prompts from a spec file. I need to:
+1. Use the prompt-creator agent to generate prompts from the spec
+2. Then run audit pass on each generated prompt
+3. Mark the spec as prompted
+
+Let me start by reading the spec file to understand what we're working with, then invoke the prompt-creator agent.
+[11:00:23] [read] /workspace/Users/bborbe/Documents/workspaces/agent-task-controller-weekday-collapse/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:00:23] ⚠ rate-limit:  0% status=allowed
+[11:00:23] ⚠ [Read] error: File does not exist. Note: your current working directory is /workspace.
+[11:00:28] [system: thinking_tokens]
+[11:00:29] [system: thinking_tokens]
+[11:00:29] [system: thinking_tokens]
+[11:00:29] 💭 The file path seems to be relative to the workspace but the path given looks like a macOS absolute path. Let me try to find the spec file in the workspace.
+[11:00:29] [glob] **/004-recurring-task-supersede-scan-collapse.md
+[11:00:29] ⚠ [Glob] error: <tool_use_error>Error: No such tool available: Glob</tool_use_error>
+[11:00:31] [system: thinking_tokens]
+[11:00:31] [system: thinking_tokens]
+[11:00:31] [system: thinking_tokens]
+[11:00:31] 💭 Let me try with Bash find instead.
+[11:00:31] $ find /workspace -name "004-recurring-task-supersede-scan-collapse.md" 2>/dev/null
+[11:00:33] [system: thinking_tokens]
+[11:00:33] [system: thinking_tokens]
+[11:00:33] [system: thinking_tokens]
+[11:00:34] [system: thinking_tokens]
+[11:00:34] 💭 The spec file is at `/workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md`. The input path was `/workspace//Users/bborbe/Documents/workspaces/agent-task-controller-weekday-collapse/specs/in-progress/004-recurring-task-supersede-scan-collapse.md` which is actually the macOS path mapped to the workspace. Let me read the correct file.
+[11:00:34] [read] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:00:34]   → 118 lines read
+[11:00:37] [system: thinking_tokens]
+[11:00:37] [system: thinking_tokens]
+[11:00:38] [system: thinking_tokens]
+[11:00:38] [system: thinking_tokens]
+[11:00:38] 💭 Now I have the spec. It's a well-structured spec with clear acceptance criteria and a suggested 3-prompt decomposition. Let me invoke the prompt-creator agent to generate the prompts.
+
+The spec is at `/workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md` and output should go to `/workspace/prompts/`.
+
+Let me use the Skill tool to invoke the prompt-creator agent.
+[11:00:39] Now I'll invoke the prompt-creator agent to generate the prompts from this spec.
+
+[11:00:47] [agent:dark-factory:prompt-creator] Generate prompts from spec
+    prompt: You are the dark-factory prompt-creator agent. Read the spec at `/workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md` and generate promp…
+[11:00:47] [system: task_started]
+[11:00:50] [system: task_progress]
+[11:00:50] [read] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:00:50]   → 118 lines read
+[11:00:50] [system: task_progress]
+[11:00:50] $ ls -la /workspace/ && echo "---PROMPTS---" && ls -la /workspace/prompts/ 2>/dev/null && echo "---COMPLETED---" && ls /workspace/prompts/completed/ 2>/dev/null | head -30
+[11:00:51] ⚠ rate-limit: five_hour 0% resets=13:30:00 status=allowed
+[11:00:54] [system: task_progress]
+[11:00:54] $ ls -R /workspace/pkg/ | head -80 && echo "===DOCS===" && ls /workspace/docs/ && echo "===SCENARIOS===" && ls /workspace/scenarios/
+[11:00:55] [system: task_progress]
+[11:00:55] [read] /workspace/prompts/completed/003-spec-002-period-token-decrementor.md
+[11:00:55]   → 163 lines read
+[11:00:55] [system: task_progress]
+[11:00:55] [read] /workspace/prompts/completed/004-spec-002-supersede-hook-and-wiring.md
+[11:00:55]   → 301 lines read
+[11:00:58] [system: task_progress]
+[11:00:58] [read] /workspace/pkg/command/task_create_task_executor.go
+[11:00:58]   → 405 lines read
+[11:00:58] [system: task_progress]
+[11:00:58] [read] /workspace/pkg/command/period_token_decrementor.go
+[11:00:58]   → 125 lines read
+[11:01:04] [system: task_progress]
+[11:01:04] $ grep -n "ListFiles\|ReadFile\|AtomicReadModifyWrite\|AtomicWriteAndCommitPush\|func.*Path(" /workspace/pkg/gitrestclient/git_rest_client.go
+[11:01:05] ⚠ [bash output]
+308:	// AtomicWriteAndCommitPush writes content to absPath and commits+pushes under a single lock.
+312:	AtomicWriteAndCommitPush(
+318:	// AtomicReadModifyWriteAndCommitPush reads absPath, calls modify on its contents
+325:	AtomicReadModifyWriteAndCommitPush(
+333:	// ListFiles returns relative file paths under the repo root matching the single-level
+335:	ListFiles(ctx context.Context, glob string) ([]string, error)
+336:	// ReadFile reads the file at relPath (relative to repo root, e.g. "tasks/foo.md")
+338:	ReadFile(ctx context.Context, relPath string) ([]byte, error)
+340:	// It does NOT commit or push — use AtomicWriteAndCommitPush for that.
+[11:01:05] [system: task_progress]
+[11:01:05] $ grep -n "ListFilesReturns\|ListFilesStub\|ListFilesCallCount\|ListFilesArgsForCall\|func (fake \*GitClient) ListFiles" /workspace/mocks/git_client.go | head
+[11:01:06] ⚠ [bash output]
+63:	ListFilesStub        func(context.Context, string) ([]string, error)
+385:func (fake *GitClient) ListFiles(arg1 context.Context, arg2 string) ([]string, error) {
+392:	stub := fake.ListFilesStub
+405:func (fake *GitClient) ListFilesCallCount() int {
+411:func (fake *GitClient) ListFilesCalls(stub func(context.Context, string) ([]string, error)) {
+414:	fake.ListFilesStub = stub
+417:func (fake *GitClient) ListFilesArgsForCall(i int) (context.Context, string) {
+424:func (fake *GitClient) ListFilesReturns(result1 []string, result2 error) {
+427:	fake.ListFilesStub = nil
+434:func (fake *GitClient) ListFilesReturnsOnCall(i int, result1 []string, result2 error) {
+[11:01:06] [system: task_progress]
+[11:01:06] [read] /workspace/docs/period-token-semantics.md
+[11:01:06]   → 40 lines read
+[11:01:09] [system: task_progress]
+[11:01:09] [read] /workspace/pkg/factory/factory.go
+[11:01:09]   → 51 lines read
+[11:01:09] [system: task_progress]
+[11:01:09] [read] /workspace/main.go
+[11:01:09]   → 216 lines read
+[11:01:15] [system: task_progress]
+[11:01:15] $ grep -n "func (f TaskFrontmatter)\|func (t TaskFrontmatter)\|func .* String(\|func .* Int(" $(go env GOPATH 2>/dev/null)/pkg/mod/github.com/bborbe/agent@*/agent_task-frontmatter.go 2>/dev/null | head…
+[11:01:15] [system: task_progress]
+[11:01:15] [read] /workspace/CHANGELOG.md
+[11:01:15]   → 17 lines read
+[11:01:15] [system: task_progress]
+[11:01:15] [read] /workspace/main_argument_parse_test.go
+[11:01:16]   → 49 lines read
+[11:01:21] [system: task_progress]
+[11:01:21] $ find $(go env GOPATH)/pkg/mod/github.com/bborbe -maxdepth 1 -type d -name "agent@*" 2>/dev/null; echo "---frontmatter methods---"; grep -rn "func (.*TaskFrontmatter) String\|func (.*TaskFrontmatter) …
+[11:01:22] [system: task_progress]
+[11:01:22] [read] /workspace/pkg/command/task_create_task_executor_test.go (offset=, limit=120)
+[11:01:22]   → 119 lines read
+[11:01:27] [system: task_progress]
+[11:01:27] $ head -3 /workspace/go.mod; echo "---agent module dir---"; ls -d $(go env GOPATH)/pkg/mod/github.com/bborbe/agent* 2>/dev/null | head; echo "---grep version in go.mod---"; grep "bborbe/agent " /worksp…
+[11:01:28] [system: task_progress]
+[11:01:28] $ grep -n "supersede\|Aquascape\|auto_abort_prior\|ReadFileReturnsOnCall\|AtomicReadModifyWrite\|Context(" /workspace/pkg/command/task_create_task_executor_test.go | head -60
+[11:01:28] ⚠ [bash output]
+548:						"auto_abort_prior": true,
+555:				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+558:			It("AC prior status completed: no AtomicReadModifyWriteAndCommitPush", func() {
+562:				fakeGit.ReadFileReturnsOnCall(0,
+564:				fakeGit.ReadFileReturnsOnCall(1, priorCompletedContent, nil)
+568:					Title:          "Aquascape PWC - 2026W27",
+573:						"auto_abort_prior": true,
+580:				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+584:				"AC prior status aborted (redelivery 2nd pass): no AtomicReadModifyWriteAndCommitPush",
+589:					fakeGit.ReadFileReturnsOnCall(0,
+591:					fakeGit.ReadFileReturnsOnCall(1, priorAbortedContent, nil)
+595:						Title:          "Aquascape PWC - 2026W27",
+606:					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+611:				fakeGit.ReadFileReturnsOnCall(0,
+614:				fakeGit.ReadFileReturnsOnCall(
+617:					errors.New("GET tasks/Aquascape PWC - 2026W26.md returned 500: server error"),
+622:					Title:          "Aquascape PWC - 2026W27",
+627:						"auto_abort_prior": true,
+634:				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+640:					fakeGit.ReadFileReturnsOnCall(0,
+[11:01:36] [system: task_progress]
+[11:01:36] $ grep -rn "func.*TaskFrontmatter.*String\|func.*TaskFrontmatter.*Assignee" $(go env GOPATH)/pkg/mod/github.com/bborbe/agent*/*.go 2>/dev/null | head; echo "=== find agent pkg mod ==="; find $(go env G…
+[11:01:37] [system: task_progress]
+[11:01:37] [read] /workspace/pkg/command/export_test.go
+[11:01:37]   → 8 lines read
+[11:01:37] [system: task_progress]
+[11:01:37] [read] /workspace/scenarios/use-git-rest-for-vault-writes.md
+[11:01:37]   → 86 lines read
+[11:01:43] [system: task_progress]
+[11:01:43] $ ls /workspace/vendor/github.com/bborbe/agent/ 2>/dev/null | head; echo "=== frontmatter file ==="; find /workspace/vendor/github.com/bborbe/agent -name "*frontmatter*" 2>/dev/null; echo "=== String/I…
+[11:01:44] [system: task_progress]
+[11:01:44] [read] /workspace/pkg/gitrestclient/git_rest_client.go (offset=296, limit=50)
+[11:01:44]   → 49 lines read
+[11:01:55] [system: task_progress]
+[11:01:55] $ grep -rn "ListFiles\|filepath.Glob\|filepath.Match\|path.Match" /workspace/pkg/gitrestclient/git_rest_client.go /workspace/pkg/gitrestclient/git_client_adapter.go /workspace/pkg/scanner/*.go 2>/dev/n…
+[11:01:55] ⚠ [bash output]
+/workspace/pkg/gitrestclient/git_client_adapter.go:64:// using the gitrest adapter — callers must use ReadFile/WriteFile/ListFiles instead
+/workspace/pkg/gitrestclient/git_client_adapter.go:110:// ListFiles delegates to GitRestClient.List.
+/workspace/pkg/gitrestclient/git_client_adapter.go:111:func (a *gitRestGitClientAdapter) ListFiles(ctx context.Context, glob string) ([]string, error) {
+/workspace/pkg/gitrestclient/git_rest_client.go:333:	// ListFiles returns relative file paths under the repo root matching the single-level
+/workspace/pkg/gitrestclient/git_rest_client.go:335:	ListFiles(ctx context.Context, glob string) ([]string, error)
+/workspace/pkg/scanner/vault_scanner.go:69:			matches, err := filepath.Glob(filepath.Join(basePath, glob))
+/workspace/pkg/scanner/vault_scanner.go:120:// via the gitclient.GitClient interface methods (ListFiles, ReadFile, WriteFile).
+/workspace/pkg/scanner/vault_scanner.go:138:			listFiles: gitClient.ListFiles,
+[11:01:58] [system: task_progress]
+[11:01:58] [read] /workspace/pkg/gitrestclient/git_client_adapter.go (offset=108, limit=40)
+[11:02:00]   → 21 lines read
+[11:02:00] [system: task_progress]
+[11:02:00] $ grep -n "func.*List(" /workspace/pkg/gitrestclient/git_rest_client.go; echo "---List impl---"; grep -n "func (g \*gitRestClient) List" /workspace/pkg/gitrestclient/git_rest_client.go
+[11:02:00] ⚠ [bash output]
+253:func (g *gitRestClient) List(ctx context.Context, glob string) ([]string, error) {
+---List impl---
+253:func (g *gitRestClient) List(ctx context.Context, glob string) ([]string, error) {
+[11:02:02] [system: task_progress]
+[11:02:02] [read] /workspace/pkg/gitrestclient/git_rest_client.go (offset=253, limit=40)
+[11:02:02]   → 39 lines read
+[11:02:10] [system: task_progress]
+[11:02:10] $ ls /home/node/.claude/plugins/marketplaces/coding/docs/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | head -60; echo "=== HOST check ==="; ls ~/.claude/plugins/marketplaces/coding/docs/*.md 2>/d…
+[11:02:11] ⚠ [bash output]
+go-precommit.md
+go-prometheus-metrics-guide.md
+go-security-linting.md
+go-service-implementation-patterns.md
+go-state-machine-pattern.md
+go-test-types-guide.md
+go-testing-guide.md
+go-time-injection.md
+go-tools-versioning-guide.md
+go-validation-framework-guide.md
+k8s-manifest-guide.md
+markdown-todo-guide.md
+prd-guide.md
+python-architecture-patterns.md
+python-cli-arguments-guide.md
+python-factory-pattern.md
+=== HOST check ===
+/home/node/.claude/plugins/marketplaces/coding/docs/adr-guide.md
+/home/node/.claude/plugins/marketplaces/coding/docs/agent-command-development-guide.md
+/home/node/.claude/plugins/marketplaces/coding/docs/ast-grep-rule-writing-guide.md
+[11:02:11] [system: task_progress]
+[11:02:11] [read] /workspace/pkg/command/task_create_task_executor_test.go (offset=432, limit=60)
+[11:02:11]   → 59 lines read
+[11:03:50] [system: task_progress]
+[11:03:50] [write] /workspace/prompts/1-spec-004-ranking-core-and-delete-decrementor.md (18419 chars)
+[11:03:50]   → File created successfully at: /workspace/prompts/1-spec-004-ranking-core-and-delete-decrementor.md (file state is curre…
+[11:06:22] [system: task_progress]
+[11:06:22] [write] /workspace/prompts/2-spec-004-scan-and-collapse-hook.md (32131 chars)
+[11:06:22]   → File created successfully at: /workspace/prompts/2-spec-004-scan-and-collapse-hook.md (file state is current in your co…
+[11:07:36] [system: task_progress]
+[11:07:36] [write] /workspace/prompts/3-spec-004-wire-lookback-env-docs-changelog.md (14329 chars)
+[11:07:36]   → File created successfully at: /workspace/prompts/3-spec-004-wire-lookback-env-docs-changelog.md (file state is current …
+[11:07:43] [system: task_progress]
+[11:07:43] $ grep -rn "factory.CreateCommandConsumer\|command.NewCreateTaskExecutor" /workspace/ --include="*.go" | grep -v "_test.go" ; echo "=== test call sites ==="; grep -rn "command.NewCreateTaskExecutor" /w…
+[11:07:43] ⚠ [bash output]
+/workspace/main.go:163:	commandConsumer := factory.CreateCommandConsumer(
+/workspace/pkg/factory/factory.go:40:		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime),
+=== test call sites ===
+/workspace/pkg/command/task_create_task_executor_test.go:64:		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+/workspace/pkg/command/task_create_task_executor_test.go:359:					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "personal", clock)
+/workspace/pkg/command/task_create_task_executor_test.go:378:					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+/workspace/pkg/command/task_create_task_executor_test.go:397:					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+/workspace/pkg/command/task_create_task_executor_test.go:416:					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "personal", clock)
+=== errors.Errorf in main Run ===
+91:		return errors.Errorf(ctx, "GIT_REST_URL is required")
+=== existing supersede scenarios ===
+NONE
+[11:07:48] [system: task_progress]
+[11:07:48] [read] /workspace/prompts/2-spec-004-scan-and-collapse-hook.md (offset=115, limit=10)
+[11:07:48]   → 9 lines read
+[11:07:53] [system: task_progress]
+[11:07:53] [read] /workspace/prompts/2-spec-004-scan-and-collapse-hook.md (offset=118, limit=12)
+[11:07:53]   → 11 lines read
+[11:07:57] [system: task_progress]
+[11:07:57] [write] /workspace/prompts/2-spec-004-scan-and-collapse-hook.md.tmp2f (11 chars)
+[11:07:57]   → File created successfully at: /workspace/prompts/2-spec-004-scan-and-collapse-hook.md.tmp2f (file state is current in y…
+[11:08:01] [system: task_progress]
+[11:08:01] $ rm /workspace/prompts/2-spec-004-scan-and-collapse-hook.md.tmp2f; wc -l /workspace/prompts/2-spec-004-scan-and-collapse-hook.md
+[11:08:15] [system: task_progress]
+[11:08:15] $ python3 - <<'PY'\nimport re, io\np = "prompts/2-spec-004-scan-and-collapse-hook.md"\ns = open(p, encoding="utf-8").read()\n\n# --- Fix 1: step 2f — make the ordinal filter the single authoritative de…
+[11:08:42] [system: task_progress]
+[11:08:43] $ python3 - <<'PY'\np = "prompts/2-spec-004-scan-and-collapse-hook.md"\ns = open(p, encoding="utf-8").read()\n\n# --- Fix 2: sparse-set AC — remove all deliberation prose; state the clean expectation.\…
+[11:08:49] [system: task_progress]
+[11:08:49] $ cd /workspace/prompts && echo "=== forbidden deliberation phrases ==="; grep -rniE "wait —|wait -|actually —|or better —|decision:|correction:|on reflection|let me reconsider|reveals a design point|d…
+[11:08:56] [system: task_progress]
+[11:08:56] $ cd /workspace/prompts && ls -1 *.md; echo "=== not in in-progress ==="; ls in-progress/ 2>/dev/null || echo "in-progress empty"; echo "=== failure-mode coverage grep across prompt 2 ==="; grep -c "sw…
+[11:09:21] [system: task_notification]
+[11:09:21]   ← agent reply: All three prompts are written to the inbox and validated. Here is the summary.
+[11:09:25] [system: thinking_tokens]
+[11:09:26] [system: thinking_tokens]
+[11:09:26] 💭 Good, the prompt-creator agent completed successfully and created 3 prompt files. Now I need to run the audit pass on each prompt. Let me invoke the prompt-auditor agent on each file.
+[11:09:26] Good, the prompts were created. Now I'll run the audit pass on each generated prompt file.
+
+[11:09:30] [agent:dark-factory:prompt-auditor] Audit prompt 1
+    prompt: You are the dark-factory prompt-auditor agent. Audit the prompt file at `/workspace/prompts/1-spec-004-ranking-core-and-delete-decrementor.md` against the Prom…
+[11:09:30] [system: task_started]
+[11:09:32] [agent:dark-factory:prompt-auditor] Audit prompt 2
+    prompt: You are the dark-factory prompt-auditor agent. Audit the prompt file at `/workspace/prompts/2-spec-004-scan-and-collapse-hook.md` against the Prompt Definition…
+[11:09:32] [system: task_started]
+[11:09:33] [system: task_progress]
+[11:09:33] [read] /workspace/prompts/1-spec-004-ranking-core-and-delete-decrementor.md
+[11:09:34] [system: task_progress]
+[11:09:34]   → 210 lines read
+[11:09:34] [read] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:09:34] [agent:dark-factory:prompt-auditor] Audit prompt 3
+    prompt: You are the dark-factory prompt-auditor agent. Audit the prompt file at `/workspace/prompts/3-spec-004-wire-lookback-env-docs-changelog.md` against the Prompt …
+[11:09:34] [system: task_started]
+[11:09:34] ⚠ rate-limit:  0% status=allowed
+[11:09:34]   → 118 lines read
+[11:09:34] [system: task_progress]
+[11:09:34] $ ls /home/node/.claude/plugins/marketplaces/coding/docs/ 2>/dev/null | grep -iE 'prompt|dark' ; echo "---" ; ls /workspace/docs 2>/dev/null ; echo "--- config ---" ; dark-factory config 2>&1 | head -50
+[11:09:34] ⚠ rate-limit: five_hour 0% resets=13:30:00 status=allowed
+[11:09:35] [system: task_progress]
+[11:09:35] [read] /workspace/prompts/2-spec-004-scan-and-collapse-hook.md
+[11:09:36]   → 279 lines read
+[11:09:36] [system: task_progress]
+[11:09:36] [read] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:09:36]   → 118 lines read
+[11:09:37] [system: task_progress]
+[11:09:37] $ dark-factory config 2>&1 | head -50; echo "---REMOTE---"; cd /workspace && git remote get-url origin 2>&1
+[11:09:37] ⚠ [Bash] error: Exit code 128\n(eval):1: command not found: dark-factory\n---REMOTE---\nfatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+[11:09:37] [system: task_progress]
+[11:09:37] [read] /workspace/prompts/3-spec-004-wire-lookback-env-docs-changelog.md
+[11:09:37]   → 163 lines read
+[11:09:38] [system: task_progress]
+[11:09:38] [read] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:09:39]   → 118 lines read
+[11:09:39] [system: task_progress]
+[11:09:39] $ ls /home/node/.claude/plugins/marketplaces/coding/docs/ 2>/dev/null | grep -iE 'prompt|dark' ; echo "---ALL---"; ls /home/node/.claude/plugins/marketplaces/coding/docs/
+[11:09:39] ⚠ [bash output]
+go-validation-framework-guide.md
+k8s-manifest-guide.md
+markdown-todo-guide.md
+prd-guide.md
+python-architecture-patterns.md
+python-cli-arguments-guide.md
+python-factory-pattern.md
+python-ioc-guide.md
+python-logging-guide.md
+python-makefile-commands.md
+python-project-structure.md
+python-pydantic-guide.md
+readme-guide.md
+releasing-coding.md
+rule-block-schema.md
+selector-mode-guide.md
+tdd-guide.md
+teamvault-conventions.md
+test-pyramid-triggers.md
+vue3-typescript-frontend-guide.md
+[11:09:41] [system: task_progress]
+[11:09:41] $ ls -la && echo "---prompts---" && ls prompts/ && echo "---command pkg---" && ls pkg/command/ 2>&1 && echo "---mount config candidates---" && cat .dark-factory.yaml darkfactory.yaml dark-factory.yaml …
+[11:09:42] [system: task_progress]
+[11:09:42] $ ls pkg/command/ | grep -iE 'period|export|command_suite|task_create' ; echo "=== decrementor file exists? ===" ; ls -la pkg/command/period_token_decrementor.go pkg/command/period_token_decrementor_te…
+[11:09:42] ⚠ [Bash] error: Exit code 2\ncommand_suite_test.go\nexport_test.go\nperiod_token_decrementor.go\nperiod_token_decrementor_test.go\ntask_create_task_executor.go\ntask_create_task_executor_test.go\n=== decrementor file exists? ===\nls: cannot access 'pkg/command/period_token_ranking.go': No such file or directory\n-rw-r--r-- 1 node node  305 Jul  8 10:20 pkg/command/export_test.go\n-rw-r--r-- 1 node node 4317 Jul …
+[11:09:42] [system: task_progress]
+[11:09:42] [read] /workspace/pkg/command/period_token_decrementor.go
+[11:09:42]   → 125 lines read
+[11:09:43] [system: task_progress]
+[11:09:43] $ dark-factory config 2>&1 | head -50; echo "---EXIT $?---"
+[11:09:45] [system: task_progress]
+[11:09:45] $ ls prompts/ 2>/dev/null; echo "---GITREMOTE---"; git remote get-url origin 2>&1; echo "---SIBLING PROMPTS---"; ls prompts/*.md 2>/dev/null
+[11:09:45] ⚠ [bash output]
+1-spec-004-ranking-core-and-delete-decrementor.md
+2-spec-004-scan-and-collapse-hook.md
+3-spec-004-wire-lookback-env-docs-changelog.md
+completed
+in-progress
+log
+---GITREMOTE---
+fatal: not a git repository (or any parent up to mount point /)
+Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+---SIBLING PROMPTS---
+prompts/1-spec-004-ranking-core-and-delete-decrementor.md
+prompts/2-spec-004-scan-and-collapse-hook.md
+prompts/3-spec-004-wire-lookback-env-docs-changelog.md
+[11:09:46] [system: task_progress]
+[11:09:46] [read] /workspace/pkg/command/export_test.go
+[11:09:46]   → 8 lines read
+[11:09:47] [system: task_progress]
+[11:09:47] [read] /workspace/pkg/command/task_create_task_executor.go (offset=195, limit=75)
+[11:09:47]   → 74 lines read
+[11:09:47] [system: task_progress]
+[11:09:47] [read] /workspace/pkg/command/period_token_decrementor_test.go
+[11:09:47]   → 67 lines read
+[11:09:47] [system: task_progress]
+[11:09:47] $ cd /workspace\necho "=== ranking core (prompt-1 dep) ==="\nls pkg/command/period_token_ranking.go 2>&1\ngrep -rn "func rankSameSlugCandidatesDescending\|func splitTitleToken\|func parsePeriodTokenOrd…
+[11:09:47] ⚠ [bash output]
+=== ranking core (prompt-1 dep) ===
+ls: cannot access 'pkg/command/period_token_ranking.go': No such file or directory
+=== task_create_task_executor.go anchors ===
+37:func NewCreateTaskExecutor(
+80:			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
+147:func resolveCreateTaskRelPath(
+181:func isNotFoundReadError(err error) bool {
+211:func supersedePriorRecurringTask(
+264:func isEligibleForSupersede(cmd task.CreateCommand) bool {
+285:func readPriorForSupersede(
+312:func priorIsInProgress(
+349:func transitionPrior(
+380:func buildSupersedeModifyFn(
+[11:09:48] [system: task_progress]
+[11:09:48] [read] /workspace/main.go
+[11:09:48]   → 216 lines read
+[11:09:53] [system: task_progress]
+[11:09:53] $ cd /workspace\necho "=== current supersedePriorRecurringTask signature (211) ==="\nsed -n '211,230p' pkg/command/task_create_task_executor.go\necho "=== NewCreateTaskExecutor sig (37) ==="\nsed -n '3…
+[11:09:54] [system: task_progress]
+[11:09:54] [read] /workspace/pkg/factory/factory.go
+[11:09:54] ⚠ [bash output]
+		glog.Warningf(
+			"auto-supersede: cannot decrement title %q for %s: %v",
+			cmd.Title,
+			cmd.TaskIdentifier,
+			err,
+		)
+		return
+=== NewCreateTaskExecutor sig (37) ===
+func NewCreateTaskExecutor(
+	gitClient gitclient.GitClient,
+	taskDir string,
+	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
+) cdb.CommandObjectExecutorTx {
+	return cdb.CommandObjectExecutorTxFunc(
+		task.CreateCommandOperation,
+		true,
+		func(ctx context.Context, tx libkv.Tx, commandObject cdb.CommandObject) (*base.EventID, base.Event, error) {
+			var cmd task.CreateCommand
+			if err := commandObject.Command.Data.MarshalInto(ctx, &cmd); err != nil {
+[11:09:54] [system: task_progress]
+[11:09:54] $ cd /workspace\necho "=== GitClient interface 298-342 ==="\nsed -n '298,342p' pkg/gitrestclient/git_rest_client.go\necho "=== ListFiles signature grep ==="\ngrep -rn "ListFiles(ctx context.Context" pk…
+[11:09:54] ⚠ [bash output]
+		ctx context.Context,
+		absPath string,
+		modify func(current []byte) ([]byte, error),
+		message string,
+	) error
+	// Path returns the local clone path.
+	Path() string
+	// ListFiles returns relative file paths under the repo root matching the single-level
+	// glob pattern (e.g. "tasks/*.md"). Paths are relative to the repo root.
+	ListFiles(ctx context.Context, glob string) ([]string, error)
+	// ReadFile reads the file at relPath (relative to repo root, e.g. "tasks/foo.md")
+	// and returns its content.
+	ReadFile(ctx context.Context, relPath string) ([]byte, error)
+	// WriteFile writes content to relPath (relative to repo root) on local disk.
+	// It does NOT commit or push — use AtomicWriteAndCommitPush for that.
+	WriteFile(ctx context.Context, relPath string, content []byte) error
+}
+=== ListFiles signature grep ===
+pkg/gitrestclient/git_client_adapter.go:111:func (a *gitRestGitClientAdapter) ListFiles(ctx context.Context, glob string) ([]string, error) {
+pkg/gitrestclient/git_rest_client.go:335:	ListFiles(ctx context.Context, glob string) ([]string, error)
+[11:09:54] [system: task_progress]
+[11:09:54] [read] /workspace/pkg/command/task_create_task_executor.go (offset=1, limit=35)
+[11:09:56]   → 34 lines read
+[11:09:56] [system: task_progress]
+[11:09:56] $ echo "=== test file line 432 area ===" && sed -n '425,445p' pkg/command/task_create_task_executor_test.go && echo "=== import block test ===" && sed -n '1,26p' pkg/command/task_create_task_executor_t…
+[11:09:56] ⚠ [bash output]
+
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/command"
+)
+=== callers of the 4 helpers + isEligible ===
+pkg/command/task_create_task_executor.go:80:			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
+pkg/command/task_create_task_executor.go:205:// supersedePriorRecurringTask transitions the prior-period recurring-task instance
+pkg/command/task_create_task_executor.go:211:func supersedePriorRecurringTask(
+pkg/command/task_create_task_executor.go:241:	priorContent, err := readPriorForSupersede(ctx, gitClient, priorRelPath, cmd.TaskIdentifier)
+pkg/command/task_create_task_executor.go:245:	if !priorIsInProgress(ctx, priorContent, priorRelPath, cmd.TaskIdentifier) {
+pkg/command/task_create_task_executor.go:248:	transitionPrior(
+pkg/command/task_create_task_executor.go:282:// readPriorForSupersede reads the prior file. Returns (nil, nil) on a
+pkg/command/task_create_task_executor.go:285:func readPriorForSupersede(
+pkg/command/task_create_task_executor.go:309:// priorIsInProgress parses the prior file's frontmatter and reports whether
+pkg/command/task_create_task_executor.go:312:func priorIsInProgress(
+pkg/command/task_create_task_executor.go:347:// transitionPrior performs the read-modify-write that transitions the prior
+pkg/command/task_create_task_executor.go:349:func transitionPrior(
+pkg/command/task_create_task_executor.go:360:	modify := buildSupersedeModifyFn(ctx, newRelPath, ts)
+pkg/command/task_create_task_executor.go:378:// buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
+pkg/command/task_create_task_executor.go:380:func buildSupersedeModifyFn(
+[11:09:58]   → 51 lines read
+[11:09:58] [system: task_progress]
+[11:09:58] $ cd /workspace\necho "=== grep k int in factory ==="; grep -n "k int" pkg/factory/factory.go\necho "=== grep literal 7 / TODO spec-004 in main.go ==="; grep -n "spec-004\|TODO" main.go\necho "=== Crea…
+[11:10:04] [system: task_progress]
+[11:10:04] [read] /workspace/main_argument_parse_test.go
+[11:10:04]   → 49 lines read
+[11:10:04] [system: task_progress]
+[11:10:04] [read] /workspace/docs/period-token-semantics.md
+[11:10:04]   → 40 lines read
+[11:10:05] [system: task_progress]
+[11:10:05] $ echo "=== which imports used only in the deleted region (222-256)? ===" && for sym in "filepath\." "strings\." "result\." "libtime\." "time\."; do echo -n "$sym : total="; grep -cn "$sym" pkg/command…
+[11:10:05] ⚠ [bash output]
+=== does docs/period-token-semantics.md mention recognition order Daily,Weekday,Weekly...? ===
+11:| Daily | `YYYY-MM-DD` | `YYYY-MM-DD` | one calendar day before the new instance's token date |
+12:| Weekday (list) | `YYYYWww-<3-letter-abbrev>` | `YYYYWww-<same abbrev>` | one ISO week before; weekday suffix preserved (e.g. `2026W27-sat` → `2026W26-sat`) |
+13:| Weekly | `YYYYWww` (e.g. `2026W27`) | `YYYYWww` | one ISO week before (e.g. `2026W27` → `2026W26`) |
+14:| Monthly | `YYYY-MM` | `YYYY-MM` | one calendar month before (e.g. `2026-06` → `2026-05`) |
+15:| Quarterly | `YYYYQq` (e.g. `2026Q2`) | `YYYYQq` | one quarter before (e.g. `2026Q2` → `2026Q1`); wrap to prior year at `Q1` → `Q4` |
+16:| Yearly | `YYYY` | `YYYY` | one calendar year before (e.g. `2026` → `2025`) |
+18:## Shape Recognition Order
+20:The hook identifies the kind by matching the suffix against these shapes in order:
+22:1. Daily (`YYYY-MM-DD`)
+23:2. Weekday (`YYYYWww-abc`)
+24:3. Weekly (`YYYYWww`)
+25:4. Monthly (`YYYY-MM`)
+26:5. Quarterly (`YYYYQq`)
+27:6. Yearly (`YYYY`)
+35:- **Quarterly year-boundary**: `2026Q1 → 2025Q4` (wraps to prior year)
+36:- **Weekly ISO-week-boundary**: `2026W01 → 2025W52` (wraps to prior year)
+37:- **Monthly year-boundary**: `2026-01 → 2025-12` (wraps to prior year)
+38:- **Daily year-boundary**: `2026-01-01 → 2025-12-31` (wraps to prior year)
+40:ISO-week and weekday arithmetic uses the Go `time` package's ISO-week helpers; the decrement must produce the same canonical token shape the publisher would have produced for the prior period.
+[11:10:06] [system: task_progress]
+[11:10:06] $ cd /workspace\necho "=== factory.go CreateCommandConsumer + NewCreateTaskExecutor call ==="\ngrep -n "func CreateCommandConsumer\|NewCreateTaskExecutor\|currentDateTime libtime\|prCommenter prcomment…
+[11:10:08] [system: task_progress]
+[11:10:08] $ cd /workspace\necho "=== main.go CreateCommandConsumer call (line 163) ==="\ngrep -n "factory.CreateCommandConsumer" main.go\nsed -n '155,175p' main.go\necho "=== all call sites grep ==="\ngrep -rn "…
+[11:10:08] ⚠ [bash output]
+	}
+	defer saramaClientProvider.Close()
+
+	resultWriter := result.NewResultWriter(gitClient, a.TaskDir, currentDateTime)
+	commandConsumer := factory.CreateCommandConsumer(
+		saramaClientProvider,
+		syncProducer,
+		db,
+		a.TopicPrefix,
+		resultWriter,
+		gitClient,
+		a.TaskDir,
+		a.VaultName,
+		currentDateTime,
+		prCommenter,
+	)
+
+=== all call sites grep ===
+main.go:163:	commandConsumer := factory.CreateCommandConsumer(
+pkg/factory/factory.go:40:		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime),
+[11:10:10] [system: task_progress]
+[11:10:10] $ cd /workspace\necho "=== usages OUTSIDE 222-256 for each import ==="\nfor sym in "filepath\." "strings\." "result\." "libtime\." "time\." ; do\n  echo "--- $sym ---"\n  grep -n "$sym" pkg/command/tas…
+[11:10:10] ⚠ [bash output]
+128:	absPath := filepath.Join(gitClient.Path(), relPath)
+152:	uuidRelPath := filepath.Join(taskDir, string(cmd.TaskIdentifier)+".md")
+172:	return filepath.Join(taskDir, cmd.Title+".md")
+359:	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
+--- strings\. ---
+164:	if strings.ContainsAny(cmd.Title, "/\\") {
+185:	return strings.Contains(err.Error(), "returned 404")
+--- result\. ---
+318:	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+386:		fmStr, err := result.ExtractFrontmatter(ctx, current)
+390:		body, err := result.ExtractBody(ctx, current)
+--- libtime\. ---
+41:	currentDateTime libtime.CurrentDateTimeGetter,
+215:	currentDateTime libtime.CurrentDateTimeGetter,
+352:	currentDateTime libtime.CurrentDateTimeGetter,
+--- time\. ---
+41:	currentDateTime libtime.CurrentDateTimeGetter,
+215:	currentDateTime libtime.CurrentDateTimeGetter,
+352:	currentDateTime libtime.CurrentDateTimeGetter,
+358:	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
+[11:10:13] [system: task_progress]
+[11:10:13] $ cd /workspace\necho "=== NewCreateTaskExecutor signature ==="; grep -rn "func NewCreateTaskExecutor" pkg/command/\necho "=== errors.Errorf idiom present ==="; grep -c "errors.Errorf" main.go\necho "=…
+[11:10:13] ⚠ [bash output]
+
+## Setup
+- [ ] task/controller deployed to dev (v0.20.12+)
+- [ ] Create a test task file with a known task_identifier:
+  ```bash
+  cat > ~/Documents/Obsidian/OpenClaw/24\ Tasks/Test\ Result\ Writeback.md << 'EOF'
+  ---
+  status: in_progress
+  phase: in_progress
+  assignee: backtest-agent
+  task_identifier: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  tags:
+    - agent-task
+=== use-git-rest scenario headers ===
+2:status: draft
+5:# Scenario: use-git-rest-for-vault-writes
+9:## Setup
+18:## Action
+70:## Expected
+81:## Cleanup
+[11:10:13] [system: task_progress]
+[11:10:13] [read] /workspace/main_internal_test.go
+[11:10:13]   → 106 lines read
+[11:10:13] [system: task_progress]
+[11:10:13] [read] /workspace/main_test.go
+[11:10:13]   → 31 lines read
+[11:10:17] [system: task_progress]
+[11:10:17] $ cd /workspace\necho "=== test NewCreateTaskExecutor constructions ==="\ngrep -n "command.NewCreateTaskExecutor" pkg/command/task_create_task_executor_test.go\necho "=== test package + harness bits ==…
+[11:10:22] ⚠ [bash output]
+320:				cmdObj := buildCmdObj(task.CreateCommand{
+339:				cmdObj := buildCmdObj(task.CreateCommand{
+360:					cmdObj := buildCmdObj(task.CreateCommand{
+379:					cmdObj := buildCmdObj(task.CreateCommand{
+398:					cmdObj := buildCmdObj(task.CreateCommand{
+417:					cmdObj := buildCmdObj(task.CreateCommand{
+432:		Context("supersede prior recurring task", func() {
+445:				cmdObj := buildCmdObj(task.CreateCommand{
+494:					cmdObj := buildCmdObj(task.CreateCommand{
+517:				cmdObj := buildCmdObj(task.CreateCommand{
+541:				cmdObj := buildCmdObj(task.CreateCommand{
+566:				cmdObj := buildCmdObj(task.CreateCommand{
+593:					cmdObj := buildCmdObj(task.CreateCommand{
+620:				cmdObj := buildCmdObj(task.CreateCommand{
+=== line 61-64 ===
+		clock = &libtimemocks.CurrentDateTimeGetter{}
+		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
+
+		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
+[11:10:22] [system: task_progress]
+[11:10:22] $ cd /workspace\necho "=== mocks GitClient methods ==="\ngrep -c "func (fake \*GitClient) ListFilesReturns\b\|func (fake \*GitClient) ListFilesReturnsOnCall\|func (fake \*GitClient) ListFilesCallCount\…
+[11:10:23] [system: task_progress]
+[11:10:23] $ cd /workspace\ncat > /tmp/ord_test.go <<'EOF'\npackage main\nimport ("fmt";"time";"sort")\nfunc isoWeekMonday(isoYear, week int) time.Time {\n	jan4 := time.Date(isoYear, time.January, 4, 0,0,0,0, tim…
+[11:10:23] ⚠ [Bash] error: Exit code 1\ngo: cannot run *_test.go files (/tmp/ord_test.go)
+[11:10:25] [system: task_progress]
+[11:10:25] $ cd /tmp && mv /tmp/ord_test.go /tmp/ordcheck.go && go run /tmp/ordcheck.go
+[11:10:25] [system: task_progress]
+[11:10:25] $ cd /workspace\necho "=== spec Non-goal opt-out verbatim check ==="; grep -n "per-schedule opt-out" specs/in-progress/004-recurring-task-supersede-scan-collapse.md\necho "=== go mod vendor in prompt =…
+[11:10:30] [system: task_progress]
+[11:10:30] $ cd /workspace\necho "=== readPriorForSupersede body (285) ==="\nsed -n '285,348p' pkg/command/task_create_task_executor.go\necho "=== resolveCreateTaskRelPath filepath.Join (147) ==="\nsed -n '147,16…
+[11:10:30] ⚠ [bash output]
+=== resolveCreateTaskRelPath filepath.Join (147) ===
+func resolveCreateTaskRelPath(
+	ctx context.Context,
+	taskDir string,
+	cmd task.CreateCommand,
+) string {
+	uuidRelPath := filepath.Join(taskDir, string(cmd.TaskIdentifier)+".md")
+
+	// Re-validate the command (defense-in-depth: sender may have been bypassed).
+	if err := cmd.Validate(ctx); err != nil {
+		glog.Warningf(
+			"create-task: Title validation failed for task %s (%v); falling back to UUID path",
+			cmd.TaskIdentifier, err,
+		)
+		return uuidRelPath
+	}
+
+	// Reject titles containing path separators to prevent path traversal.
+	if strings.ContainsAny(cmd.Title, "/\\") {
+		glog.Warningf(
+[11:10:39] [system: task_progress]
+[11:10:39] $ cd /workspace\necho "=== sibling prompts for spec 004 ===" && ls prompts/ | grep -E 'spec-004|004'\necho "=== prompt location ===" && ls prompts/1-spec-004-ranking-core-and-delete-decrementor.md prom…
+[11:10:40] [system: task_progress]
+[11:10:40] $ cd /workspace\necho "=== handler: relPath computation + AtomicWriteAndCommitPush (around line 60-90) ==="\nsed -n '55,85p' pkg/command/task_create_task_executor.go\necho "=== resolveCreateTaskRelPath…
+[11:10:43] ⚠ [bash output]
+		},
+	)
+}
+
+=== resolveCreateTaskRelPath title path (166-180) ===
+			"create-task: Title %q contains path separator; falling back to UUID path",
+			cmd.Title,
+		)
+		return uuidRelPath
+	}
+
+	return filepath.Join(taskDir, cmd.Title+".md")
+}
+
+// isNotFoundReadError reports whether a gitClient.ReadFile error means the file
+// does not exist (git-rest returns HTTP 404). git-rest's Get does not expose a
+// typed not-found sentinel, so this matches the "404" status embedded in the
+// wrapped error message produced by gitRestClient.Get
+// ("GET <path> returned 404: ..."). A nil error is NOT a not-found error and must
+// be handled by the caller before calling this helper.
+[11:10:43] [system: task_progress]
+[11:10:43] $ cd /workspace\necho "=== docs present ==="\nls docs/\necho "--- period-token-semantics.md exists? ---"\nls docs/period-token-semantics.md 2>&1\necho "=== taskDir value used in tests ==="\ngrep -n "ta…
+[11:10:47] [system: task_progress]
+[11:10:47] $ cd /workspace\necho "=== count of Context blocks in test file + supersede block extent ===" \ngrep -n 'Context(' pkg/command/task_create_task_executor_test.go\necho "=== total lines ===" && wc -l pkg…
+[11:10:47] ⚠ [bash output]
+142:		Context("missing status in frontmatter", func() {
+157:		Context("title path already occupied (collision)", func() {
+189:		Context("new filename", func() {
+206:		Context("collision with a different task_identifier", func() {
+228:		Context("transient git-rest read error", func() {
+247:		Context("success: new file created", func() {
+277:		Context("git write error", func() {
+296:		Context("valid title", func() {
+317:		Context("invalid title (contains forbidden char)", func() {
+336:		Context("empty title", func() {
+355:		Context("vault routing", func() {
+432:		Context("supersede prior recurring task", func() {
+=== total lines ===
+709 pkg/command/task_create_task_executor_test.go
+=== does supersede context use decrementor-specific helpers/re-export? ===
+434:			priorInProgressContent := []byte(
+443:				fakeGit.ReadFileReturnsOnCall(1, priorInProgressContent, nil)
+473:				resultBytes, modErr := modifyFn([]byte(priorInProgressContent))
+480:				).To(ContainSubstring("superseded_by: tasks/Aquascape PWC - 2026W27.md"))
+663:				fakeGit.ReadFileReturnsOnCall(1, priorInProgressContent, nil)
+[11:10:58] [system: task_progress]
+[11:10:58] $ cd /workspace\necho "=== task.CreateCommand struct ==="\nCT=$(grep -rln "type CreateCommand struct" $(go env GOPATH)/pkg/mod/ 2>/dev/null | grep "agent" | head -1); echo "file: $CT"\n[ -n "$CT" ] && …
+[11:10:58] ⚠ [bash output]
+=== task.CreateCommand struct ===
+file: 
+=== lib.TaskFrontmatter type ===
+=== frozen commit substring in transitionPrior ===
+225:			"auto-supersede: cannot decrement title %q for %s: %v",
+234:			"auto-supersede: computed prior title %q contains path separator; skipping for %s",
+268:			Infof("auto-supersede: skip %s (created_by=%q != recurring-task-creator)", cmd.TaskIdentifier, createdBy)
+278:		Infof("auto-supersede: skip %s (auto_abort_prior not true — opt-in required)", cmd.TaskIdentifier)
+297:			Infof("auto-supersede: no prior instance at %s for %s (first-ever instance)", priorRelPath, taskIdentifier)
+301:		"auto-supersede: read prior %s failed for %s: %v",
+321:			"auto-supersede: extract frontmatter from prior %s failed for %s: %v",
+331:			"auto-supersede: parse prior frontmatter %s failed for %s: %v",
+341:			Infof("auto-supersede: prior %s status=%q (not in_progress), no-op for %s", priorRelPath, status, taskIdentifier)
+361:	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
+364:			"auto-supersede: write prior %s failed for %s: %v",
+372:		"auto-supersede: %s -> %s (prior superseded by new instance)",
+[11:11:09] [system: task_progress]
+[11:11:09] $ cd /workspace\necho "=== agent module version ==="\ngrep -i "bborbe/agent " go.mod\necho "=== search agent module for CreateCommand ==="\nfind $(go env GOPATH)/pkg/mod/ -path "*bborbe/agent*" -name "…
+[11:11:15] [system: task_notification]
+[11:11:15]   ← agent reply: All checks pass. The only "operator" hit is inside Requirement 7, which authors a scenario *file* (a markdown artifact describing the live check) — the container writes the file, it does not itself r…
+[11:11:16] [system: task_progress]
+[11:11:16] $ cd /workspace\necho "=== lib.TaskFrontmatter usage in tests ==="\ngrep -n "lib.TaskFrontmatter\|Frontmatter:" pkg/command/task_create_task_executor_test.go | head\necho "=== existing supersede test c…
+[11:11:16] ⚠ [bash output]
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+
+				// AtomicWriteAndCommitPush for new instance.
+				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				// Prior-file read occurred.
+				Expect(fakeGit.ReadFileCallCount()).To(Equal(2))
+				// AtomicReadModifyWriteAndCommitPush called to abort prior.
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+
+				// Capture modify args.
+				_, absPath, modifyFn, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(
+					0,
+				)
+				Expect(absPath).To(HaveSuffix("Aquascape PWC - 2026W26.md"))
+				Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
+[11:11:23] [system: task_progress]
+[11:11:23] $ cd /workspace\necho "=== transitionPrior body (349-380) ==="\nsed -n '349,380p' pkg/command/task_create_task_executor.go
+[11:11:23] ⚠ [bash output]
+	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
+	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
+		glog.Warningf(
+			"auto-supersede: write prior %s failed for %s: %v",
+			priorRelPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	glog.Infof(
+		"auto-supersede: %s -> %s (prior superseded by new instance)",
+		priorRelPath,
+		newRelPath,
+	)
+}
+
+// buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
+// that transitions a prior-period recurring-task instance to aborted.
+func buildSupersedeModifyFn(
+[11:11:33] [system: task_progress]
+[11:11:33] $ cd /workspace\necho "=== errors.Wrapf prevalence ==="\ngrep -rc "errors.Wrapf" pkg/ | grep -v ":0" | head\necho "--- fmt.Errorf in prompt requirements? ---"\ngrep -c "fmt.Errorf" prompts/2-spec-004-s…
+[11:11:33] ⚠ [bash output]
+pkg/prcomment/pr_commenter.go:3
+pkg/gitrestclient/git_rest_client.go:19
+pkg/command/planning_retry.go:11
+pkg/command/task_increment_frontmatter_executor.go:7
+pkg/gitrestclient/git_client_adapter.go:6
+pkg/routing/routing.go:1
+pkg/command/period_token_decrementor.go:1
+pkg/command/task_create_task_executor.go:10
+--- fmt.Errorf in prompt requirements? ---
+0
+=== go mod vendor / cross-repo / kubectl in prompt ===
+none
+=== absolute paths in prompt (non /workspace, non /home/.claude) ===
+none
+=== filename prefix / status ===
+---
+spec: ["004"]
+status: draft
+created: "2026-07-08T09:11:00Z"
+---
+[11:11:40] [system: task_notification]
+[11:11:40]   ← agent reply: The `Context("supersede prior recurring task", ...)` block at line 432 is the LAST context block (before it, all other contexts at lines 93-355 must still pass — the prompt correctly says "leave all …
+[11:11:46] [system: task_progress]
+[11:11:46] $ cd /workspace\necho "=== dod.md ==="\nls docs/dod.md 2>&1\necho "=== prompt-writing guides in coding plugin ==="\nls /home/node/.claude/plugins/marketplaces/coding/docs/ | grep -iE "prompt|dark" || e…
+[11:11:46] ⚠ [bash output]
+=== dod.md ===
+ls: cannot access 'docs/dod.md': No such file or directory
+=== prompt-writing guides in coding plugin ===
+no prompt-specific guide
+=== spec Failure Modes coverage: list error, per-candidate read, token no-match, glob, redelivery, deep backlog ===
+prompt addresses (grep):
+32
+[11:12:51] [system: task_notification]
+[11:12:51]   ← agent reply: Note: `docs/dod.md` (the `validationPrompt` referenced in `.dark-factory.yaml`) doesn't exist, but that's a repo-config concern, not this prompt's concern. No prompt-writing guide in the coding plugi…
+[11:12:56] [system: thinking_tokens]
+[11:12:56] [system: thinking_tokens]
+[11:12:57] [system: thinking_tokens]
+[11:12:57] 💭 All three audits completed successfully. Now I need to:
+1. Report the results
+2. Call `dark-factory spec mark-prompted 004-recurring-task-supersede-scan-collapse`
+
+Let me do both.
+[11:13:17] ## Generated Prompts
+
+**Files created:**
+- `/workspace/prompts/1-spec-004-ranking-core-and-delete-decrementor.md`
+- `/workspace/prompts/2-spec-004-scan-and-collapse-hook.md`
+- `/workspace/prompts/3-spec-004-wire-lookback-env-docs-changelog.md`
+
+**Key design decisions:**
+1. **Prompt 1** — Extracts the six existing regexes and `decrementISOWeek` helper into `period_token_ranking.go` with a pure `parsePeriodTokenOrdinal(token) → int64` function; adds `rankSameSlugCandidatesDescending` for descending-order ranking with cross-ISO-week/year boundary correctness (e.g. `2025W52` < `2026W01`); deletes `period_token_decrementor.go` and its test; replaces `supersedePriorRecurringTask` body with a no-op stub (fail-loud until prompt 2 ships). Handles the tricky ordinal arithmetic verified by execution — `2025W52` (1766361600) < `2026W01` (1766966400), equal-ordinal weekdays share same Monday-ordinal.
+
+2. **Prompt 2** — Replaces the no-op stub with the scan-and-collapse hook: lists slug-scoped candidates via `GitClient.ListFiles` (with glob-safety fallback to list-all + in-memory prefix filter), excludes the new instance by relPath, caps reads to K (`inspected++` before each read), transitions every `in_progress` candidate whose ordinal ≤ new ordinal (enabling same-week sibling collapse), best-effort per file (errors logged/swallowed). All five frozen helpers (`isEligibleForSupersede`, `readPriorForSupersede`, `priorIsInProgress`, `transitionPrior`, `buildSupersedeModifyFn`) reused verbatim.
+
+3. **Prompt 3** — Wires `SUPERSEDE_LOOKBACK` env var through `application` struct → `factory.CreateCommandConsumer` → `NewCreateTaskExecutor(k int)`, default 7, startup guard for ≤ 0; rewrites `docs/period-token-semantics.md` (removes decrement table, adds scan-and-collapse contract); adds `feat:` changelog entry; creates `scenarios/004-recurring-task-supersede-collapse.md` with the live Kafka-replay post-deploy verification steps.
+
+**Execution order:** strictly sequential (1 → 2 → 3). Both prompt 2 and 3 carry explicit fail-loud dependency gates.
+
+**Open questions surfaced (all resolved within prompts):**
+- No blocking open questions. The one scenario decision (no existing supersede scenario → create new) was resolved per spec guidance.
+- Recommendation 1 from audit 3 (reflection assertion on real `application` struct field to catch tag typos) was noted but deferred — verification greps provide a backstop.
+
+---
+
+## Audit Findings
+
+### prompts/1-spec-004-ranking-core-and-delete-decrementor.md
+
+**Score: 9/10 — Excellent**
+
+All code references verified exact against source. Ordinal arithmetic proven correct by execution (ISO-week+year boundary, equal-ordinal weekdays, descending-title tie-break). Dependency gating is clean with a fail-visible `glog.V(3)` marker referencing "spec-004 prompt 2". Scope discipline is exemplary — K-config, glob-safety, and I/O scan correctly deferred to prompts 2/3. Container-autonomous throughout.
+
+**Minor notes (non-blocking):**
+- Req 6 contains a factually-wrong-but-harmless sentence about imports becoming unused — the five candidate imports all remain used by the four kept helpers. The "run `go build` and remove ONLY imports the compiler reports as unused" guardrail prevents any bad edit.
+- `_ = newRelPath` / `_ = currentDateTime` blank assignments are unnecessary noise (Go doesn't error on unused function parameters) but harmless.
+
+**Verdict:** Ship as-is.
+
+---
+
+### prompts/2-spec-004-scan-and-collapse-hook.md
+
+**Score: 9/10 — Excellent**
+
+Every cited symbol, line number, and signature verified exact — including the 7-arg `transitionPrior` call, the `tasks/<title>.md` back-pointer path from `resolveCreateTaskRelPath`, and all five test construction sites with precise vault strings. Fail-loud dependency gate on prompt 1's `rankSameSlugCandidatesDescending` is correct. Security requirements (path-traversal guard, glob-metachar fallback, K-bounded reads with `inspected++` before read) map 1:1 to the spec's Security/Abuse section. All 8 spec failure-mode rows in prompt-2 scope are covered by requirements/AC.
+
+**Minor notes (non-blocking):**
+- Context lines 34/56 assert prior-1 already-applied state — expected since prompt 2 runs after prompt 1; the dependency gate protects correctness.
+- Verification `go build ./...` will fail until prompt 1 lands — correct given the gate.
+
+**Verdict:** Ship as-is.
+
+---
+
+### prompts/3-spec-004-wire-lookback-env-docs-changelog.md
+
+**Score: 9/10 — Excellent**
+
+All cited symbols and line numbers verified exact against the current tree. Dependency gate on prompt 2's `k int` is fail-loud and correct. Sibling entry-point check (Req 8) confirms `main.go` is the only `CreateCommandConsumer` caller — verified. Container-autonomous: the live-replay steps are deferred into the authored scenario file, not executed by the prompt. Changelog entry uses `feat:` prefix per convention.
+
+**Minor notes (non-blocking):**
+- Req 4's boundary test uses a decoy struct rather than asserting on the real `application` field — the verification greps provide a backstop; a reflection assertion on the real struct (mirroring existing `TestApplicationVaultNameFieldExists`) would close the gap.
+- Verification uses `go build ./...` and `go test .` instead of `make test` — both work, but `make test` aligns with project CLAUDE.md house style.
+- Dependency gate is in `<context>`, not a numbered `<requirement>` — an executor scanning only `<requirements>` could miss it; moving to Req 0 would improve discoverability.
+
+**Verdict:** Ship as-is.
+
+---
+
+Now marking the spec as prompted:
+
+[11:13:17] $ dark-factory spec mark-prompted 004-recurring-task-supersede-scan-collapse
+[11:13:17] ⚠ rate-limit:  0% status=allowed
+[11:13:17] ⚠ [Bash] error: Exit code 127\n(eval):1: command not found: dark-factory
+[11:13:19] [system: thinking_tokens]
+[11:13:19] [system: thinking_tokens]
+[11:13:20] 💭 The `dark-factory` command is not found in the container. Let me try to find where it is.
+[11:13:20] $ which dark-factory 2>/dev/null || find /home/node -name "dark-factory" -type f 2>/dev/null | head -5
+[11:13:22] [system: thinking_tokens]
+[11:13:22] [system: thinking_tokens]
+[11:13:23] [system: thinking_tokens]
+[11:13:23] [system: thinking_tokens]
+[11:13:24] [system: thinking_tokens]
+[11:13:24] [system: thinking_tokens]
+[11:13:24] [system: thinking_tokens]
+[11:13:25] [system: thinking_tokens]
+[11:13:25] 💭 The dark-factory binary is not installed in this container. The prompt-creator agent successfully wrote the files, but the `dark-factory spec mark-prompted` command is not available. I should report this in my completion.
+
+Wait, looking at the skill definitions - the dark-factory commands are available as skills, not as bash commands. The `/dark-factory:generate-prompts-for-spec` is a skill, not a binary. Let me try using the Skill tool to invoke `dark-factory:status` or see if there's a way to …
+[11:13:25] [skill] /dark-factory:status
+[11:13:28] [system: thinking_tokens]
+[11:13:29] [system: thinking_tokens]
+[11:13:29] 💭 Let me run the dark-factory status command.
+[11:13:29] $ dark-factory status
+[11:13:29] ⚠ [Bash] error: Exit code 127\n(eval):1: command not found: dark-factory
+[11:13:31] [system: thinking_tokens]
+[11:13:31] [system: thinking_tokens]
+[11:13:31] [system: thinking_tokens]
+[11:13:32] 💭 The `dark-factory` binary isn't installed in this container. Let me check if the spec file itself can be updated directly, or if there's an alternative way to mark it as prompted. Let me look at the spec file to see its current status and update it manually if needed.
+[11:13:33] $ ls -la /workspace/.dark-factory.yaml 2>/dev/null || echo "not found"; ls /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+[11:13:34] [system: thinking_tokens]
+[11:13:35] [system: thinking_tokens]
+[11:13:35] [system: thinking_tokens]
+[11:13:35] 💭 The `.dark-factory.yaml` exists but the `dark-factory` binary isn't in PATH. Let me try to find it or run it via another method. Let me check the config for what binary it expects.
+[11:13:35] [read] /workspace/.dark-factory.yaml
+[11:13:35]   → 7 lines read
+[11:13:37] [system: thinking_tokens]
+[11:13:38] [system: thinking_tokens]
+[11:13:38] [system: thinking_tokens]
+[11:13:39] 💭 The dark-factory binary isn't installed in this container. The spec's status is `generating` per the frontmatter I read earlier. I need to update the spec status to `prompted`. Let me do that directly by editing the spec file.
+[11:13:39] The `dark-factory` binary isn't in PATH in this container. I'll update the spec status directly:
+
+[11:13:40] [edit] /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md
+    - status: generating\ntags:\n    - dark-factory\n    - spec\n…
+    + status: prompted\ntags:\n    - dark-factory\n    - spec\nap…
+[11:13:40]   → The file /workspace/specs/in-progress/004-recurring-task-supersede-scan-collapse.md has been updated successfully. (fil…
+[11:13:42] [system: thinking_tokens]
+[11:13:42] [system: thinking_tokens]
+[11:13:42] 💭 Done. The spec has been marked as prompted by updating the status from `generating` to `prompted` and adding the `prompted` timestamp.
+[11:13:43] Done. Spec status updated from `generating` → `prompted`. The `dark-factory` binary wasn't available in this container to run `dark-factory spec mark-prompted`, so I updated the status directly in the spec frontmatter.
+[11:13:43] result: Done. Spec status updated from `generating` → `prompted`. The `dark-factory` binary wasn't available in this container to run `dark-factory spec mark-prompted`, so I updated the status directly in the spec frontmatter. | duration: 804142ms | cost: $6.9997 | tokens: 248068 in / 4276 out

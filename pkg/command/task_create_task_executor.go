@@ -208,6 +208,8 @@ func buildCreateTaskContent(ctx context.Context, cmd task.CreateCommand) ([]byte
 // and swallowed so the already-written new instance is never rolled back.
 // newRelPath is the repo-root-relative path of the just-written new instance
 // (used as the superseded_by back-pointer).
+//
+//nolint:unparam // Parameters kept for prompt 2 rewrite; body is a transitional no-op.
 func supersedePriorRecurringTask(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -219,41 +221,13 @@ func supersedePriorRecurringTask(
 	if !isEligibleForSupersede(cmd) {
 		return
 	}
-	priorTitle, err := decrementRecurringTaskTitle(ctx, cmd.Title)
-	if err != nil {
-		glog.Warningf(
-			"auto-supersede: cannot decrement title %q for %s: %v",
-			cmd.Title,
-			cmd.TaskIdentifier,
-			err,
-		)
-		return
-	}
-	if strings.ContainsAny(priorTitle, "/\\") {
-		glog.Warningf(
-			"auto-supersede: computed prior title %q contains path separator; skipping for %s",
-			priorTitle,
-			cmd.TaskIdentifier,
-		)
-		return
-	}
-	priorRelPath := filepath.Join(taskDir, priorTitle+".md")
-	priorContent, err := readPriorForSupersede(ctx, gitClient, priorRelPath, cmd.TaskIdentifier)
-	if err != nil || priorContent == nil {
-		return
-	}
-	if !priorIsInProgress(ctx, priorContent, priorRelPath, cmd.TaskIdentifier) {
-		return
-	}
-	transitionPrior(
-		ctx,
-		gitClient,
-		currentDateTime,
-		priorRelPath,
-		priorTitle,
-		newRelPath,
-		cmd.TaskIdentifier,
-	)
+	// Scan-and-collapse lands in spec-004 prompt 2; until then this hook is a no-op.
+	glog.V(3).
+		Infof("auto-supersede: scan-and-collapse not yet wired for %s (spec-004 prompt 2)", cmd.TaskIdentifier)
+	// Interim references so `unused`/`unparam` stay green while the scan (prompt 2)
+	// is not yet wired. Prompt 2 rewrites this whole body and deletes this block.
+	_, _, _, _, _ = ctx, gitClient, taskDir, currentDateTime, newRelPath
+	_ = []any{readPriorForSupersede, priorIsInProgress, transitionPrior, buildSupersedeModifyFn}
 }
 
 // isEligibleForSupersede reports whether cmd is a recurring-task instance
