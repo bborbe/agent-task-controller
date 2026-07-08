@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-07-08T08:40:06Z"
 generating: "2026-07-08T09:00:18Z"
 prompted: "2026-07-08T10:20:00Z"
+verifying: "2026-07-08T11:52:43Z"
 branch: dark-factory/recurring-task-supersede-scan-collapse
 ---
 
