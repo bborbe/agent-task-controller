@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - feat: add bounded scan-and-collapse supersede logic to `CreateTaskExecutor` — after a recurring-task instance is materialized, lists same-slug candidates via `ListFiles`, ranks them most-recent-first, and transitions every still-in_progress candidate older than the new instance to `aborted`; capped at look-back bound `k` (default 7); glob-injection and path-traversal safe; best-effort per file [spec-004 prompt 2]
 
+- feat: expose the supersede look-back bound K as `SUPERSEDE_LOOKBACK` controller env var (default 7); wired from application config through factory into `CreateTaskExecutor`; non-positive value fails startup with a clear error; the scan-and-collapse now self-heals missed-day gaps and multi-stream weekday schedules [spec-004 prompt 3]
+
 ## v0.1.1
 
 - refactor: converge build to the bborbe/kafka-topic-reader publish-only model — make buca now builds and pushes docker.io/bborbe/agent-task-controller:$(VERSION); deploy machinery removed (moves to the quant config repo / helm chart).

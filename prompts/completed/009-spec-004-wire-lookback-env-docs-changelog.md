@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [004-recurring-task-supersede-scan-collapse]
+summary: Added SUPERSEDE_LOOKBACK config field (default 7) wired from application struct through factory into CreateTaskExecutor, replaced literal 7 placeholder, added startup guard for non-positive values, created argument-parse test, rewrote period-token-semantics.md to scan-and-collapse contract, added CHANGELOG feat entry, and created supersede scenario
+execution_id: agent-task-controller-weekday-collapse-exec-009-spec-004-wire-lookback-env-docs-changelog
+dark-factory-version: v0.191.0
 created: "2026-07-08T09:12:00Z"
 queued: "2026-07-08T11:18:41Z"
+started: "2026-07-08T11:43:59Z"
+completed: "2026-07-08T11:52:43Z"
 branch: dark-factory/recurring-task-supersede-scan-collapse
 ---
 
