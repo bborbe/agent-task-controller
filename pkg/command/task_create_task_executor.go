@@ -39,6 +39,7 @@ func NewCreateTaskExecutor(
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	k int,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		task.CreateCommandOperation,
@@ -77,7 +78,7 @@ func NewCreateTaskExecutor(
 			if err := writeTaskFile(ctx, gitClient, relPath, cmd); err != nil {
 				return nil, nil, err
 			}
-			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
+			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
@@ -202,32 +203,154 @@ func buildCreateTaskContent(ctx context.Context, cmd task.CreateCommand) ([]byte
 	return marshalFileContent(ctx, fm, cmd.Body)
 }
 
-// supersedePriorRecurringTask transitions the prior-period recurring-task instance
-// to status: aborted after a new instance is materialized. It is a best-effort
-// hook: every failure path (ineligible, no prior, read/parse/write error) is logged
-// and swallowed so the already-written new instance is never rolled back.
-// newRelPath is the repo-root-relative path of the just-written new instance
-// (used as the superseded_by back-pointer).
-//
-//nolint:unparam // Parameters kept for prompt 2 rewrite; body is a transitional no-op.
+// supersedePriorRecurringTask collapses a recurring schedule to a single open
+// instance: after a new instance is materialized it lists same-slug candidates,
+// excludes the new instance, ranks them most-recent-first, and transitions every
+// still-in_progress candidate whose period-token is strictly older than the new
+// instance's token to aborted — capped at the k most-recent such candidates.
+// Best-effort: list/read/parse/write errors on any single file are logged and
+// swallowed; the already-written new instance is never rolled back. newRelPath is
+// the repo-root-relative path of the new instance (the superseded_by back-pointer).
 func supersedePriorRecurringTask(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	taskDir string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	k int,
 	cmd task.CreateCommand,
 	newRelPath string,
 ) {
 	if !isEligibleForSupersede(cmd) {
 		return
 	}
-	// Scan-and-collapse lands in spec-004 prompt 2; until then this hook is a no-op.
-	glog.V(3).
-		Infof("auto-supersede: scan-and-collapse not yet wired for %s (spec-004 prompt 2)", cmd.TaskIdentifier)
-	// Interim references so `unused`/`unparam` stay green while the scan (prompt 2)
-	// is not yet wired. Prompt 2 rewrites this whole body and deletes this block.
-	_, _, _, _, _ = ctx, gitClient, taskDir, currentDateTime, newRelPath
-	_ = []any{readPriorForSupersede, priorIsInProgress, transitionPrior, buildSupersedeModifyFn}
+	slug, newToken, ok := splitTitleToken(cmd.Title)
+	if !ok {
+		glog.V(3).Infof(
+			"auto-supersede: new title %q has no period-token suffix, skipping for %s",
+			cmd.Title, cmd.TaskIdentifier,
+		)
+		return
+	}
+	newOrdinal, err := parsePeriodTokenOrdinal(ctx, newToken)
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede: new token %q unrecognized for %s: %v",
+			newToken, cmd.TaskIdentifier, err,
+		)
+		return
+	}
+	titles, err := listSameSlugCandidateTitles(ctx, gitClient, taskDir, slug)
+	if err != nil {
+		return
+	}
+	// Exclude the new instance and rank.
+	var kept []string
+	for _, t := range titles {
+		if t == cmd.Title {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	ranked := rankSameSlugCandidatesDescending(ctx, kept)
+	collapseCandidates(
+		ctx,
+		gitClient,
+		taskDir,
+		currentDateTime,
+		k,
+		ranked,
+		newOrdinal,
+		newRelPath,
+		cmd,
+	)
+}
+
+// listSameSlugCandidateTitles lists task files scoped to a schedule's slug and
+// returns their TITLES (basename without ".md"), filtered to those whose title
+// starts with "<slug> - ". It uses a slug-scoped glob when the slug contains no
+// glob metacharacters; otherwise it lists all task files and filters in memory
+// (glob-injection defense). List errors are logged and returned.
+func listSameSlugCandidateTitles(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	slug string,
+) ([]string, error) {
+	prefix := slug + " - "
+	var glob string
+	if strings.ContainsAny(slug, "*?[]\\") {
+		glob = filepath.Join(taskDir, "*.md")
+		glog.V(2).Infof(
+			"auto-supersede: slug %q contains glob metacharacters; falling back to list-all + in-memory filter",
+			slug,
+		)
+	} else {
+		glob = filepath.Join(taskDir, slug+" - *.md")
+		glog.V(3).Infof("auto-supersede: listing slug-scoped glob %q", glob)
+	}
+	relPaths, err := gitClient.ListFiles(ctx, glob)
+	if err != nil {
+		glog.Warningf("auto-supersede: list %q failed for slug %q: %v", glob, slug, err)
+		return nil, err
+	}
+	var titles []string
+	for _, relPath := range relPaths {
+		title := strings.TrimSuffix(filepath.Base(relPath), ".md")
+		if strings.HasPrefix(title, prefix) {
+			titles = append(titles, title)
+		}
+	}
+	return titles, nil
+}
+
+// collapseCandidates iterates ranked candidates most-recent-first, transitions
+// each still-in_progress candidate older than newOrdinal to aborted, and stops
+// after k candidates have been inspected (read attempted). Best-effort per file.
+func collapseCandidates(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	k int,
+	ranked []rankedCandidate,
+	newOrdinal int64,
+	newRelPath string,
+	cmd task.CreateCommand,
+) {
+	inspected := 0
+	for _, rc := range ranked {
+		if inspected >= k {
+			break
+		}
+		if rc.Ordinal > newOrdinal {
+			continue
+		}
+		inspected++
+		candidateRelPath := filepath.Join(taskDir, rc.Title+".md")
+		if strings.ContainsAny(rc.Title, "/\\") {
+			glog.Warningf(
+				"auto-supersede: candidate title %q contains path separator; skipping for %s",
+				rc.Title, cmd.TaskIdentifier,
+			)
+			continue
+		}
+		content, err := readPriorForSupersede(ctx, gitClient, candidateRelPath, cmd.TaskIdentifier)
+		if err != nil || content == nil {
+			continue
+		}
+		if !priorIsInProgress(ctx, content, candidateRelPath, cmd.TaskIdentifier) {
+			continue
+		}
+		transitionPrior(
+			ctx,
+			gitClient,
+			currentDateTime,
+			candidateRelPath,
+			rc.Title,
+			newRelPath,
+			cmd.TaskIdentifier,
+		)
+	}
 }
 
 // isEligibleForSupersede reports whether cmd is a recurring-task instance

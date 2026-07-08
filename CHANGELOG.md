@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - refactor: replace single-prior `period_token_decrementor` arithmetic with pure `period_token_ranking` ordinal core — `parsePeriodTokenOrdinal` returns a `time.Time.Unix()`-based comparable ordinal that correctly orders all six recurrence kinds across ISO-week and year boundaries; `rankSameSlugCandidatesDescending` sorts same-slug candidates most-recent-first via stable sort; obsolete decrementor module and its tests deleted [spec-004 prompt 1]
 
+- feat: add bounded scan-and-collapse supersede logic to `CreateTaskExecutor` — after a recurring-task instance is materialized, lists same-slug candidates via `ListFiles`, ranks them most-recent-first, and transitions every still-in_progress candidate older than the new instance to `aborted`; capped at look-back bound `k` (default 7); glob-injection and path-traversal safe; best-effort per file [spec-004 prompt 2]
+
 ## v0.1.1
 
 - refactor: converge build to the bborbe/kafka-topic-reader publish-only model — make buca now builds and pushes docker.io/bborbe/agent-task-controller:$(VERSION); deploy machinery removed (moves to the quant config repo / helm chart).

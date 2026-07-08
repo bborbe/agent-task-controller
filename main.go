@@ -170,6 +170,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,
+		7, // TODO(spec-004 prompt 3): replace literal 7 with configurable SUPERSEDE_LOOKBACK env var
 		prCommenter,
 	)
 

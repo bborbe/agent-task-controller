@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [004-recurring-task-supersede-scan-collapse]
+summary: 'Implemented bounded scan-and-collapse supersede in CreateTaskExecutor: lists same-slug task files, ranks by period-token ordinal, transitions up to k in-progress priors to aborted'
+execution_id: agent-task-controller-weekday-collapse-exec-008-spec-004-scan-and-collapse-hook
+dark-factory-version: v0.191.0
 created: "2026-07-08T09:11:00Z"
 queued: "2026-07-08T11:18:41Z"
+started: "2026-07-08T11:37:59Z"
+completed: "2026-07-08T11:43:59Z"
 branch: dark-factory/recurring-task-supersede-scan-collapse
 ---
 
