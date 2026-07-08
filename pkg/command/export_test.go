@@ -5,4 +5,8 @@
 package command
 
 // Test-only re-exports for the external command_test package.
-var DecrementRecurringTaskTitle = decrementRecurringTaskTitle
+var (
+	ParsePeriodTokenOrdinal          = parsePeriodTokenOrdinal
+	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
+	SplitTitleToken                  = splitTitleToken
+)

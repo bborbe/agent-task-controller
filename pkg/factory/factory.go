@@ -30,6 +30,7 @@ func CreateCommandConsumer(
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	k int,
 	prCommenter prcomment.PRCommenter,
 ) run.Func {
 	retryGate := command.NewPlanningRetryGate(gitClient, taskDir, currentDateTime, prCommenter)
@@ -37,7 +38,7 @@ func CreateCommandConsumer(
 		command.NewTaskResultExecutor(resultWriter, retryGate),
 		command.NewIncrementFrontmatterExecutor(gitClient, taskDir),
 		command.NewUpdateFrontmatterExecutor(gitClient, taskDir),
-		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime),
+		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
 	}
 	return cdb.RunCommandConsumerTxDefault(
 		saramaClientProvider,

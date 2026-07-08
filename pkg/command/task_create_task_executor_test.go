@@ -25,6 +25,8 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
+const testK = 7
+
 var _ = Describe("NewCreateTaskExecutor", func() {
 	var (
 		ctx      context.Context
@@ -61,7 +63,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
 
-		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock, testK)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -356,7 +358,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"skips a command whose TargetVault is openclaw when vaultName=personal (no git write, no error)",
 				func() {
-					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "personal", clock)
+					executor := command.NewCreateTaskExecutor(
+						fakeGit,
+						taskDir,
+						"personal",
+						clock,
+						testK,
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Personal Task",
@@ -375,7 +383,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"processes a command whose TargetVault is openclaw when vaultName=openclaw (one git write)",
 				func() {
-					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+					executor := command.NewCreateTaskExecutor(
+						fakeGit,
+						taskDir,
+						"openclaw",
+						clock,
+						testK,
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Openclaw Task",
@@ -394,7 +408,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"processes a command with empty TargetVault when vaultName=openclaw (legacy fallback)",
 				func() {
-					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock)
+					executor := command.NewCreateTaskExecutor(
+						fakeGit,
+						taskDir,
+						"openclaw",
+						clock,
+						testK,
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Legacy Task",
@@ -413,7 +433,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"skips a command with empty TargetVault when vaultName=personal (legacy fallback is openclaw, not personal)",
 				func() {
-					executor := command.NewCreateTaskExecutor(fakeGit, taskDir, "personal", clock)
+					executor := command.NewCreateTaskExecutor(
+						fakeGit,
+						taskDir,
+						"personal",
+						clock,
+						testK,
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Legacy Task",
@@ -429,22 +455,86 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				},
 			)
 		})
-		Context("supersede prior recurring task", func() {
-			// Helper: prior-file content for in_progress status.
-			priorInProgressContent := []byte(
-				"---\ntask_identifier: prior-id\nassignee: claude\nstatus: in_progress\n---\nbody text\n",
+
+		Context("scan-and-collapse supersede", func() {
+			inProgress := func(id string) []byte {
+				return []byte(
+					"---\ntask_identifier: " + id + "\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
+			}
+
+			// AC: N-collapse — missed-day gap (Mon+Tue open, Wed fires → both close, Wed stays open)
+			It(
+				"closes multiple older in_progress priors when new instance fires (missed-day gap)",
+				func() {
+					newTitle := "IBKR Swing Trading - 2026W28-wed"
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("ibkr-w28wed"),
+						Title:          newTitle,
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":         "claude",
+							"status":           "next",
+							"created_by":       "recurring-task-creator",
+							"auto_abort_prior": true,
+						},
+					})
+
+					candidatePaths := []string{
+						"tasks/IBKR Swing Trading - 2026W28-mon.md",
+						"tasks/IBKR Swing Trading - 2026W28-tue.md",
+					}
+					fakeGit.ListFilesReturns(candidatePaths, nil)
+					monContent := inProgress("ibkr-w28mon")
+					tueContent := inProgress("ibkr-w28tue")
+					fileContents := map[string][]byte{
+						"tasks/IBKR Swing Trading - 2026W28-mon.md": monContent,
+						"tasks/IBKR Swing Trading - 2026W28-tue.md": tueContent,
+					}
+					fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+						if content, ok := fileContents[relPath]; ok {
+							return content, nil
+						}
+						return nil, errors.New("GET " + relPath + " returned 404: not found")
+					}
+
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(
+						fakeGit.AtomicWriteAndCommitPushCallCount(),
+					).To(Equal(1))
+					// new instance only
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+
+					// Ranking sorts by ordinal desc; equal ordinals sort by Title desc.
+					// "2026W28-tue" > "2026W28-mon" alphabetically, so tue is first.
+					priorContents := [][]byte{tueContent, monContent}
+					priorSuffixes := []string{"tue", "mon"}
+					for i := 0; i < 2; i++ {
+						_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(
+							i,
+						)
+						Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
+						resultContent, parseErr := modify(priorContents[i])
+						Expect(parseErr).NotTo(HaveOccurred())
+						resultStr := string(resultContent)
+						Expect(resultStr).To(ContainSubstring("status: aborted"))
+						Expect(resultStr).To(ContainSubstring("phase: done"))
+						Expect(resultStr).To(ContainSubstring("completed_date:"))
+						Expect(resultStr).To(ContainSubstring("superseded_by:"))
+						Expect(resultStr).To(ContainSubstring("created_by: recurring-task-creator"))
+						Expect(
+							absPath,
+						).To(HaveSuffix("IBKR Swing Trading - 2026W28-" + priorSuffixes[i] + ".md"))
+					}
+				},
 			)
 
-			It("AC supersede happy path: aborts prior in_progress instance", func() {
-				// Call 0: title-collision check → 404 free.
-				// Call 1: prior-file read → in_progress content.
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				fakeGit.ReadFileReturnsOnCall(1, priorInProgressContent, nil)
-
+			// AC: weekday-set-agnostic — sparse mon/wed/fri set, same week ordinal
+			It("closes equal-ordinal same-week siblings (sparse weekday set)", func() {
+				newTitle := "Sched - 2026W28-fri"
 				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27"),
-					Title:          "Aquascape PWC - 2026W27",
+					TaskIdentifier: lib.TaskIdentifier("sched-w28fri"),
+					Title:          newTitle,
 					Frontmatter: lib.TaskFrontmatter{
 						"assignee":         "claude",
 						"status":           "next",
@@ -452,120 +542,250 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"auto_abort_prior": true,
 					},
 				})
+
+				candidatePaths := []string{
+					"tasks/Sched - 2026W28-mon.md",
+					"tasks/Sched - 2026W28-wed.md",
+				}
+				fakeGit.ListFilesReturns(candidatePaths, nil)
+				fileContents := map[string][]byte{
+					"tasks/Sched - 2026W28-mon.md": inProgress("sched-w28mon"),
+					"tasks/Sched - 2026W28-wed.md": inProgress("sched-w28wed"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+			})
 
-				// AtomicWriteAndCommitPush for new instance.
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				// Prior-file read occurred.
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(2))
-				// AtomicReadModifyWriteAndCommitPush called to abort prior.
+			// AC: look-back cap with small K
+			It("honors look-back bound k and only closes the k most-recent candidates", func() {
+				smallK := 2
+				localExecutor := command.NewCreateTaskExecutor(
+					fakeGit,
+					taskDir,
+					"openclaw",
+					clock,
+					smallK,
+				)
+
+				newTitle := "Weekly Sched - 2026W30"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("weekly-w30"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				candidatePaths := []string{
+					"tasks/Weekly Sched - 2026W29.md",
+					"tasks/Weekly Sched - 2026W28.md",
+					"tasks/Weekly Sched - 2026W27.md",
+					"tasks/Weekly Sched - 2026W26.md",
+				}
+				fakeGit.ListFilesReturns(candidatePaths, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2026W29.md": inProgress("weekly-w29"),
+					"tasks/Weekly Sched - 2026W28.md": inProgress("weekly-w28"),
+					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
+					"tasks/Weekly Sched - 2026W26.md": inProgress("weekly-w26"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := localExecutor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				// 1 collision-check read + 2 candidate reads (k=2) = 3 total
+				Expect(fakeGit.ReadFileCallCount()).To(Equal(3))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+
+				// Most recent two (W29, W28) are closed; W27, W26 left open
+				var closedPaths []string
+				for i := 0; i < 2; i++ {
+					_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(i)
+					closedPaths = append(closedPaths, absPath)
+				}
+				Expect(closedPaths[0]).To(HaveSuffix("Weekly Sched - 2026W29.md"))
+				Expect(closedPaths[1]).To(HaveSuffix("Weekly Sched - 2026W28.md"))
+			})
+
+			// AC: cross-year ISO-week ranking
+			It("ranks correctly across ISO-week and year boundary", func() {
+				newTitle := "Weekly Sched - 2026W01"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("weekly-w0101"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				candidatePaths := []string{
+					"tasks/Weekly Sched - 2025W52.md",
+					"tasks/Weekly Sched - 2025W51.md",
+				}
+				fakeGit.ListFilesReturns(candidatePaths, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2025W52.md": inProgress("weekly-w52"),
+					"tasks/Weekly Sched - 2025W51.md": inProgress("weekly-w51"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+
+				// W52 is more recent than W51, so first abort should be W52
+				_, firstPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(firstPath).To(HaveSuffix("Weekly Sched - 2025W52.md"))
+			})
+
+			// AC: Daily regression — collapse to one
+			It("closes one older daily prior", func() {
+				newTitle := "Cleanup - 2026-06-15"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("cleanup-0615"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Cleanup - 2026-06-14.md"}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Cleanup - 2026-06-14.md": inProgress("cleanup-0614"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix("Cleanup - 2026-06-14.md"))
+			})
 
-				// Capture modify args.
-				_, absPath, modifyFn, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(
-					0,
-				)
+			// AC: Weekly regression — collapse to one
+			It("closes one older weekly prior", func() {
+				newTitle := "Aquascape PWC - 2026W27"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("aqua-w27"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Aquascape PWC - 2026W26.md"}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Aquascape PWC - 2026W26.md": inProgress("aqua-w26"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix("Aquascape PWC - 2026W26.md"))
-				Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
-
-				// Run the modify closure on prior content and verify result.
-				resultBytes, modErr := modifyFn([]byte(priorInProgressContent))
-				Expect(modErr).NotTo(HaveOccurred())
-				Expect(string(resultBytes)).To(ContainSubstring("status: aborted"))
-				Expect(string(resultBytes)).To(ContainSubstring("phase: done"))
-				Expect(string(resultBytes)).To(ContainSubstring("completed_date:"))
-				Expect(
-					string(resultBytes),
-				).To(ContainSubstring("superseded_by: tasks/Aquascape PWC - 2026W27.md"))
-				Expect(
-					string(resultBytes),
-				).To(ContainSubstring("created_by: recurring-task-creator"))
 			})
 
-			It(
-				"AC auto_abort_prior absent: skips prior-file read entirely (opt-in required)",
-				func() {
-					// Only title-collision check occurs; no prior-file ReadFile.
-					// auto_abort_prior is absent - opt-in not set, so no supersede.
-					fakeGit.ReadFileReturnsOnCall(0,
-						nil, errors.New("GET tasks returned 404: not found"))
-
-					cmdObj := buildCmdObj(task.CreateCommand{
-						TaskIdentifier: lib.TaskIdentifier("task-w27-audit"),
-						Title:          "check-prometheus-alerts - 2026W27",
-						Frontmatter: lib.TaskFrontmatter{
-							"assignee":   "claude",
-							"status":     "next",
-							"created_by": "recurring-task-creator",
-							// auto_abort_prior intentionally absent - opt-in required
-						},
-					})
-					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-					Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-				},
-			)
-
-			It("AC not created by publisher: skips prior-file read entirely", func() {
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-
+			// AC: idempotency — prior already aborted
+			It("skips already-aborted prior (Kafka redelivery idempotency)", func() {
+				newTitle := "Weekly Sched - 2026W27"
 				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27-manual"),
-					Title:          "Manual Task - 2026W27",
+					TaskIdentifier: lib.TaskIdentifier("weekly-w27idemp"),
+					Title:          newTitle,
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee": "claude",
-						"status":   "next",
-						// no created_by field
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
 					},
 				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W26.md"}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2026W26.md": []byte(
+						"---\ntask_identifier: weekly-w26\nassignee: claude\nstatus: aborted\n---\nbody\n",
+					),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
-			It("AC prior not found: no AtomicReadModifyWriteAndCommitPush", func() {
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				// Prior file also 404.
-				fakeGit.ReadFileReturnsOnCall(1,
-					nil, errors.New("GET tasks/Aquascape PWC - 2026W26.md returned 404: not found"))
-
+			// AC: not eligible — auto_abort_prior absent
+			It("returns before listing when auto_abort_prior is absent", func() {
+				newTitle := "Weekly Sched - 2026W28"
 				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27-first"),
-					Title:          "Aquascape PWC - 2026W27",
+					TaskIdentifier: lib.TaskIdentifier("weekly-w28noabort"),
+					Title:          newTitle,
 					Frontmatter: lib.TaskFrontmatter{
-						"assignee":         "claude",
-						"status":           "next",
-						"created_by":       "recurring-task-creator",
-						"auto_abort_prior": true,
+						"assignee":   "claude",
+						"status":     "next",
+						"created_by": "recurring-task-creator",
+						// auto_abort_prior intentionally absent
 					},
 				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W27.md"}, nil)
+
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
-			It("AC prior status completed: no AtomicReadModifyWriteAndCommitPush", func() {
-				priorCompletedContent := []byte(
-					"---\ntask_identifier: prior-id\nassignee: claude\nstatus: completed\n---\nbody text\n",
-				)
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				fakeGit.ReadFileReturnsOnCall(1, priorCompletedContent, nil)
-
+			// AC: ListFiles error swallowed
+			It("returns (nil,nil,nil) when ListFiles fails", func() {
+				newTitle := "Weekly Sched - 2026W28"
 				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27"),
-					Title:          "Aquascape PWC - 2026W27",
+					TaskIdentifier: lib.TaskIdentifier("weekly-w28listerr"),
+					Title:          newTitle,
 					Frontmatter: lib.TaskFrontmatter{
 						"assignee":         "claude",
 						"status":           "next",
@@ -573,53 +793,20 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"auto_abort_prior": true,
 					},
 				})
+
+				fakeGit.ListFilesReturns(nil, errors.New("git-rest 503"))
+
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
-			It(
-				"AC prior status aborted (redelivery 2nd pass): no AtomicReadModifyWriteAndCommitPush",
-				func() {
-					priorAbortedContent := []byte(
-						"---\ntask_identifier: prior-id\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody text\n",
-					)
-					fakeGit.ReadFileReturnsOnCall(0,
-						nil, errors.New("GET tasks returned 404: not found"))
-					fakeGit.ReadFileReturnsOnCall(1, priorAbortedContent, nil)
-
-					cmdObj := buildCmdObj(task.CreateCommand{
-						TaskIdentifier: lib.TaskIdentifier("task-w27"),
-						Title:          "Aquascape PWC - 2026W27",
-						Frontmatter: lib.TaskFrontmatter{
-							"assignee":   "claude",
-							"status":     "next",
-							"created_by": "recurring-task-creator",
-						},
-					})
-					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-				},
-			)
-
-			It("AC prior read non-404 error swallowed: handler returns nil error", func() {
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				// Transient server error on prior-file read.
-				fakeGit.ReadFileReturnsOnCall(
-					1,
-					nil,
-					errors.New("GET tasks/Aquascape PWC - 2026W26.md returned 500: server error"),
-				)
-
+			// AC: per-candidate read error swallowed, others processed
+			It("still closes eligible candidates when one candidate read fails", func() {
+				newTitle := "Weekly Sched - 2026W28"
 				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27"),
-					Title:          "Aquascape PWC - 2026W27",
+					TaskIdentifier: lib.TaskIdentifier("weekly-w28readerr"),
+					Title:          newTitle,
 					Frontmatter: lib.TaskFrontmatter{
 						"assignee":         "claude",
 						"status":           "next",
@@ -627,82 +814,130 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"auto_abort_prior": true,
 					},
 				})
-				ret0, ret1, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(ret0).To(BeNil())
-				Expect(ret1).To(BeNil())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-			})
 
-			It(
-				"AC unrecognized title (no period token): skips prior-file read beyond collision check",
-				func() {
-					fakeGit.ReadFileReturnsOnCall(0,
-						nil, errors.New("GET tasks returned 404: not found"))
+				fakeGit.ListFilesReturns([]string{
+					"tasks/Weekly Sched - 2026W27.md",
+					"tasks/Weekly Sched - 2026W26.md",
+				}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2026W26.md": inProgress("weekly-w26"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					if strings.Contains(relPath, "2026W27") {
+						return nil, errors.New("GET " + relPath + " returned 500")
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
 
-					cmdObj := buildCmdObj(task.CreateCommand{
-						TaskIdentifier: lib.TaskIdentifier("task-random"),
-						Title:          "My Random Task",
-						Frontmatter: lib.TaskFrontmatter{
-							"assignee":   "claude",
-							"status":     "next",
-							"created_by": "recurring-task-creator",
-						},
-					})
-					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeGit.ReadFileCallCount()).To(Equal(1)) // only collision check
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
-				},
-			)
-
-			It("AC supersede write failure swallowed: handler returns nil error", func() {
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-				fakeGit.ReadFileReturnsOnCall(1, priorInProgressContent, nil)
-				fakeGit.AtomicReadModifyWriteAndCommitPushReturns(
-					errors.New("git-rest 503"))
-
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27"),
-					Title:          "Aquascape PWC - 2026W27",
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":         "claude",
-						"status":           "next",
-						"created_by":       "recurring-task-creator",
-						"auto_abort_prior": true,
-					},
-				})
-				ret0, ret1, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(ret0).To(BeNil())
-				Expect(ret1).To(BeNil())
-			})
-
-			It("AC path-separator guard: skips when prior title contains separator", func() {
-				// The slug already contains a path separator — this would be rejected by
-				// resolveCreateTaskRelPath for a new write (falls back to UUID path),
-				// but the supersede path-traversal guard catches it at the decrement step.
-				fakeGit.ReadFileReturnsOnCall(0,
-					nil, errors.New("GET tasks returned 404: not found"))
-
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("task-w27-slash"),
-					Title:          "Reports/Weekly - 2026W27",
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":         "claude",
-						"status":           "next",
-						"created_by":       "recurring-task-creator",
-						"auto_abort_prior": true,
-					},
-				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix("Weekly Sched - 2026W26.md"))
+			})
 
-				// Prior file never read (guard fires before read).
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			// AC: write error swallowed
+			It("returns (nil,nil,nil) when write of prior fails", func() {
+				newTitle := "Weekly Sched - 2026W28"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("weekly-w28writeerr"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W27.md"}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+				fakeGit.AtomicReadModifyWriteAndCommitPushReturns(errors.New("git-rest 503"))
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			// AC: glob-safety fallback — slug with glob metacharacters
+			It("falls back to list-all when slug contains glob metacharacters", func() {
+				newTitle := "Report [draft] - 2026W28"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("report-draft-w28"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				fakeGit.ListFilesReturns([]string{"tasks/Report [draft] - 2026W27.md"}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Report [draft] - 2026W27.md": inProgress("report-draft-w27"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
+				_, globArg := fakeGit.ListFilesArgsForCall(0)
+				Expect(globArg).To(Equal("tasks/*.md")) // list-all fallback, not slug-scoped
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix("Report [draft] - 2026W27.md"))
+			})
+
+			// AC: unrelated-slug filtered out
+			It("does not read or close candidates with a different slug", func() {
+				newTitle := "Weekly Sched - 2026W28"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("weekly-w28filter"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				fakeGit.ListFilesReturns([]string{
+					"tasks/Weekly Sched - 2026W27.md",
+					"tasks/Other Sched - 2026W27.md",
+				}, nil)
+				fileContents := map[string][]byte{
+					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
+					"tasks/Other Sched - 2026W27.md":  inProgress("other-w27"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix("Weekly Sched - 2026W27.md"))
 			})
 		})
 	})

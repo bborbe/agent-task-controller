@@ -10,3 +10,7 @@ CVE-2022-31022
 
 # aws-sdk-go-v2 s3/eventstream DoS, upgrade pending — BRO-20006
 GHSA-xmrv-pmrh-hhx2
+
+# golang.org/x/crypto v0.53.0 // indirect — openpgp unmaintained, no fix available.
+# x/crypto/openpgp is NOT imported anywhere in this repo (first-party or transitive). 2026-07-08.
+GO-2026-5932
