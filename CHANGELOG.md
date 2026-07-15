@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update dependencies and toolchain — Go 1.26.4→1.26.5, golang/alpine base images, bborbe libraries, k8s deps; regenerate mocks; ignore govulncheck GO-2026-5932 (`golang.org/x/crypto/openpgp` unmaintained advisory, not reachable)
+- docs: correct spec-004 replay-verification method — re-triggering an already-materialized date returns `ErrTaskAlreadyExists` and the supersede hook never runs; the correct replay triggers the next not-yet-materialized date so its scan collapses open same-week priors; also fix stale make-buca deploy reference to the mirrored-semver model
+
 ## v0.2.0
 
 - refactor: replace single-prior `period_token_decrementor` arithmetic with pure `period_token_ranking` ordinal core — `parsePeriodTokenOrdinal` returns a `time.Time.Unix()`-based comparable ordinal that correctly orders all six recurrence kinds across ISO-week and year boundaries; `rankSameSlugCandidatesDescending` sorts same-slug candidates most-recent-first via stable sort; obsolete decrementor module and its tests deleted [spec-004 prompt 1]
