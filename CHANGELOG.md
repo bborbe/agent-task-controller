@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: gitignore `/vendor/` — build-check-generated vendor dir should never be committed (repo follows the no-vendor convention)
+
 ## v0.2.2
 
 - Update bborbe module dependencies (agent, argument, boltkv, cqrs, errors, http, kafka, kv, log, metrics, run, sentry, service, time, validation, vault-cli)

@@ -4,3 +4,4 @@
 /.mcp-*
 /.dark-factory.log
 /.dark-factory.lock
+/vendor/
