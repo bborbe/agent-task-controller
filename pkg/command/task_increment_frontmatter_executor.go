@@ -32,6 +32,7 @@ const IncrementFrontmatterCommandOperation base.CommandOperation = task.Incremen
 func NewIncrementFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		IncrementFrontmatterCommandOperation,
@@ -53,8 +54,7 @@ func NewIncrementFrontmatterExecutor(
 				cmd.TaskIdentifier,
 			)
 			if err != nil {
-				metrics.FrontmatterCommandsTotal.WithLabelValues("increment-frontmatter", "error").
-					Inc()
+				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "find task file for increment")
 			}
 			if matchedRelPath == "" {
@@ -62,8 +62,7 @@ func NewIncrementFrontmatterExecutor(
 					"increment-frontmatter: task file not found for %s, skipping",
 					cmd.TaskIdentifier,
 				)
-				metrics.FrontmatterCommandsTotal.WithLabelValues("increment-frontmatter", "not_found").
-					Inc()
+				m.FrontmatterCommandsTotal("increment-frontmatter", "not_found").Inc()
 				return nil, nil, nil
 			}
 			fullAbsPath := filepath.Join(gitClient.Path(), matchedRelPath)
@@ -73,8 +72,7 @@ func NewIncrementFrontmatterExecutor(
 				buildIncrementModifyFn(ctx, cmd),
 				fmt.Sprintf("[agent-task-controller] increment %s for task %s", cmd.Field, cmd.TaskIdentifier),
 			); err != nil {
-				metrics.FrontmatterCommandsTotal.WithLabelValues("increment-frontmatter", "error").
-					Inc()
+				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
 					err,
@@ -82,8 +80,7 @@ func NewIncrementFrontmatterExecutor(
 					cmd.TaskIdentifier,
 				)
 			}
-			metrics.FrontmatterCommandsTotal.WithLabelValues("increment-frontmatter", "success").
-				Inc()
+			m.FrontmatterCommandsTotal("increment-frontmatter", "success").Inc()
 			return nil, nil, nil
 		},
 	)

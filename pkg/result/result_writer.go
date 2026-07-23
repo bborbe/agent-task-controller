@@ -34,11 +34,13 @@ func NewResultWriter(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	m metrics.Metrics,
 ) ResultWriter {
 	return &resultWriter{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
 		currentDateTime: currentDateTime,
+		metrics:         m,
 	}
 }
 
@@ -46,6 +48,7 @@ type resultWriter struct {
 	gitClient       gitclient.GitClient
 	taskDir         string
 	currentDateTime libtime.CurrentDateTimeGetter
+	metrics         metrics.Metrics
 }
 
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
@@ -115,7 +118,7 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 
 	if matchedRelPath == "" {
 		glog.Warningf("task file not found for identifier %s, skipping", req.TaskIdentifier)
-		metrics.ResultsWrittenTotal.WithLabelValues("not_found").Inc()
+		r.metrics.ResultsWrittenTotal("not_found").Inc()
 		return nil
 	}
 
@@ -131,12 +134,12 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		r.buildResultModifyFn(ctx, req),
 		commitMessage,
 	); err != nil {
-		metrics.ResultsWrittenTotal.WithLabelValues("error").Inc()
+		r.metrics.ResultsWrittenTotal("error").Inc()
 		return errors.Wrapf(ctx, err, "atomic read-modify-write and push failed")
 	}
 
 	glog.V(2).Infof("WriteResult: completed successfully for task %s", req.TaskIdentifier)
-	metrics.ResultsWrittenTotal.WithLabelValues("success").Inc()
+	r.metrics.ResultsWrittenTotal("success").Inc()
 	return nil
 }
 

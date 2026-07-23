@@ -64,6 +64,17 @@ type Metrics struct {
 	kafkaConsumePausedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	PlanningRetryTotalStub        func(string) prometheus.Counter
+	planningRetryTotalMutex       sync.RWMutex
+	planningRetryTotalArgsForCall []struct {
+		arg1 string
+	}
+	planningRetryTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	planningRetryTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
 	ResultsWrittenTotalStub        func(string) prometheus.Counter
 	resultsWrittenTotalMutex       sync.RWMutex
 	resultsWrittenTotalArgsForCall []struct {
@@ -86,10 +97,10 @@ type Metrics struct {
 	scanCyclesTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
-	SkippedFilesTotalStub        func(string) prometheus.Counter
+	SkippedFilesTotalStub        func(metrics.SkipReason) prometheus.Counter
 	skippedFilesTotalMutex       sync.RWMutex
 	skippedFilesTotalArgsForCall []struct {
-		arg1 string
+		arg1 metrics.SkipReason
 	}
 	skippedFilesTotalReturns struct {
 		result1 prometheus.Counter
@@ -403,6 +414,67 @@ func (fake *Metrics) KafkaConsumePausedTotalReturnsOnCall(i int, result1 prometh
 	}{result1}
 }
 
+func (fake *Metrics) PlanningRetryTotal(arg1 string) prometheus.Counter {
+	fake.planningRetryTotalMutex.Lock()
+	ret, specificReturn := fake.planningRetryTotalReturnsOnCall[len(fake.planningRetryTotalArgsForCall)]
+	fake.planningRetryTotalArgsForCall = append(fake.planningRetryTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.PlanningRetryTotalStub
+	fakeReturns := fake.planningRetryTotalReturns
+	fake.recordInvocation("PlanningRetryTotal", []interface{}{arg1})
+	fake.planningRetryTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) PlanningRetryTotalCallCount() int {
+	fake.planningRetryTotalMutex.RLock()
+	defer fake.planningRetryTotalMutex.RUnlock()
+	return len(fake.planningRetryTotalArgsForCall)
+}
+
+func (fake *Metrics) PlanningRetryTotalCalls(stub func(string) prometheus.Counter) {
+	fake.planningRetryTotalMutex.Lock()
+	defer fake.planningRetryTotalMutex.Unlock()
+	fake.PlanningRetryTotalStub = stub
+}
+
+func (fake *Metrics) PlanningRetryTotalArgsForCall(i int) string {
+	fake.planningRetryTotalMutex.RLock()
+	defer fake.planningRetryTotalMutex.RUnlock()
+	argsForCall := fake.planningRetryTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) PlanningRetryTotalReturns(result1 prometheus.Counter) {
+	fake.planningRetryTotalMutex.Lock()
+	defer fake.planningRetryTotalMutex.Unlock()
+	fake.PlanningRetryTotalStub = nil
+	fake.planningRetryTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) PlanningRetryTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.planningRetryTotalMutex.Lock()
+	defer fake.planningRetryTotalMutex.Unlock()
+	fake.PlanningRetryTotalStub = nil
+	if fake.planningRetryTotalReturnsOnCall == nil {
+		fake.planningRetryTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.planningRetryTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
 func (fake *Metrics) ResultsWrittenTotal(arg1 string) prometheus.Counter {
 	fake.resultsWrittenTotalMutex.Lock()
 	ret, specificReturn := fake.resultsWrittenTotalReturnsOnCall[len(fake.resultsWrittenTotalArgsForCall)]
@@ -525,11 +597,11 @@ func (fake *Metrics) ScanCyclesTotalReturnsOnCall(i int, result1 prometheus.Coun
 	}{result1}
 }
 
-func (fake *Metrics) SkippedFilesTotal(arg1 string) prometheus.Counter {
+func (fake *Metrics) SkippedFilesTotal(arg1 metrics.SkipReason) prometheus.Counter {
 	fake.skippedFilesTotalMutex.Lock()
 	ret, specificReturn := fake.skippedFilesTotalReturnsOnCall[len(fake.skippedFilesTotalArgsForCall)]
 	fake.skippedFilesTotalArgsForCall = append(fake.skippedFilesTotalArgsForCall, struct {
-		arg1 string
+		arg1 metrics.SkipReason
 	}{arg1})
 	stub := fake.SkippedFilesTotalStub
 	fakeReturns := fake.skippedFilesTotalReturns
@@ -550,13 +622,13 @@ func (fake *Metrics) SkippedFilesTotalCallCount() int {
 	return len(fake.skippedFilesTotalArgsForCall)
 }
 
-func (fake *Metrics) SkippedFilesTotalCalls(stub func(string) prometheus.Counter) {
+func (fake *Metrics) SkippedFilesTotalCalls(stub func(metrics.SkipReason) prometheus.Counter) {
 	fake.skippedFilesTotalMutex.Lock()
 	defer fake.skippedFilesTotalMutex.Unlock()
 	fake.SkippedFilesTotalStub = stub
 }
 
-func (fake *Metrics) SkippedFilesTotalArgsForCall(i int) string {
+func (fake *Metrics) SkippedFilesTotalArgsForCall(i int) metrics.SkipReason {
 	fake.skippedFilesTotalMutex.RLock()
 	defer fake.skippedFilesTotalMutex.RUnlock()
 	argsForCall := fake.skippedFilesTotalArgsForCall[i]

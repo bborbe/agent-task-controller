@@ -229,7 +229,7 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 		gitClient := gitrestclient.NewGitClient(restClient, basePath)
 		commenter := prcomment.NewPRCommenter(http.DefaultClient, ghSrv.URL, "test-token")
 		clock := libtime.NewCurrentDateTime()
-		gate = command.NewPlanningRetryGate(gitClient, taskDir, clock, commenter)
+		gate = command.NewPlanningRetryGate(gitClient, taskDir, clock, commenter, metrics.New())
 	})
 
 	AfterEach(func() {

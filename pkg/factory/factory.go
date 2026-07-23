@@ -15,6 +15,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
@@ -32,12 +33,13 @@ func CreateCommandConsumer(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	prCommenter prcomment.PRCommenter,
+	m metrics.Metrics,
 ) run.Func {
-	retryGate := command.NewPlanningRetryGate(gitClient, taskDir, currentDateTime, prCommenter)
+	retryGate := command.NewPlanningRetryGate(gitClient, taskDir, currentDateTime, prCommenter, m)
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter, retryGate),
-		command.NewIncrementFrontmatterExecutor(gitClient, taskDir),
-		command.NewUpdateFrontmatterExecutor(gitClient, taskDir),
+		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, m),
+		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, m),
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
 	}
 	return cdb.RunCommandConsumerTxDefault(

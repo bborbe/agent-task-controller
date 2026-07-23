@@ -51,12 +51,14 @@ func NewPlanningRetryGate(
 	taskDir string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	prCommenter prcomment.PRCommenter,
+	m metrics.Metrics,
 ) PlanningRetryGate {
 	return &planningRetryGate{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
 		currentDateTime: currentDateTime,
 		prCommenter:     prCommenter,
+		metrics:         m,
 	}
 }
 
@@ -65,6 +67,7 @@ type planningRetryGate struct {
 	taskDir         string
 	currentDateTime libtime.CurrentDateTimeGetter
 	prCommenter     prcomment.PRCommenter
+	metrics         metrics.Metrics
 }
 
 func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled bool, err error) {
@@ -116,7 +119,7 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	}
 
 	if bump {
-		metrics.PlanningRetryTotal.WithLabelValues("retry").Inc()
+		g.metrics.PlanningRetryTotal("retry").Inc()
 		glog.Infof(
 			"planning-retry: attempt %d/3 for task %s (reason=%q)",
 			count+1,
@@ -278,7 +281,7 @@ func (g *planningRetryGate) escalate(
 				commentErr,
 			)
 		}
-		metrics.PlanningRetryTotal.WithLabelValues("exhausted").Inc()
+		g.metrics.PlanningRetryTotal("exhausted").Inc()
 		glog.Infof(
 			"planning-retry: exhausted after 3 retries for task %s; escalated to human_review",
 			req.TaskIdentifier,

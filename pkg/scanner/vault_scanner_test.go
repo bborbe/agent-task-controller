@@ -787,7 +787,7 @@ var _ = Describe("VaultScanner", func() {
 	})
 
 	Describe("SkippedFilesTotal counter", func() {
-		counterValue := func(reason string) float64 {
+		counterValue := func(reason metrics.SkipReason) float64 {
 			mfs, err := prometheus.DefaultGatherer.Gather()
 			Expect(err).NotTo(HaveOccurred())
 			for _, mf := range mfs {
@@ -796,7 +796,7 @@ var _ = Describe("VaultScanner", func() {
 				}
 				for _, m := range mf.GetMetric() {
 					for _, lp := range m.GetLabel() {
-						if lp.GetName() == "reason" && lp.GetValue() == reason {
+						if lp.GetName() == "reason" && lp.GetValue() == reason.String() {
 							return m.GetCounter().GetValue()
 						}
 					}
