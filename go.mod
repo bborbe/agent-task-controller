@@ -3,22 +3,22 @@ module github.com/bborbe/agent-task-controller
 go 1.26.5
 
 require (
-	github.com/bborbe/agent v0.76.1
-	github.com/bborbe/argument/v2 v2.12.31
-	github.com/bborbe/boltkv v1.14.3
-	github.com/bborbe/cqrs v0.6.2
-	github.com/bborbe/errors v1.5.15
-	github.com/bborbe/http v1.26.16
-	github.com/bborbe/kafka v1.25.3
-	github.com/bborbe/kv v1.21.5
-	github.com/bborbe/log v1.6.17
-	github.com/bborbe/metrics v0.5.7
-	github.com/bborbe/run v1.9.30
-	github.com/bborbe/sentry v1.9.22
-	github.com/bborbe/service v1.10.4
-	github.com/bborbe/time v1.27.5
-	github.com/bborbe/validation v1.4.16
-	github.com/bborbe/vault-cli v0.96.5
+	github.com/bborbe/agent v0.79.0
+	github.com/bborbe/argument/v2 v2.12.34
+	github.com/bborbe/boltkv v1.14.5
+	github.com/bborbe/cqrs v0.6.4
+	github.com/bborbe/errors v1.5.17
+	github.com/bborbe/http v1.26.18
+	github.com/bborbe/kafka v1.25.5
+	github.com/bborbe/kv v1.21.7
+	github.com/bborbe/log v1.6.19
+	github.com/bborbe/metrics v0.5.9
+	github.com/bborbe/run v1.9.32
+	github.com/bborbe/sentry v1.9.24
+	github.com/bborbe/service v1.10.6
+	github.com/bborbe/time v1.27.7
+	github.com/bborbe/validation v1.4.18
+	github.com/bborbe/vault-cli v0.101.3
 	github.com/golang/glog v1.2.5
 	github.com/google/addlicense v1.2.0
 	github.com/google/uuid v1.6.0
@@ -26,12 +26,12 @@ require (
 	github.com/maxbrunsfeld/counterfeiter/v6 v6.12.2
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
-	github.com/prometheus/client_golang v1.23.2
+	github.com/prometheus/client_golang v1.24.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/segmentio/golines v0.13.0
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/tools v0.47.0
-	golang.org/x/vuln v1.5.0
+	golang.org/x/tools v0.48.0
+	golang.org/x/vuln v1.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -40,11 +40,11 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/alecthomas/kingpin/v2 v2.4.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
-	github.com/bborbe/collection v1.20.17 // indirect
-	github.com/bborbe/k8s v1.14.5 // indirect
-	github.com/bborbe/math v1.3.14 // indirect
-	github.com/bborbe/parse v1.10.17 // indirect
-	github.com/bborbe/strimzi v1.8.8 // indirect
+	github.com/bborbe/collection v1.20.19 // indirect
+	github.com/bborbe/k8s v1.14.6 // indirect
+	github.com/bborbe/math v1.3.17 // indirect
+	github.com/bborbe/parse v1.10.18 // indirect
+	github.com/bborbe/strimzi v1.8.9 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -54,7 +54,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
-	github.com/getsentry/sentry-go v0.47.0 // indirect
+	github.com/getsentry/sentry-go v0.48.0 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v0.24.0 // indirect
@@ -93,7 +93,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/common v0.69.0 // indirect
+	github.com/prometheus/common v0.70.0 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
@@ -105,15 +105,15 @@ require (
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
-	golang.org/x/term v0.44.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
+	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
@@ -127,7 +127,7 @@ require (
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
