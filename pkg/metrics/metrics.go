@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -generate
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6@v6.12.2 -generate
 //counterfeiter:generate -o ../../mocks/metrics.go --fake-name Metrics . Metrics
 
 // Metrics defines the interface for accessing Prometheus metrics.

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -generate
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6@v6.12.2 -generate
 //counterfeiter:generate -o ../../mocks/pr_commenter.go --fake-name PRCommenter . PRCommenter
 
 package prcomment
