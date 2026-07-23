@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.2.2
+
+- Update bborbe module dependencies (agent, argument, boltkv, cqrs, errors, http, kafka, kv, log, metrics, run, sentry, service, time, validation, vault-cli)
+- Bump prometheus/client_golang, prometheus/common, sentry-go
+- Bump golang.org/x tooling (tools, vuln, crypto, mod, net, sync, sys, telemetry, term, text)
+- Bump sigs.k8s.io/structured-merge-diff/v6
+
 ## v0.2.1
 
 - chore: update dependencies and toolchain — Go 1.26.4→1.26.5, golang/alpine base images, bborbe libraries, k8s deps; regenerate mocks; ignore govulncheck GO-2026-5932 (`golang.org/x/crypto/openpgp` unmaintained advisory, not reachable)
