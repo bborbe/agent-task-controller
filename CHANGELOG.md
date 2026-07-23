@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.2.4
 
 - chore: remove `tools.go` — the 6 CLI tools it pinned (counterfeiter, addlicense, ginkgo, golines, goimports, govulncheck) are already invoked via `go run pkg@$(VERSION)` from `tools.env` in the Makefile, so `tools.go` only polluted `go.mod` with tool-only dependencies. `go mod tidy` drops them. Resolves go-tools-versioning/no-tools-go-for-clis (MUST).
 
