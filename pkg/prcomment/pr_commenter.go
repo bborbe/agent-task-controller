@@ -102,7 +102,8 @@ func (c *prCommenter) PostComment(
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		glog.Warningf("github COMMENT post %s %s failed: %v", http.MethodPost, url, err)
+		// Boundary trace only (V(2)); the error is returned and logged once by the caller.
+		glog.V(2).Infof("github COMMENT post %s %s -> error: %v", http.MethodPost, url, err)
 		return errors.Wrapf(ctx, err, "planning-retry: github COMMENT post failed")
 	}
 	glog.V(2).Infof("github COMMENT post %s %s -> status %d", http.MethodPost, url, resp.StatusCode)
