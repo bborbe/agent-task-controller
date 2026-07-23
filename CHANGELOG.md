@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.0
 
 - refactor(metrics): route the remaining direct package-global metric accesses through the injected `Metrics` interface. Add the missing `PlanningRetryTotal` method and inject `metrics.Metrics` into the result writer, both frontmatter executors, and the planning-retry gate — production code no longer reaches package-global collectors directly. Convert the vault-scanner skip reasons to a typed `SkipReason` enum with an `AvailableSkipReasons` collection, and add a boundary-outcome log to the pr-commenter GitHub call. Addresses the pre-existing go-architecture (interface bypass), go-enum-type, and go-logging findings surfaced on #12. The Prometheus collector `var`s intentionally stay package-level (the registry is a process singleton — a metric registers once per process; `main` builds `metrics.New()` multiple times), so the mechanical no-globals flag on them is a known false-positive for metric collectors.
 
