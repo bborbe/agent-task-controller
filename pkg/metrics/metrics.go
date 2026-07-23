@@ -10,20 +10,22 @@ import (
 )
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6@v6.12.2 -generate
-//counterfeiter:generate -o ../../mocks/metrics.go --fake-name Metrics . Metrics
 
 // Metrics defines the interface for accessing Prometheus metrics.
 // Use this interface in business logic packages to enable mock injection in tests.
+//
+//counterfeiter:generate -o ../../mocks/metrics.go --fake-name Metrics . Metrics
 type Metrics interface {
 	ScanCyclesTotal(outcome string) prometheus.Counter
 	TasksPublishedTotal(outcome string) prometheus.Counter
+	PlanningRetryTotal(result string) prometheus.Counter
 	ResultsWrittenTotal(outcome string) prometheus.Counter
 	GitPushTotal(outcome string) prometheus.Counter
 	ConflictResolutionsTotal() prometheus.Counter
 	FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
-	SkippedFilesTotal(reason string) prometheus.Counter
+	SkippedFilesTotal(reason SkipReason) prometheus.Counter
 }
 
 // defaultMetrics implements Metrics using promauto-registered counters.
@@ -42,6 +44,10 @@ func (m *defaultMetrics) ScanCyclesTotal(outcome string) prometheus.Counter {
 
 func (m *defaultMetrics) TasksPublishedTotal(outcome string) prometheus.Counter {
 	return TasksPublishedTotal.WithLabelValues(outcome)
+}
+
+func (m *defaultMetrics) PlanningRetryTotal(result string) prometheus.Counter {
+	return PlanningRetryTotal.WithLabelValues(result)
 }
 
 func (m *defaultMetrics) ResultsWrittenTotal(outcome string) prometheus.Counter {
@@ -68,8 +74,8 @@ func (m *defaultMetrics) KafkaConsumePausedTotal() prometheus.Counter {
 	return KafkaConsumePausedTotal
 }
 
-func (m *defaultMetrics) SkippedFilesTotal(reason string) prometheus.Counter {
-	return SkippedFilesTotal.WithLabelValues(reason)
+func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter {
+	return SkippedFilesTotal.WithLabelValues(reason.String())
 }
 
 // ScanCyclesTotal counts scan cycle completions by result.
@@ -155,14 +161,31 @@ var KafkaConsumePausedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total number of times Kafka consumption was paused waiting for git-rest.",
 })
 
+// SkipReason is the closed set of structured reasons the vault scanner skips a task file.
+type SkipReason string
+
+// String returns the Prometheus label value for the reason.
+func (r SkipReason) String() string { return string(r) }
+
 const (
-	ReasonInvalidFrontmatter          = "invalid_frontmatter"
-	ReasonDuplicateFrontmatterInvalid = "duplicate_frontmatter_invalid"
-	ReasonEmptyStatus                 = "empty_status"
-	ReasonInjectTaskIdentifierFailed  = "inject_task_identifier_failed"
-	ReasonReadFailed                  = "read_failed"
-	ReasonAutoInjectDisabled          = "auto_inject_disabled"
+	ReasonInvalidFrontmatter          SkipReason = "invalid_frontmatter"
+	ReasonDuplicateFrontmatterInvalid SkipReason = "duplicate_frontmatter_invalid"
+	ReasonEmptyStatus                 SkipReason = "empty_status"
+	ReasonInjectTaskIdentifierFailed  SkipReason = "inject_task_identifier_failed"
+	ReasonReadFailed                  SkipReason = "read_failed"
+	ReasonAutoInjectDisabled          SkipReason = "auto_inject_disabled"
 )
+
+// AvailableSkipReasons is the full closed set of skip reasons, used for counter
+// pre-initialisation so every reason series exists at 0 before the first skip.
+var AvailableSkipReasons = []SkipReason{
+	ReasonInvalidFrontmatter,
+	ReasonDuplicateFrontmatterInvalid,
+	ReasonEmptyStatus,
+	ReasonInjectTaskIdentifierFailed,
+	ReasonReadFailed,
+	ReasonAutoInjectDisabled,
+}
 
 // SkippedFilesTotal counts vault task files the scanner skipped during a scan cycle,
 // labelled by the structured reason for the skip. A non-zero value on any label
@@ -213,14 +236,7 @@ func init() {
 		}
 	}
 
-	for _, reason := range []string{
-		ReasonInvalidFrontmatter,
-		ReasonDuplicateFrontmatterInvalid,
-		ReasonEmptyStatus,
-		ReasonInjectTaskIdentifierFailed,
-		ReasonReadFailed,
-		ReasonAutoInjectDisabled,
-	} {
-		SkippedFilesTotal.WithLabelValues(reason).Add(0)
+	for _, reason := range AvailableSkipReasons {
+		SkippedFilesTotal.WithLabelValues(reason.String()).Add(0)
 	}
 }

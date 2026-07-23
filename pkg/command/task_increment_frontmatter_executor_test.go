@@ -20,6 +20,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 var _ = Describe("NewIncrementFrontmatterExecutor", func() {
@@ -76,7 +77,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
-		executor = command.NewIncrementFrontmatterExecutor(fakeGit, taskDir)
+		executor = command.NewIncrementFrontmatterExecutor(fakeGit, taskDir, metrics.New())
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 

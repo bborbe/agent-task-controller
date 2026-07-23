@@ -163,7 +163,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	}
 	defer saramaClientProvider.Close()
 
-	resultWriter := result.NewResultWriter(gitClient, a.TaskDir, currentDateTime)
+	resultWriter := result.NewResultWriter(gitClient, a.TaskDir, currentDateTime, metrics.New())
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
 		syncProducer,
@@ -176,6 +176,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		currentDateTime,
 		a.SupersedeLookback,
 		prCommenter,
+		metrics.New(),
 	)
 
 	return service.Run(

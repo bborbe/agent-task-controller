@@ -19,6 +19,7 @@ import (
 
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/errors"
+	"github.com/golang/glog"
 )
 
 // maxResponseBodyBytes bounds how much of a GitHub API response we read before
@@ -101,8 +102,11 @@ func (c *prCommenter) PostComment(
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// Boundary trace only (V(2)); the error is returned and logged once by the caller.
+		glog.V(2).Infof("github COMMENT post %s %s -> error: %v", http.MethodPost, url, err)
 		return errors.Wrapf(ctx, err, "planning-retry: github COMMENT post failed")
 	}
+	glog.V(2).Infof("github COMMENT post %s %s -> status %d", http.MethodPost, url, resp.StatusCode)
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
 		_ = resp.Body.Close()

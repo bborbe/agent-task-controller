@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
@@ -100,7 +101,7 @@ var _ = Describe("ResultWriter", func() {
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
 
 		identifier = lib.TaskIdentifier("test-task-uuid-1234")
-		writer = result.NewResultWriter(fakeGit, taskDir, fakeTime)
+		writer = result.NewResultWriter(fakeGit, taskDir, fakeTime, metrics.New())
 	})
 
 	AfterEach(func() {

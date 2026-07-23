@@ -47,7 +47,7 @@ var _ = Describe("PlanningRetryGate", func() {
 		clock = clockVal
 		taskDir = "tasks"
 		fakeGit.PathReturns("/repo")
-		gate = command.NewPlanningRetryGate(fakeGit, taskDir, clock, fakeCommenter)
+		gate = command.NewPlanningRetryGate(fakeGit, taskDir, clock, fakeCommenter, metrics.New())
 	})
 
 	buildPRReviewTask := func(taskID string, phaseVal string, content string) lib.Task {

@@ -32,6 +32,7 @@ const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFront
 func NewUpdateFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -57,8 +58,7 @@ func NewUpdateFrontmatterExecutor(
 				cmd.TaskIdentifier,
 			)
 			if err != nil {
-				metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error").
-					Inc()
+				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "find task file for update")
 			}
 			if matchedRelPath == "" {
@@ -66,8 +66,7 @@ func NewUpdateFrontmatterExecutor(
 					"update-frontmatter: task file not found for %s, skipping",
 					cmd.TaskIdentifier,
 				)
-				metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "not_found").
-					Inc()
+				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
 				return nil, nil, nil
 			}
 			fullAbsPath := filepath.Join(gitClient.Path(), matchedRelPath)
@@ -77,8 +76,7 @@ func NewUpdateFrontmatterExecutor(
 				buildUpdateModifyFn(ctx, cmd.Updates, cmd.Body),
 				fmt.Sprintf("[agent-task-controller] update frontmatter for task %s", cmd.TaskIdentifier),
 			); err != nil {
-				metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error").
-					Inc()
+				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
 					err,
@@ -86,7 +84,7 @@ func NewUpdateFrontmatterExecutor(
 					cmd.TaskIdentifier,
 				)
 			}
-			metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "success").Inc()
+			m.FrontmatterCommandsTotal("update-frontmatter", "success").Inc()
 			return nil, nil, nil
 		},
 	)
