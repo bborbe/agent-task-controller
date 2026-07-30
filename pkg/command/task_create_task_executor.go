@@ -186,10 +186,19 @@ func isNotFoundReadError(err error) bool {
 	return strings.Contains(err.Error(), "returned 404")
 }
 
+// validateCreateTaskFrontmatter rejects a create-command whose frontmatter is
+// unusable downstream.
+//
+// `assignee` is deliberately NOT required. An empty assignee is the fleet's
+// operator-inbox signal (see the "Make Parked Agent Tasks Visible to Operator"
+// doctrine): escalation clears the assignee so no agent claims the task and a
+// human picks it up. Requiring it here made a task that is *born* parked
+// unrepresentable — github-pr-watcher's untrusted-author path stamps
+// `assignee: "", phase: human_review` and every such command was rejected, so
+// the PR silently never reached the operator queue (bborbe/git-sync#5,
+// 2026-07-28). `vault_scanner` already treats an empty assignee as unclaimed,
+// so accepting it at create matches how update and dispatch already behave.
 func validateCreateTaskFrontmatter(ctx context.Context, fm lib.TaskFrontmatter) error {
-	if fm.Assignee() == "" {
-		return errors.Wrap(ctx, validation.Error, "frontmatter missing required field: assignee")
-	}
 	if s, _ := fm.String("status"); s == "" {
 		return errors.Wrap(ctx, validation.Error, "frontmatter missing required field: status")
 	}
