@@ -126,18 +126,22 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 		})
 
-		Context("missing assignee in frontmatter", func() {
-			It("returns a validation error without writing", func() {
+		Context("empty assignee in frontmatter (task born parked)", func() {
+			// An empty assignee is the operator-inbox signal, not a defect:
+			// github-pr-watcher's untrusted-author path creates tasks with
+			// `assignee: "", phase: human_review` so a human picks them up.
+			// Requiring assignee here silently dropped every such task.
+			It("creates the task without an assignee", func() {
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("my-task-id"),
 					Frontmatter: lib.TaskFrontmatter{
-						"status": "next",
+						"status": "todo",
+						"phase":  "human_review",
 					},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("assignee"))
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
 			})
 		})
 
