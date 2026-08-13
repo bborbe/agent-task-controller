@@ -11,3 +11,7 @@ https://dev.quant.benjamin-borbe.de/admin/agent-task-controller/trigger
 Prod:
 https://prod.quant.benjamin-borbe.de/admin/agent-task-controller/setloglevel/3
 https://prod.quant.benjamin-borbe.de/admin/agent-task-controller/trigger
+
+## License
+
+This project is licensed under the BSD-style license. See the [LICENSE](LICENSE) file for details.
