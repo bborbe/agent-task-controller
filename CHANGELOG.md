@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- docs: add a License section to the README
+
 ## v0.3.1
 
 - fix(create-task): stop requiring a non-empty `assignee` on create. An empty assignee is the fleet's operator-inbox signal (escalation clears it so no agent claims the task), so requiring it made a task that is *born* parked unrepresentable: `github-pr-watcher`'s untrusted-author path stamps `assignee: "", phase: human_review`, and every such command was rejected with `validate frontmatter: frontmatter missing required field: assignee` — the PR silently never reached the operator queue and the only evidence was one controller log line (`bborbe/git-sync#5`, 2026-07-28). `vault_scanner` already treats an empty assignee as unclaimed, so accepting it at create matches how update and dispatch already behave. `status` remains required
