@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore(security): bump Go 1.26.5 -> 1.26.6 (stdlib GO-2026-5026 / GO-2026-5972 / GO-2026-6090 / GO-2026-6218)
+- chore: update module dependencies — `github.com/bborbe/agent` v0.79.0 -> v0.81.1, `github.com/bborbe/cqrs` v0.6.4 -> v0.6.6, `github.com/bborbe/kafka` v1.25.5 -> v1.25.8, `github.com/bborbe/service` v1.10.8, `github.com/bborbe/vault-cli` v0.101.3 -> v0.111.4, `github.com/IBM/sarama` v1.50.3 -> v1.60.1, `github.com/go-openapi/swag` v0.27.0 -> v0.28.0, and `k8s.io/*` v0.36.2 -> v0.36.3
+
 ## v0.3.2
 
 - docs: add a License section to the README
