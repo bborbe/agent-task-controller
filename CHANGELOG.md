@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: bump golang base image to 1.26.6 in the Dockerfile — go.mod was already on 1.26.6 but the Dockerfile pinned `golang:1.26.5`, making the image unbuildable (GOTOOLCHAIN=local + go.mod requires >= 1.26.6). v0.3.4's image could not be built.
+
 ## v0.3.4
 
 - chore: bump `github.com/bborbe/agent` v0.81.1 -> v0.81.3 — carries the retry-vs-escalate fix: `failed` results preserve `assignee` so the controller's trigger-cap escalation (`applyTriggerCap`) can fire; escalation records `previous_assignee` (spec 010/021/027).
+
 ## v0.3.3
 
 - chore(security): bump Go 1.26.5 -> 1.26.6 (stdlib GO-2026-5026 / GO-2026-5972 / GO-2026-6090 / GO-2026-6218)
