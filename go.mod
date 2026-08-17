@@ -3,7 +3,7 @@ module github.com/bborbe/agent-task-controller
 go 1.26.6
 
 require (
-	github.com/bborbe/agent v0.81.1
+	github.com/bborbe/agent v0.81.3
 	github.com/bborbe/argument/v2 v2.12.34
 	github.com/bborbe/boltkv v1.14.8
 	github.com/bborbe/cqrs v0.6.6
