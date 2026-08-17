@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.5
 
 - fix: bump golang base image to 1.26.6 in the Dockerfile — go.mod was already on 1.26.6 but the Dockerfile pinned `golang:1.26.5`, making the image unbuildable (GOTOOLCHAIN=local + go.mod requires >= 1.26.6). v0.3.4's image could not be built.
 
