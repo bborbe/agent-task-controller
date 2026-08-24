@@ -224,7 +224,7 @@ func init() {
 	ConflictResolutionsTotal.WithLabelValues("success").Add(0)
 	ConflictResolutionsTotal.WithLabelValues("error").Add(0)
 
-	for _, op := range []string{"increment-frontmatter", "update-frontmatter"} {
+	for _, op := range []string{"increment-frontmatter", "update-frontmatter", "complete-task"} {
 		for _, outcome := range []string{"success", "error", "not_found"} {
 			FrontmatterCommandsTotal.WithLabelValues(op, outcome).Add(0)
 		}
