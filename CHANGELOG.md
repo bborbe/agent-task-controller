@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/metrics to v0.5.15, github.com/bborbe/vault-cli to v0.116.1
+
 ## v0.4.0
 
 - feat: handle `complete-task` command — transitions an open vault task to `status: completed`, `phase: done` with a `# Resolution` body block (recovery SHA, closed-at); idempotent (no duplicate Resolution) — closes build-failure tasks on build red→green (spec 076)
