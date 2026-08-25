@@ -37,7 +37,7 @@ func CreateCommandConsumer(
 ) run.Func {
 	retryGate := command.NewPlanningRetryGate(gitClient, taskDir, currentDateTime, prCommenter, m)
 	executors := cdb.CommandObjectExecutorTxs{
-		command.NewTaskResultExecutor(resultWriter, retryGate),
+		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
 		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, m),
 		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, m),
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),

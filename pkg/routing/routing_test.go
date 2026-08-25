@@ -61,6 +61,36 @@ var _ = Describe("ShouldProcess", func() {
 	)
 })
 
+var _ = Describe("ShouldProcessResult", func() {
+	DescribeTable(
+		"result routing matrix",
+		func(targetVault, vaultName string, want bool) {
+			req := lib.Task{
+				TaskIdentifier: lib.TaskIdentifier("task-1"),
+				Frontmatter:    lib.TaskFrontmatter{},
+				Content:        lib.TaskContent("## Result\n"),
+			}
+			if targetVault != "<absent>" {
+				req.Frontmatter["target_vault"] = targetVault
+			}
+			Expect(routing.ShouldProcessResult(req, vaultName)).To(Equal(want))
+		},
+		// (result openclaw, my personal) → false (cross-vault traffic, skip)
+		Entry("openclaw target_vault, vaultName=personal → false", "openclaw", "personal", false),
+		// (result personal, my personal) → true
+		Entry("personal target_vault, vaultName=personal → true", "personal", "personal", true),
+		// (result personal, my openclaw) → false
+		Entry("personal target_vault, vaultName=openclaw → false", "personal", "openclaw", false),
+		// (absent target_vault, my personal) → true (legacy fallback — not-found handling covers missing)
+		Entry(
+			"absent target_vault, vaultName=personal → true (legacy fallback)",
+			"<absent>",
+			"personal",
+			true,
+		),
+	)
+})
+
 var _ = Describe("ValidateVaultName", func() {
 	var ctx context.Context
 	BeforeEach(func() { ctx = context.Background() })

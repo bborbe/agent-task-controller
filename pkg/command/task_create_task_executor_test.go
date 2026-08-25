@@ -276,6 +276,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(contentStr).To(ContainSubstring("task_identifier:"))
 				Expect(contentStr).To(ContainSubstring("assignee:"))
 				Expect(contentStr).To(ContainSubstring("status:"))
+				Expect(contentStr).To(ContainSubstring("target_vault: openclaw"))
 				Expect(contentStr).To(ContainSubstring("This is the task body."))
 			})
 		})

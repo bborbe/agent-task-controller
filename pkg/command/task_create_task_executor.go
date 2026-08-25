@@ -75,7 +75,7 @@ func NewCreateTaskExecutor(
 			if err := checkTitlePathFree(ctx, gitClient, relPath, cmd.TaskIdentifier); err != nil {
 				return nil, nil, err
 			}
-			if err := writeTaskFile(ctx, gitClient, relPath, cmd); err != nil {
+			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName); err != nil {
 				return nil, nil, err
 			}
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
@@ -115,14 +115,16 @@ func checkTitlePathFree(
 }
 
 // writeTaskFile builds the task content and writes it atomically to the vault
-// via git-rest, then logs the creation.
+// via git-rest, then logs the creation. vaultName is stamped as target_vault so
+// the created task is self-describing for the result-path routing guard.
 func writeTaskFile(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	cmd task.CreateCommand,
+	vaultName string,
 ) error {
-	content, err := buildCreateTaskContent(ctx, cmd)
+	content, err := buildCreateTaskContent(ctx, cmd, vaultName)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "build task file content for %s", cmd.TaskIdentifier)
 	}
@@ -205,10 +207,15 @@ func validateCreateTaskFrontmatter(ctx context.Context, fm lib.TaskFrontmatter) 
 	return nil
 }
 
-func buildCreateTaskContent(ctx context.Context, cmd task.CreateCommand) ([]byte, error) {
+func buildCreateTaskContent(
+	ctx context.Context,
+	cmd task.CreateCommand,
+	vaultName string,
+) ([]byte, error) {
 	fm := make(lib.TaskFrontmatter)
 	maps.Copy(fm, cmd.Frontmatter)
 	fm["task_identifier"] = string(cmd.TaskIdentifier)
+	fm["target_vault"] = vaultName
 	return marshalFileContent(ctx, fm, cmd.Body)
 }
 

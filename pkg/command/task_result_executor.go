@@ -15,6 +15,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 // TaskResultCommandOperation is the CQRS command operation name for task result updates.
@@ -22,9 +23,13 @@ const TaskResultCommandOperation base.CommandOperation = "update"
 
 // NewTaskResultExecutor creates a cdb.CommandObjectExecutorTx for update commands.
 // Uses cdb.CommandObjectExecutorTxFunc adapter — same pattern as trading command handlers.
+// vaultName is the controller's VAULT_NAME; a result whose target_vault frontmatter
+// (stamped at task create, echoed by the agent) does not match is cross-vault traffic
+// and is skipped before the write scan (no write, no not_found count, no result event).
 func NewTaskResultExecutor(
 	writer result.ResultWriter,
 	retryGate PlanningRetryGate,
+	vaultName string,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		TaskResultCommandOperation,
@@ -56,6 +61,13 @@ func NewTaskResultExecutor(
 					err,
 				)
 			}
+			if !routing.ShouldProcessResult(req, vaultName) {
+				glog.V(2).Infof(
+					"task result executor: skipped vault mismatch target_vault=%q vault=%q task=%s",
+					req.Frontmatter["target_vault"], vaultName, req.TaskIdentifier,
+				)
+				return nil, nil, nil
+			}
 			handled, err := retryGate.Handle(ctx, req)
 			if err != nil {
 				return nil, nil, errors.Wrapf(
@@ -66,17 +78,7 @@ func NewTaskResultExecutor(
 				)
 			}
 			if handled {
-				event, err := base.ParseEvent(ctx, req)
-				if err != nil {
-					return nil, nil, errors.Wrapf(
-						ctx,
-						err,
-						"parse result event for task %s",
-						req.TaskIdentifier,
-					)
-				}
-				eventID := base.EventID(req.TaskIdentifier)
-				return eventID.Ptr(), event, nil
+				return resultEvent(ctx, req)
 			}
 			if err := writer.WriteResult(ctx, req); err != nil {
 				return nil, nil, errors.Wrapf(
@@ -86,17 +88,23 @@ func NewTaskResultExecutor(
 					req.TaskIdentifier,
 				)
 			}
-			event, err := base.ParseEvent(ctx, req)
-			if err != nil {
-				return nil, nil, errors.Wrapf(
-					ctx,
-					err,
-					"parse result event for task %s",
-					req.TaskIdentifier,
-				)
-			}
-			eventID := base.EventID(req.TaskIdentifier)
-			return eventID.Ptr(), event, nil
+			return resultEvent(ctx, req)
 		},
 	)
+}
+
+// resultEvent builds the result event and its eventID for a handled task.
+// Used on both the retry-gate-handled and post-write paths.
+func resultEvent(ctx context.Context, req lib.Task) (*base.EventID, base.Event, error) {
+	event, err := base.ParseEvent(ctx, req)
+	if err != nil {
+		return nil, nil, errors.Wrapf(
+			ctx,
+			err,
+			"parse result event for task %s",
+			req.TaskIdentifier,
+		)
+	}
+	eventID := base.EventID(req.TaskIdentifier)
+	return eventID.Ptr(), event, nil
 }
