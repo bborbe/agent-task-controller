@@ -66,7 +66,15 @@ func NewCreateTaskExecutor(
 					"create-task: skipped vault mismatch target=%q effective=%q vault=%q task=%s",
 					cmd.TargetVault, effective, vaultName, cmd.TaskIdentifier,
 				)
-				return nil, nil, nil
+				// ErrCommandObjectSkipped — not nil: a nil return with SendResultEnabled
+				// publishes a spurious Success result on the shared result topic for every
+				// cross-vault create (go-cqrs/skipped-not-nil-for-non-retryable).
+				return nil, nil, errors.Wrapf(
+					ctx,
+					cdb.ErrCommandObjectSkipped,
+					"cross-vault create for task %s",
+					cmd.TaskIdentifier,
+				)
 			}
 			if err := validateCreateTaskFrontmatter(ctx, cmd.Frontmatter); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")

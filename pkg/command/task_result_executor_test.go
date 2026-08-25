@@ -101,7 +101,7 @@ var _ = Describe("NewTaskResultExecutor", func() {
 		})
 
 		Context("cross-vault result (target_vault mismatch)", func() {
-			It("skips without writing, event, or error", func() {
+			It("returns ErrCommandObjectSkipped without writing, event, or result", func() {
 				task := lib.Task{
 					TaskIdentifier: lib.TaskIdentifier("24 Tasks/other-vault-task.md"),
 					Frontmatter: lib.TaskFrontmatter{
@@ -116,7 +116,9 @@ var _ = Describe("NewTaskResultExecutor", func() {
 				cmdObj := buildCommandObject(event)
 
 				eventID, resultEvent, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(handleErr).To(BeNil())
+				// ErrCommandObjectSkipped — the result-sender wrapper (production) converts
+				// it to a silent skip (offset commits, no Success result published).
+				Expect(errors.Is(handleErr, cdb.ErrCommandObjectSkipped)).To(BeTrue())
 				Expect(eventID).To(BeNil())
 				Expect(resultEvent).To(BeNil())
 				Expect(fakeWriter.WriteResultCallCount()).To(Equal(0))

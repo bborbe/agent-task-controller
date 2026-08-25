@@ -66,7 +66,15 @@ func NewTaskResultExecutor(
 					"task result executor: skipped vault mismatch target_vault=%q vault=%q task=%s",
 					req.Frontmatter["target_vault"], vaultName, req.TaskIdentifier,
 				)
-				return nil, nil, nil
+				// ErrCommandObjectSkipped — not nil: a nil return with SendResultEnabled
+				// publishes a spurious Success result on the shared result topic for every
+				// cross-vault result (go-cqrs/skipped-not-nil-for-non-retryable).
+				return nil, nil, errors.Wrapf(
+					ctx,
+					cdb.ErrCommandObjectSkipped,
+					"cross-vault result for task %s",
+					req.TaskIdentifier,
+				)
 			}
 			handled, err := retryGate.Handle(ctx, req)
 			if err != nil {
