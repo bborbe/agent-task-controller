@@ -66,7 +66,15 @@ func NewCreateTaskExecutor(
 					"create-task: skipped vault mismatch target=%q effective=%q vault=%q task=%s",
 					cmd.TargetVault, effective, vaultName, cmd.TaskIdentifier,
 				)
-				return nil, nil, nil
+				// ErrCommandObjectSkipped — not nil: a nil return with SendResultEnabled
+				// publishes a spurious Success result on the shared result topic for every
+				// cross-vault create (go-cqrs/skipped-not-nil-for-non-retryable).
+				return nil, nil, errors.Wrapf(
+					ctx,
+					cdb.ErrCommandObjectSkipped,
+					"cross-vault create for task %s",
+					cmd.TaskIdentifier,
+				)
 			}
 			if err := validateCreateTaskFrontmatter(ctx, cmd.Frontmatter); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
@@ -75,7 +83,7 @@ func NewCreateTaskExecutor(
 			if err := checkTitlePathFree(ctx, gitClient, relPath, cmd.TaskIdentifier); err != nil {
 				return nil, nil, err
 			}
-			if err := writeTaskFile(ctx, gitClient, relPath, cmd); err != nil {
+			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName); err != nil {
 				return nil, nil, err
 			}
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
@@ -115,14 +123,16 @@ func checkTitlePathFree(
 }
 
 // writeTaskFile builds the task content and writes it atomically to the vault
-// via git-rest, then logs the creation.
+// via git-rest, then logs the creation. vaultName is stamped as target_vault so
+// the created task is self-describing for the result-path routing guard.
 func writeTaskFile(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	cmd task.CreateCommand,
+	vaultName string,
 ) error {
-	content, err := buildCreateTaskContent(ctx, cmd)
+	content, err := buildCreateTaskContent(ctx, cmd, vaultName)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "build task file content for %s", cmd.TaskIdentifier)
 	}
@@ -205,10 +215,15 @@ func validateCreateTaskFrontmatter(ctx context.Context, fm lib.TaskFrontmatter) 
 	return nil
 }
 
-func buildCreateTaskContent(ctx context.Context, cmd task.CreateCommand) ([]byte, error) {
+func buildCreateTaskContent(
+	ctx context.Context,
+	cmd task.CreateCommand,
+	vaultName string,
+) ([]byte, error) {
 	fm := make(lib.TaskFrontmatter)
 	maps.Copy(fm, cmd.Frontmatter)
 	fm["task_identifier"] = string(cmd.TaskIdentifier)
+	fm["target_vault"] = vaultName
 	return marshalFileContent(ctx, fm, cmd.Body)
 }
 
@@ -243,18 +258,22 @@ func supersedePriorRecurringTask(
 	newOrdinal, err := parsePeriodTokenOrdinal(ctx, newToken)
 	if err != nil {
 		glog.Warningf(
-			"auto-supersede: new token %q unrecognized for %s: %v",
-			newToken, cmd.TaskIdentifier, err,
+			"auto-supersede: new token (len %d) unrecognized for %s: %v",
+			len(newToken), cmd.TaskIdentifier, err,
 		)
 		return
 	}
 	titles, err := listSameSlugCandidateTitles(ctx, gitClient, taskDir, slug)
 	if err != nil {
+		glog.Warningf("auto-supersede: list candidates failed for slug %q: %v", slug, err)
 		return
 	}
 	// Exclude the new instance and rank.
 	var kept []string
 	for _, t := range titles {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if t == cmd.Title {
 			continue
 		}
@@ -278,7 +297,7 @@ func supersedePriorRecurringTask(
 // returns their TITLES (basename without ".md"), filtered to those whose title
 // starts with "<slug> - ". It uses a slug-scoped glob when the slug contains no
 // glob metacharacters; otherwise it lists all task files and filters in memory
-// (glob-injection defense). List errors are logged and returned.
+// (glob-injection defense). List errors are returned; the caller logs them once.
 func listSameSlugCandidateTitles(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -299,11 +318,13 @@ func listSameSlugCandidateTitles(
 	}
 	relPaths, err := gitClient.ListFiles(ctx, glob)
 	if err != nil {
-		glog.Warningf("auto-supersede: list %q failed for slug %q: %v", glob, slug, err)
 		return nil, err
 	}
 	var titles []string
 	for _, relPath := range relPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		title := strings.TrimSuffix(filepath.Base(relPath), ".md")
 		if strings.HasPrefix(title, prefix) {
 			titles = append(titles, title)
@@ -328,6 +349,9 @@ func collapseCandidates(
 ) {
 	inspected := 0
 	for _, rc := range ranked {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if inspected >= k {
 			break
 		}
@@ -474,7 +498,7 @@ func transitionPrior(
 		)
 		return
 	}
-	glog.Infof(
+	glog.V(2).Infof(
 		"auto-supersede: %s -> %s (prior superseded by new instance)",
 		priorRelPath,
 		newRelPath,
