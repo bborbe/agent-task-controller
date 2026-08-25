@@ -258,18 +258,22 @@ func supersedePriorRecurringTask(
 	newOrdinal, err := parsePeriodTokenOrdinal(ctx, newToken)
 	if err != nil {
 		glog.Warningf(
-			"auto-supersede: new token %q unrecognized for %s: %v",
-			newToken, cmd.TaskIdentifier, err,
+			"auto-supersede: new token (len %d) unrecognized for %s: %v",
+			len(newToken), cmd.TaskIdentifier, err,
 		)
 		return
 	}
 	titles, err := listSameSlugCandidateTitles(ctx, gitClient, taskDir, slug)
 	if err != nil {
+		glog.Warningf("auto-supersede: list candidates failed for slug %q: %v", slug, err)
 		return
 	}
 	// Exclude the new instance and rank.
 	var kept []string
 	for _, t := range titles {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if t == cmd.Title {
 			continue
 		}
@@ -293,7 +297,7 @@ func supersedePriorRecurringTask(
 // returns their TITLES (basename without ".md"), filtered to those whose title
 // starts with "<slug> - ". It uses a slug-scoped glob when the slug contains no
 // glob metacharacters; otherwise it lists all task files and filters in memory
-// (glob-injection defense). List errors are logged and returned.
+// (glob-injection defense). List errors are returned; the caller logs them once.
 func listSameSlugCandidateTitles(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -314,11 +318,13 @@ func listSameSlugCandidateTitles(
 	}
 	relPaths, err := gitClient.ListFiles(ctx, glob)
 	if err != nil {
-		glog.Warningf("auto-supersede: list %q failed for slug %q: %v", glob, slug, err)
 		return nil, err
 	}
 	var titles []string
 	for _, relPath := range relPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		title := strings.TrimSuffix(filepath.Base(relPath), ".md")
 		if strings.HasPrefix(title, prefix) {
 			titles = append(titles, title)
@@ -343,6 +349,9 @@ func collapseCandidates(
 ) {
 	inspected := 0
 	for _, rc := range ranked {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if inspected >= k {
 			break
 		}
@@ -489,7 +498,7 @@ func transitionPrior(
 		)
 		return
 	}
-	glog.Infof(
+	glog.V(2).Infof(
 		"auto-supersede: %s -> %s (prior superseded by new instance)",
 		priorRelPath,
 		newRelPath,

@@ -37,7 +37,6 @@ func NewTaskResultExecutor(
 		func(ctx context.Context, tx libkv.Tx, commandObject cdb.CommandObject) (*base.EventID, base.Event, error) {
 			var req lib.Task
 			if err := commandObject.Command.Data.MarshalInto(ctx, &req); err != nil {
-				glog.Warningf("task result executor: MarshalInto failed: %v", err)
 				return nil, nil, errors.Wrapf(
 					ctx,
 					cdb.ErrCommandObjectSkipped,
@@ -48,11 +47,6 @@ func NewTaskResultExecutor(
 			glog.V(2).
 				Infof("task result executor: deserialized task %s (content length=%d, frontmatter keys=%d)", req.TaskIdentifier, len(req.Content), len(req.Frontmatter))
 			if err := req.Validate(ctx); err != nil {
-				glog.Warningf(
-					"task result executor: Validate failed for task %s: %v",
-					req.TaskIdentifier,
-					err,
-				)
 				return nil, nil, errors.Wrapf(
 					ctx,
 					cdb.ErrCommandObjectSkipped,
