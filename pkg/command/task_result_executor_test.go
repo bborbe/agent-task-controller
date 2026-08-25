@@ -33,7 +33,7 @@ var _ = Describe("NewTaskResultExecutor", func() {
 		fakeWriter = &mocks.ResultWriter{}
 		fakeGate = &mocks.PlanningRetryGate{}
 		fakeGate.HandleReturns(false, nil)
-		executor = command.NewTaskResultExecutor(fakeWriter, fakeGate)
+		executor = command.NewTaskResultExecutor(fakeWriter, fakeGate, "personal")
 		schemaID = cdb.SchemaID{
 			Group:   "agent",
 			Kind:    "task",
@@ -97,6 +97,73 @@ var _ = Describe("NewTaskResultExecutor", func() {
 				_, gotTask := fakeWriter.WriteResultArgsForCall(0)
 				Expect(gotTask.TaskIdentifier).To(Equal(task.TaskIdentifier))
 				Expect(gotTask.Content).To(Equal(task.Content))
+			})
+		})
+
+		Context("cross-vault result (target_vault mismatch)", func() {
+			It("returns ErrCommandObjectSkipped without writing, event, or result", func() {
+				task := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("24 Tasks/other-vault-task.md"),
+					Frontmatter: lib.TaskFrontmatter{
+						"status":       "done",
+						"target_vault": "openclaw",
+					},
+					Content: lib.TaskContent("## Result\n\nOpenClaw task result."),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+
+				eventID, resultEvent, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				// ErrCommandObjectSkipped — the result-sender wrapper (production) converts
+				// it to a silent skip (offset commits, no Success result published).
+				Expect(errors.Is(handleErr, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+				Expect(eventID).To(BeNil())
+				Expect(resultEvent).To(BeNil())
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(0))
+			})
+
+			It("writes when target_vault matches the controller vault", func() {
+				task := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("24 Tasks/personal-task.md"),
+					Frontmatter: lib.TaskFrontmatter{
+						"status":       "done",
+						"target_vault": "personal",
+					},
+					Content: lib.TaskContent("## Result\n\nPersonal task result."),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+				fakeWriter.WriteResultReturns(nil)
+
+				eventID, resultEvent, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(handleErr).To(BeNil())
+				Expect(eventID).NotTo(BeNil())
+				Expect(resultEvent).NotTo(BeNil())
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(1))
+			})
+
+			It("writes legacy results with no target_vault (transitional fallback)", func() {
+				task := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("24 Tasks/legacy-task.md"),
+					Frontmatter: lib.TaskFrontmatter{
+						"status": "done",
+					},
+					Content: lib.TaskContent("## Result\n\nLegacy task result."),
+				}
+				event, err := base.ParseEvent(ctx, task)
+				Expect(err).To(BeNil())
+
+				cmdObj := buildCommandObject(event)
+				fakeWriter.WriteResultReturns(nil)
+
+				eventID, _, handleErr := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(handleErr).To(BeNil())
+				Expect(eventID).NotTo(BeNil())
+				Expect(fakeWriter.WriteResultCallCount()).To(Equal(1))
 			})
 		})
 

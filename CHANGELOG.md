@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - chore: update github.com/bborbe/metrics to v0.5.15, github.com/bborbe/vault-cli to v0.116.1
+## v0.5.0
+
+- feat: vault-routing guard on the result path — `target_vault` stamped into every created task; the result executor skips cross-vault results before the write scan (no write, no not_found count, no result event), mirroring the create-path `routing.ShouldProcess` guard (spec 044)
 
 ## v0.4.0
 

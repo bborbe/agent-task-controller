@@ -276,6 +276,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(contentStr).To(ContainSubstring("task_identifier:"))
 				Expect(contentStr).To(ContainSubstring("assignee:"))
 				Expect(contentStr).To(ContainSubstring("status:"))
+				Expect(contentStr).To(ContainSubstring("target_vault: openclaw"))
 				Expect(contentStr).To(ContainSubstring("This is the task body."))
 			})
 		})
@@ -360,7 +361,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 		Context("vault routing", func() {
 			It(
-				"skips a command whose TargetVault is openclaw when vaultName=personal (no git write, no error)",
+				"skips a command whose TargetVault is openclaw when vaultName=personal (ErrCommandObjectSkipped, no git write)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
@@ -379,7 +380,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						TargetVault: "openclaw",
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
+					// ErrCommandObjectSkipped — the result-sender wrapper (production)
+					// converts it to a silent skip (no Success result published).
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
 					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
 				},
 			)
@@ -454,7 +457,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						// TargetVault deliberately empty.
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
 					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
 				},
 			)
