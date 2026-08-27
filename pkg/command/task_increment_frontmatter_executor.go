@@ -111,9 +111,13 @@ func buildIncrementModifyFn(
 		// The trigger cap is opt-in: an absent max_triggers means no cap, so a
 		// recurring task that accumulates trigger_count across re-dispatches
 		// never has its routing assignee stripped (the lib default-3 fallback
-		// would silently kill the re-dispatch loop).
-		if _, ok := fm["max_triggers"]; ok && newVal >= fm.MaxTriggers() {
-			fm["assignee"] = ""
+		// would silently kill the re-dispatch loop). Only the trigger_count
+		// field drives the cap — never compare another incremented field
+		// against max_triggers.
+		if cmd.Field == "trigger_count" {
+			if _, ok := fm["max_triggers"]; ok && newVal >= fm.MaxTriggers() {
+				fm["assignee"] = ""
+			}
 		}
 		return marshalFileContent(ctx, fm, body)
 	}
