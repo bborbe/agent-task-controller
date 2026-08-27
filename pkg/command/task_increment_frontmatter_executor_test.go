@@ -246,6 +246,26 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 				Expect(fm["phase"]).NotTo(Equal("human_review"))
 				Expect(fm["assignee"]).To(BeEmpty())
 			})
+
+			It("preserves assignee when max_triggers is absent (recurring task)", func() {
+				taskFile := writeTaskFile(
+					"cap-absent.md",
+					"---\ntask_identifier: cap-absent-uuid\ntrigger_count: 3\nphase: planning\nassignee: sentry-collector-agent\n---\nbody\n",
+				)
+				// trigger_count 3 -> 4 would trip the lib default-3 cap; absent
+				// max_triggers means no cap, so the routing assignee survives.
+				cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("cap-absent-uuid"),
+					Field:          "trigger_count",
+					Delta:          1,
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(BeNumerically("==", 4))
+				Expect(fm["phase"]).To(Equal("planning"))
+				Expect(fm["assignee"]).To(Equal("sentry-collector-agent"))
+			})
 		})
 
 		Context("no escalation below cap", func() {

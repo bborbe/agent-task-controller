@@ -28,7 +28,9 @@ const IncrementFrontmatterCommandOperation base.CommandOperation = task.Incremen
 
 // NewIncrementFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that atomically
 // reads the task file, increments the named frontmatter field by delta, and commits.
-// If trigger_count reaches max_triggers the assignee is cleared and phase is preserved in the same write.
+// If trigger_count reaches an explicitly-set max_triggers the assignee is cleared and
+// phase is preserved in the same write. An absent max_triggers means no cap: the routing
+// assignee is never stripped on recurring tasks that accumulate trigger_count.
 func NewIncrementFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
@@ -106,8 +108,16 @@ func buildIncrementModifyFn(
 		currentVal := intFromFrontmatter(fm, cmd.Field)
 		newVal := currentVal + cmd.Delta
 		fm[cmd.Field] = newVal
-		if cmd.Field == "trigger_count" && newVal >= fm.MaxTriggers() {
-			fm["assignee"] = ""
+		// The trigger cap is opt-in: an absent max_triggers means no cap, so a
+		// recurring task that accumulates trigger_count across re-dispatches
+		// never has its routing assignee stripped (the lib default-3 fallback
+		// would silently kill the re-dispatch loop). Only the trigger_count
+		// field drives the cap — never compare another incremented field
+		// against max_triggers.
+		if cmd.Field == "trigger_count" {
+			if _, ok := fm["max_triggers"]; ok && newVal >= fm.MaxTriggers() {
+				fm["assignee"] = ""
+			}
 		}
 		return marshalFileContent(ctx, fm, body)
 	}

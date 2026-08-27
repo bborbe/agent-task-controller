@@ -525,11 +525,11 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 			})
 
 			It(
-				"escalates when retry_count (set by executor) meets default max_retries, preserving lifecycle phase",
+				"escalates when retry_count meets explicitly-set max_retries 3, preserving lifecycle phase",
 				func() {
 					writeTaskFile(
 						"my-task.md",
-						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nretry_count: 3\nassignee: claude\n---\nAgent output\n",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nretry_count: 3\nmax_retries: 3\nassignee: claude\n---\nAgent output\n",
 					)
 					taskFile = lib.Task{
 						TaskIdentifier: identifier,
@@ -538,6 +538,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 							"status":          "in_progress",
 							"phase":           "ai_review",
 							"retry_count":     3,
+							"max_retries":     3,
 						},
 						Content: lib.TaskContent("Agent output\n"),
 					}
@@ -644,10 +645,13 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(s).NotTo(ContainSubstring("Retry Escalation"))
 			})
 
-			It("writes assignee: empty and preserves phase: ai_review at retry cap", func() {
+			It("preserves assignee and does not escalate when max_retries is absent", func() {
+				// retry_count 3 would trip the lib default-3 cap; absent max_retries
+				// means no cap, so the routing assignee survives (same bug class as
+				// the trigger-cap strip).
 				writeTaskFile(
 					"my-task.md",
-					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nretry_count: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nretry_count: 3\nassignee: claude\n---\nAgent output\n",
 				)
 				taskFile = lib.Task{
 					TaskIdentifier: identifier,
@@ -656,6 +660,31 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						"status":          "in_progress",
 						"phase":           "ai_review",
 						"retry_count":     3,
+						"assignee":        "claude",
+					},
+					Content: lib.TaskContent("Agent output\n"),
+				}
+				Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+				written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+				s := string(written)
+				Expect(s).NotTo(ContainSubstring("## Retry Escalation"))
+				Expect(s).To(ContainSubstring("assignee: claude"))
+				Expect(s).NotTo(ContainSubstring("previous_assignee:"))
+			})
+
+			It("writes assignee: empty and preserves phase: ai_review at retry cap", func() {
+				writeTaskFile(
+					"my-task.md",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nretry_count: 3\nmax_retries: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+				)
+				taskFile = lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter: lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"retry_count":     3,
+						"max_retries":     3,
 						"assignee":        "claude",
 					},
 					Content: lib.TaskContent("## Result\nStatus: failed\n"),
@@ -674,7 +703,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 			It("writes assignee: empty and preserves phase: execution at retry cap", func() {
 				writeTaskFile(
 					"my-task.md",
-					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: execution\nretry_count: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: execution\nretry_count: 3\nmax_retries: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
 				)
 				taskFile = lib.Task{
 					TaskIdentifier: identifier,
@@ -683,6 +712,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						"status":          "in_progress",
 						"phase":           "execution",
 						"retry_count":     3,
+						"max_retries":     3,
 						"assignee":        "claude",
 					},
 					Content: lib.TaskContent("## Result\nStatus: failed\n"),
@@ -701,7 +731,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 			It("writes assignee: empty and preserves phase: planning at retry cap", func() {
 				writeTaskFile(
 					"my-task.md",
-					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nretry_count: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nretry_count: 3\nmax_retries: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
 				)
 				taskFile = lib.Task{
 					TaskIdentifier: identifier,
@@ -710,6 +740,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						"status":          "in_progress",
 						"phase":           "planning",
 						"retry_count":     3,
+						"max_retries":     3,
 						"assignee":        "claude",
 					},
 					Content: lib.TaskContent("## Result\nStatus: failed\n"),
@@ -1139,7 +1170,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					existingBody := "\n## Retry Escalation\n\n- **Timestamp:** 2026-04-18T11:00:00Z\n- **Attempts:** 3\n- **Assignee:** claude\n- **Last error:** see agent output above\n"
 					writeTaskFile(
 						"my-task.md",
-						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: human_review\nretry_count: 3\nassignee: claude\n---\n"+existingBody,
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: human_review\nretry_count: 3\nmax_retries: 3\nassignee: claude\n---\n"+existingBody,
 					)
 					taskFile = lib.Task{
 						TaskIdentifier: identifier,
@@ -1148,6 +1179,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 							"status":          "in_progress",
 							"phase":           "ai_review",
 							"retry_count":     3,
+							"max_retries":     3,
 							"assignee":        "claude",
 						},
 						Content: lib.TaskContent("## Result\nStatus: failed\n" + existingBody),
@@ -1429,6 +1461,36 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(fmErr).NotTo(HaveOccurred())
 				Expect(fm["previous_assignee"]).To(Equal("claude"))
 			})
+
+			It(
+				"preserves assignee and does not escalate when max_triggers is absent (recurring task)",
+				func() {
+					// trigger_count 5 would trip the lib default-3 cap; absent max_triggers
+					// means no cap, so the routing assignee survives and no escalation section
+					// is appended (the production incident: Daily Sentry Triage assignee strip).
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\ntrigger_count: 5\nassignee: sentry-collector-agent\n---\n## Result\nStatus: failed\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "planning",
+							"trigger_count":   5,
+							"assignee":        "sentry-collector-agent",
+						},
+						Content: lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(s).To(ContainSubstring("assignee: sentry-collector-agent"))
+					Expect(s).NotTo(ContainSubstring("previous_assignee:"))
+				},
+			)
 		})
 
 		Context("interleaved partial update between read and write (race-fix regression)", func() {
