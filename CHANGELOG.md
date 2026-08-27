@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: make the trigger/retry caps opt-in — an absent `max_triggers`/`max_retries` now means no cap, so a recurring task that accumulates `trigger_count` across zombie-failure re-dispatches never has its routing `assignee` stripped and never appends spurious escalation sections (increment-frontmatter executor + result-writer caps). Previously the lib default-3 fallback stripped `assignee` on the 3rd trigger, silently killing the re-dispatch loop (2026-08-27 prod incident: Daily Sentry Triage assignee strip).
+
 ## v0.5.1
 
 - chore: update github.com/bborbe/metrics to v0.5.15, github.com/bborbe/vault-cli to v0.116.1

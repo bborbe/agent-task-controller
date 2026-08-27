@@ -230,15 +230,22 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 	return body
 }
 
-// applyTriggerCap enforces the trigger-count cap. The triggerCount > 0 guard prevents
-// degenerate escalation of brand-new tasks where trigger_count is absent. When the task
-// is already parked (section present), existing.Phase() restores the on-disk lifecycle
-// phase to prevent stale-result phase clobber (cap stickiness).
+// applyTriggerCap enforces the trigger-count cap. The cap is opt-in: an absent
+// max_triggers means no cap, so recurring tasks that accumulate trigger_count
+// across re-dispatches are never escalated and never have their routing assignee
+// stripped (the lib default-3 fallback would kill the re-dispatch loop). The
+// triggerCount > 0 guard prevents degenerate escalation of brand-new tasks where
+// trigger_count is absent. When the task is already parked (section present),
+// existing.Phase() restores the on-disk lifecycle phase to prevent stale-result
+// phase clobber (cap stickiness).
 func (r *resultWriter) applyTriggerCap(
 	merged, existing lib.TaskFrontmatter,
 	triggerCount int,
 	body string,
 ) string {
+	if _, ok := merged["max_triggers"]; !ok {
+		return body
+	}
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return body
 	}
@@ -250,13 +257,19 @@ func (r *resultWriter) applyTriggerCap(
 	return body + r.triggerEscalationSection(triggerCount, agentName, merged)
 }
 
-// applyRetryCap enforces the retry-count cap. When the task is already parked (section
-// present), existing.Phase() restores the on-disk lifecycle phase (cap stickiness).
+// applyRetryCap enforces the retry-count cap. The cap is opt-in: an absent max_retries
+// means no cap, so tasks that accumulate retry_count across re-dispatches are never
+// escalated and never have their routing assignee stripped (the lib default-3 fallback
+// would kill the re-dispatch loop). When the task is already parked (section present),
+// existing.Phase() restores the on-disk lifecycle phase (cap stickiness).
 func (r *resultWriter) applyRetryCap(
 	merged, existing lib.TaskFrontmatter,
 	retryCount int,
 	body string,
 ) string {
+	if _, ok := merged["max_retries"]; !ok {
+		return body
+	}
 	if retryCount < merged.MaxRetries() {
 		return body
 	}
