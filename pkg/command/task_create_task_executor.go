@@ -217,6 +217,11 @@ func writeTaskFile(
 		return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
 	}
 	glog.V(2).Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
+	// Unconditional Infof, not V(n)-gated, by design: a reopen overwrites a
+	// task an operator (or another agent) already closed, so it must be
+	// visible in prod logs at default verbosity. Gating it behind -v=2 would
+	// make the one event worth auditing the one event nobody sees. The
+	// first-ever-create line above stays V(2) — that one is routine.
 	if reopened {
 		glog.Infof(
 			"create-task: reopening terminal task at %s (prior status %s)",
