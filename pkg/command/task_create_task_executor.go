@@ -29,8 +29,10 @@ import (
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
 // a new vault task file for the given task_identifier. If cmd.Title passes validation
 // the file is written at tasks/{title}.md; otherwise it falls back to tasks/{task_identifier}.md.
-// If a file already exists at the resolved path the command returns ErrTaskAlreadyExists
-// (a benign Failure on the result topic — no overwrite, no git write).
+// A file that already exists at the resolved path causes ErrTaskAlreadyExists (a benign
+// Failure on the result topic — no overwrite, no git write) UNLESS the existing file's
+// status is terminal ("completed"/"aborted"), in which case a fresh non-terminal task is
+// materialized at that path.
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
 // Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
 // match vaultName are skipped without side effects (no git write, no error, no result event).
@@ -80,10 +82,16 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			relPath := resolveCreateTaskRelPath(ctx, taskDir, cmd)
-			if err := checkTitlePathFree(ctx, gitClient, relPath, cmd.TaskIdentifier); err != nil {
+			reopened, priorStatus, err := checkTitlePathFree(
+				ctx,
+				gitClient,
+				relPath,
+				cmd.TaskIdentifier,
+			)
+			if err != nil {
 				return nil, nil, err
 			}
-			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName); err != nil {
+			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName, reopened, priorStatus); err != nil {
 				return nil, nil, err
 			}
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
@@ -92,60 +100,135 @@ func NewCreateTaskExecutor(
 	)
 }
 
-// checkTitlePathFree returns ErrTaskAlreadyExists when the title path is
-// already occupied (benign Failure on the result topic — no overwrite, no
-// git write). A transient git-rest read error is propagated. A "not found"
-// read error is swallowed (title path is free).
+// checkTitlePathFree reports whether the title path is free for a new task.
+// The slot is free when the path is unoccupied (git-rest 404) OR when the
+// existing file's frontmatter status is a terminal status ("completed" or
+// "aborted", compared case-sensitively after whitespace trim) — a terminal
+// task is no longer a live duplicate, so the slot is reusable. On a
+// terminal-status free it returns reopened=true and the prior status so the
+// caller can distinguish a reopen from a first-ever create. Every other
+// occupied state — any non-terminal status, an absent/empty/unknown status,
+// missing frontmatter delimiters, or unparseable YAML — returns
+// ErrTaskAlreadyExists (a benign Failure on the result topic — no overwrite,
+// no git write) wrapped with the "title path %s occupied" message shape. A
+// transient git-rest read error is propagated. The decision consumes the
+// bytes already read by this function; the caller must not issue a second
+// ReadFile.
 func checkTitlePathFree(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	taskIdentifier lib.TaskIdentifier,
-) error {
+) (reopened bool, priorStatus string, err error) {
 	existing, err := gitClient.ReadFile(ctx, relPath)
-	if err == nil {
-		glog.V(2).Infof(
-			"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
+	if err != nil {
+		if !isNotFoundReadError(err) {
+			return false, "", errors.Wrapf(
+				ctx, err, "check existing task file at %s for %s", relPath, taskIdentifier,
+			)
+		}
+		// git-rest 404: the title path is free, first-ever create.
+		return false, "", nil
+	}
+	frontmatterStr, parseErr := result.ExtractFrontmatter(ctx, existing)
+	if parseErr != nil {
+		glog.Warningf(
+			"create-task: cannot read status from existing file at %s for %s; holding title path: %v",
 			relPath,
-			len(existing),
 			taskIdentifier,
+			parseErr,
 		)
-		return errors.Wrapf(
-			ctx, task.ErrTaskAlreadyExists, "title path %s occupied", relPath,
+		return false, "", errors.Wrapf(
+			ctx,
+			task.ErrTaskAlreadyExists,
+			"title path %s occupied",
+			relPath,
 		)
 	}
-	if !isNotFoundReadError(err) {
-		return errors.Wrapf(
-			ctx, err, "check existing task file at %s for %s", relPath, taskIdentifier,
+	existingFm, parseErr := parseTaskFrontmatter(frontmatterStr)
+	if parseErr != nil {
+		glog.Warningf(
+			"create-task: cannot parse frontmatter of existing file at %s for %s; holding title path: %v",
+			relPath,
+			taskIdentifier,
+			parseErr,
+		)
+		return false, "", errors.Wrapf(
+			ctx,
+			task.ErrTaskAlreadyExists,
+			"title path %s occupied",
+			relPath,
 		)
 	}
-	return nil
+	status, _ := existingFm.String("status")
+	status = strings.TrimSpace(status)
+	if status == "completed" || status == "aborted" {
+		return true, status, nil
+	}
+	glog.V(2).Infof(
+		"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
+		relPath,
+		len(existing),
+		taskIdentifier,
+	)
+	return false, "", errors.Wrapf(
+		ctx,
+		task.ErrTaskAlreadyExists,
+		"title path %s occupied",
+		relPath,
+	)
 }
 
 // writeTaskFile builds the task content and writes it atomically to the vault
 // via git-rest, then logs the creation. vaultName is stamped as target_vault so
 // the created task is self-describing for the result-path routing guard.
+// reopened and priorStatus carry the reopen signal from the title-path collision
+// check — reopened is true only when the slot was freed by a terminal-status
+// file, and priorStatus is that file's status — for the write path to use.
+// On reopened == true the write commits with a "[agent-task-controller] reopen
+// terminal task <id>" message and emits the unconditional INFO log
+// "create-task: reopening terminal task" (visible at default verbosity, naming
+// the path and prior status); a first-ever create (reopened == false) carries
+// neither — it keeps the "create task" commit message and the V(2) creation log.
 func writeTaskFile(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	cmd task.CreateCommand,
 	vaultName string,
+	reopened bool,
+	priorStatus string,
 ) error {
 	content, err := buildCreateTaskContent(ctx, cmd, vaultName)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "build task file content for %s", cmd.TaskIdentifier)
 	}
 	absPath := filepath.Join(gitClient.Path(), relPath)
+	msg := "[agent-task-controller] create task " + string(cmd.TaskIdentifier)
+	if reopened {
+		msg = "[agent-task-controller] reopen terminal task " + string(cmd.TaskIdentifier)
+	}
 	if err := gitClient.AtomicWriteAndCommitPush(
 		ctx,
 		absPath,
 		content,
-		"[agent-task-controller] create task "+string(cmd.TaskIdentifier),
+		msg,
 	); err != nil {
 		return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
 	}
 	glog.V(2).Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
+	// Unconditional Infof, not V(n)-gated, by design: a reopen overwrites a
+	// task an operator (or another agent) already closed, so it must be
+	// visible in prod logs at default verbosity. Gating it behind -v=2 would
+	// make the one event worth auditing the one event nobody sees. The
+	// first-ever-create line above stays V(2) — that one is routine.
+	if reopened {
+		glog.Infof(
+			"create-task: reopening terminal task at %s (prior status %s)",
+			relPath,
+			priorStatus,
+		)
+	}
 	return nil
 }
 

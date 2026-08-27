@@ -59,6 +59,17 @@ Agent provides: {status: completed, phase: done}
 Merged result:  {assignee: backtest-agent, tags: [agent-task], task_identifier: xyz, status: completed, phase: done}
 ```
 
+## Terminal Task Status (create-task dedup)
+
+The vault has exactly two terminal task statuses: `completed` and `aborted`. A task in a terminal status is finished — no longer a live duplicate — so `create-task`'s dedup rule keys on whether the title path is occupied by a *live* task rather than on file existence alone.
+
+`done` is a `phase` value, not a `status`, and is NOT terminal for the dedup rule: a file can carry `phase: done` while its `status` is still live (status/phase merge semantics documented in `## Frontmatter Merge`), so `phase` plays no part in the dedup decision.
+
+`create-task`'s dedup rule is "the title path is occupied by a live task":
+
+- a create command whose title path holds a terminal task (`completed` or `aborted`) frees the slot and materializes a fresh non-terminal task at that path — an in-place overwrite whose prior instance remains recoverable via `git show <sha>~1:<path>`, recorded by a `[agent-task-controller] reopen terminal task <id>` commit and an unconditional `create-task: reopening terminal task` INFO log;
+- any non-terminal status, or any existing file whose status cannot be read (absent/empty/unknown status, missing frontmatter delimiters, unparseable YAML), holds the path and the create is dropped with `ErrTaskAlreadyExists`.
+
 ## Assignee-Clear on Escalation (spec 021, refined by spec 039, completed by spec 042)
 
 Every escalation path writes `assignee: ""` so the task surfaces in operator inbox.
