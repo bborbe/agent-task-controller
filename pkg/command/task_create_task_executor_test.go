@@ -211,8 +211,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 		Context("collision with a different task_identifier", func() {
 			It("returns ErrTaskAlreadyExists and does not write (AC4)", func() {
-				// Existing file at the title path belongs to a DIFFERENT task — filename owns the
-				// slot; the executor must not consult frontmatter, must not write.
+				// Existing file at the title path belongs to a DIFFERENT task and its status
+				// "todo" is non-terminal — filename owns the slot, no overwrite.
 				fakeGit.ReadFileReturns(
 					[]byte(
 						"---\ntask_identifier: someone-else\nassignee: alice\nstatus: todo\n---\n",
@@ -248,6 +248,221 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err.Error()).To(ContainSubstring("503"))
 				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
 			})
+		})
+
+		Context("terminal status completed frees the title path (reopen)", func() {
+			It(
+				"materializes a fresh non-terminal task over the completed file (AC terminal-completed)",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old-id\nassignee: alice\nstatus: completed\nphase: done\ncompleted_date: 2026-06-01T10:00:00Z\n---\npremature triage verdict for this alert\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("reopen-completed"),
+						Title:          "Reopen Completed",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					// Single-ReadFile lock: the status decision reuses the collision-check bytes.
+					Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
+
+					// Content equals a first-ever create — nothing carried over from the terminal file.
+					_, _, content, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+					contentStr := string(content)
+					Expect(contentStr).To(ContainSubstring("status: next"))
+					Expect(contentStr).NotTo(ContainSubstring("completed_date"))
+					Expect(contentStr).NotTo(ContainSubstring("phase: done"))
+					Expect(contentStr).NotTo(ContainSubstring("premature triage verdict"))
+				},
+			)
+		})
+
+		Context("terminal status aborted frees the title path (reopen)", func() {
+			It(
+				"materializes a fresh non-terminal task over the aborted file (AC terminal-aborted)",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old-id\nassignee: alice\nstatus: aborted\nphase: done\n---\nprior verdict body\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("reopen-aborted"),
+						Title:          "Reopen Aborted",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				},
+			)
+		})
+
+		Context("non-terminal status holds the title path (no reopen)", func() {
+			DescribeTable(
+				"returns ErrTaskAlreadyExists without writing",
+				func(existingStatus string) {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: x\nassignee: alice\nstatus: "+existingStatus+"\n---\nbody\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("non-terminal"),
+						Title:          "Non Terminal",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
+					Expect(alreadyExists).To(BeTrue())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+				Entry("next", "next"),
+				Entry("in_progress", "in_progress"),
+				Entry("backlog", "backlog"),
+				Entry("hold", "hold"),
+			)
+		})
+
+		Context("unreadable or ambiguous existing file holds the title path (fail closed)", func() {
+			DescribeTable(
+				"returns ErrTaskAlreadyExists without writing",
+				func(existing []byte) {
+					fakeGit.ReadFileReturns(existing, nil)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("ambiguous"),
+						Title:          "Ambiguous",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
+					Expect(alreadyExists).To(BeTrue())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+				Entry("no frontmatter delimiters", []byte("plain text, no frontmatter\n")),
+				Entry("syntactically invalid YAML", []byte("---\nstatus: [\n---\n")),
+				Entry(
+					"valid frontmatter with no status key",
+					[]byte("---\ntask_identifier: x\nassignee: alice\n---\n"),
+				),
+				Entry("empty status", []byte("---\nstatus: \"\"\n---\n")),
+				Entry("unknown status value", []byte("---\nstatus: some-unknown-value\n---\n")),
+			)
+		})
+
+		Context("reopen content is byte-identical to a first-ever create", func() {
+			It(
+				"writes identical bytes whether the slot was free or freed by a terminal status (AC content-equals-first-create)",
+				func() {
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("byte-identical"),
+						Title:          "Byte Identical",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+						Body:           "shared body\n",
+					})
+					// First-ever create: default 404 read frees the slot.
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					_, _, content0, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+
+					// Reopen: same command, but the slot now holds a terminal file.
+					fakeGit.ReadFileReturns(
+						[]byte("---\nstatus: aborted\n---\nprior verdict body\n"),
+						nil,
+					)
+					_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					_, _, content1, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(1)
+
+					Expect(content1).To(Equal(content0))
+				},
+			)
+		})
+
+		Context("reopen then replay is idempotent", func() {
+			It(
+				"reopens a terminal file once, then holds the path on replay (AC replay-idempotency)",
+				func() {
+					fakeGit.ReadFileReturnsOnCall(
+						0,
+						[]byte(
+							"---\ntask_identifier: replay-old\nassignee: alice\nstatus: completed\n---\nbody\n",
+						),
+						nil,
+					)
+					fakeGit.ReadFileReturnsOnCall(
+						1,
+						[]byte("---\nstatus: next\n---\n"),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("replay-idempotent"),
+						Title:          "Replay Idempotent",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					// First handle: terminal file → reopen → write.
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					// Replay: just-written non-terminal content → hold path.
+					_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
+					Expect(alreadyExists).To(BeTrue())
+					Expect(
+						fakeGit.AtomicWriteAndCommitPushCallCount(),
+					).To(Equal(1))
+					// unchanged across replay
+				},
+			)
+		})
+
+		Context("commit message distinguishes reopen from first-ever create", func() {
+			It(
+				"commits a reopen terminal task message when the slot was freed by a terminal status",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old\nassignee: alice\nstatus: completed\nphase: done\n---\nprior verdict\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("reopen-msg"),
+						Title:          "Reopen Msg",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					_, _, _, message := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+					Expect(message).To(ContainSubstring("reopen terminal task"))
+				},
+			)
+
+			It(
+				"keeps the create task message on a first-ever create (no reopen substring)",
+				func() {
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("first-create-msg"),
+						Title:          "First Create Msg",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					_, _, _, message := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+					Expect(message).NotTo(ContainSubstring("reopen terminal task"))
+					Expect(message).To(ContainSubstring("create task"))
+				},
+			)
 		})
 
 		Context("success: new file created", func() {

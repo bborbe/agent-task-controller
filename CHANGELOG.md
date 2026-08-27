@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: `create-task` reopens a title path held by a terminal task — a path whose existing file has frontmatter status `completed` or `aborted` is treated as free, so a create command materializes a fresh non-terminal task at that path instead of returning `ErrTaskAlreadyExists`; any non-terminal status, absent/empty/unknown status, missing frontmatter delimiters, or unparseable YAML still holds the path (dedup decision moved from file existence to the existing task's status)
+- fix: make terminal-task reopens operator-visible — a create-task that materializes a fresh task over a `completed`/`aborted` file now emits an unconditional `create-task: reopening terminal task` INFO log (naming the path and prior status) at default verbosity and commits with a distinct `[agent-task-controller] reopen terminal task <id>` message, so a reopen is greppable in prod logs and vault history without raising the log level
+
 ## v0.5.2
 
 - fix: make the trigger/retry caps opt-in — an absent `max_triggers`/`max_retries` now means no cap, so a recurring task that accumulates `trigger_count` across zombie-failure re-dispatches never has its routing `assignee` stripped and never appends spurious escalation sections (increment-frontmatter executor + result-writer caps). Previously the lib default-3 fallback stripped `assignee` on the 3rd trigger, silently killing the re-dispatch loop (2026-08-27 prod incident: Daily Sentry Triage assignee strip).
