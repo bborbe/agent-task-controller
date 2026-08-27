@@ -83,6 +83,24 @@ func (a *gitRestGitClientAdapter) AtomicWriteAndCommitPush(
 	return a.client.Post(ctx, rel, content)
 }
 
+// AtomicWriteIfAbsentAndCommitPush writes content to absPath via git-rest
+// create-only POST (?create_only=1). git-rest answers 409 Conflict for an
+// occupied path, mapped to ErrAlreadyExists; nothing is written in that case.
+// Atomicity relies on per-task Kafka partitioning (no local mutex).
+func (a *gitRestGitClientAdapter) AtomicWriteIfAbsentAndCommitPush(
+	ctx context.Context,
+	absPath string,
+	content []byte,
+	message string,
+) error {
+	rel, err := filepath.Rel(a.basePath, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return errors.Errorf(ctx, "absPath %q is not under basePath %q", absPath, a.basePath)
+	}
+	glog.V(3).Infof("gitrest: POST (create-only) %s (%s)", rel, message)
+	return a.client.PostIfAbsent(ctx, rel, content)
+}
+
 // AtomicReadModifyWriteAndCommitPush reads absPath, calls modify, then writes the result via git-rest.
 // Atomicity relies on per-task Kafka partitioning (no local mutex).
 func (a *gitRestGitClientAdapter) AtomicReadModifyWriteAndCommitPush(

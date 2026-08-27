@@ -25,6 +25,7 @@ var _ = Describe("gitRestGitClientAdapter", func() {
 			CommitAndPush(context.Context, string) error
 			Path() string
 			AtomicWriteAndCommitPush(context.Context, string, []byte, string) error
+			AtomicWriteIfAbsentAndCommitPush(context.Context, string, []byte, string) error
 			AtomicReadModifyWriteAndCommitPush(context.Context, string, func([]byte) ([]byte, error), string) error
 			ListFiles(context.Context, string) ([]string, error)
 			ReadFile(context.Context, string) ([]byte, error)
@@ -108,6 +109,43 @@ var _ = Describe("gitRestGitClientAdapter", func() {
 				"msg",
 			)
 			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("AtomicWriteIfAbsentAndCommitPush", func() {
+		It("calls PostIfAbsent with the relative path and content", func() {
+			content := []byte("hello")
+			absPath := "/data/vault/tasks/foo.md"
+			Expect(
+				adapter.AtomicWriteIfAbsentAndCommitPush(ctx, absPath, content, "create foo"),
+			).To(Succeed())
+			Expect(fakeClient.PostIfAbsentCallCount()).To(Equal(1))
+			_, relPath, postedContent := fakeClient.PostIfAbsentArgsForCall(0)
+			Expect(relPath).To(Equal("tasks/foo.md"))
+			Expect(postedContent).To(Equal(content))
+		})
+
+		It("returns an error when absPath is outside basePath", func() {
+			err := adapter.AtomicWriteIfAbsentAndCommitPush(
+				ctx,
+				"/other/path/file.md",
+				[]byte("x"),
+				"msg",
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not under basePath"))
+		})
+
+		It("returns ErrAlreadyExists unchanged when PostIfAbsent reports a conflict", func() {
+			fakeClient.PostIfAbsentReturns(gitrestclient.ErrAlreadyExists)
+			err := adapter.AtomicWriteIfAbsentAndCommitPush(
+				ctx,
+				"/data/vault/tasks/foo.md",
+				[]byte("x"),
+				"msg",
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(stderrors.Is(err, gitrestclient.ErrAlreadyExists)).To(BeTrue())
 		})
 	})
 

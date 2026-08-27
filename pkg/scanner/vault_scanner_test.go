@@ -66,6 +66,15 @@ func (t *testGitClient) AtomicWriteAndCommitPush(
 	return t.commitPushErr
 }
 
+func (t *testGitClient) AtomicWriteIfAbsentAndCommitPush(
+	_ context.Context,
+	_ string,
+	_ []byte,
+	_ string,
+) error {
+	return t.commitPushErr
+}
+
 func (t *testGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
 	_ string,
@@ -99,6 +108,15 @@ func (t *fileOpsTestGitClient) CommitAndPush(_ context.Context, _ string) error 
 }
 
 func (t *fileOpsTestGitClient) AtomicWriteAndCommitPush(
+	_ context.Context,
+	_ string,
+	_ []byte,
+	_ string,
+) error {
+	return t.commitPushErr
+}
+
+func (t *fileOpsTestGitClient) AtomicWriteIfAbsentAndCommitPush(
 	_ context.Context,
 	_ string,
 	_ []byte,

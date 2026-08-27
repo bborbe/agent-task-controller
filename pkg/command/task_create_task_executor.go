@@ -87,6 +87,7 @@ func NewCreateTaskExecutor(
 				gitClient,
 				relPath,
 				cmd.TaskIdentifier,
+				cmd,
 			)
 			if err != nil {
 				return nil, nil, err
@@ -114,11 +115,22 @@ func NewCreateTaskExecutor(
 // transient git-rest read error is propagated. The decision consumes the
 // bytes already read by this function; the caller must not issue a second
 // ReadFile.
+//
+// Recurring-task instances are carved out of the reopen path: a command from
+// the recurring-task-creator publisher (created_by: recurring-task-creator)
+// NEVER reopens a terminal-status file. The recurring pipeline republishes the
+// same title path every tick (always-fire cadences), and the title-path file IS
+// the dedupe state — so a completed instance must hold the slot until the
+// period rolls, exactly as it did before the per-alert reopen feature. Without
+// this carve-out, the next hourly tick reopens and overwrites every completed
+// recurring task with a fresh blank instance (observed 2026-08-27: v0.6.0 wiped
+// 27 completed monthly/quarterly/yearly/weekly tasks).
 func checkTitlePathFree(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	taskIdentifier lib.TaskIdentifier,
+	cmd task.CreateCommand,
 ) (reopened bool, priorStatus string, err error) {
 	existing, err := gitClient.ReadFile(ctx, relPath)
 	if err != nil {
@@ -162,7 +174,7 @@ func checkTitlePathFree(
 	}
 	status, _ := existingFm.String("status")
 	status = strings.TrimSpace(status)
-	if status == "completed" || status == "aborted" {
+	if (status == "completed" || status == "aborted") && !isRecurringTaskCommand(cmd) {
 		return true, status, nil
 	}
 	glog.V(2).Infof(
@@ -179,9 +191,9 @@ func checkTitlePathFree(
 	)
 }
 
-// writeTaskFile builds the task content and writes it atomically to the vault
-// via git-rest, then logs the creation. vaultName is stamped as target_vault so
-// the created task is self-describing for the result-path routing guard.
+// writeTaskFile builds the task content and creates it in the vault via
+// git-rest, then logs the creation. vaultName is stamped as target_vault so the
+// created task is self-describing for the result-path routing guard.
 // reopened and priorStatus carry the reopen signal from the title-path collision
 // check — reopened is true only when the slot was freed by a terminal-status
 // file, and priorStatus is that file's status — for the write path to use.
@@ -190,6 +202,16 @@ func checkTitlePathFree(
 // "create-task: reopening terminal task" (visible at default verbosity, naming
 // the path and prior status); a first-ever create (reopened == false) carries
 // neither — it keeps the "create task" commit message and the V(2) creation log.
+//
+// The write is create-only (?create_only=1) whenever reopened == false — which
+// covers every first-ever create AND every recurring-task instance (those never
+// reopen, see checkTitlePathFree). git-rest refuses to overwrite an
+// already-occupied path with 409 Conflict, surfaced here as ErrAlreadyExists and
+// mapped to task.ErrTaskAlreadyExists (a benign Failure, no git write). This is
+// the authoritative no-overwrite guarantee: even if checkTitlePathFree's read
+// falsely reports the path free, the create-only write can never clobber an
+// existing task file. The upsert path is used ONLY for reopened == true, the
+// deliberate per-alert reopen of a terminal task.
 func writeTaskFile(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -207,14 +229,26 @@ func writeTaskFile(
 	msg := "[agent-task-controller] create task " + string(cmd.TaskIdentifier)
 	if reopened {
 		msg = "[agent-task-controller] reopen terminal task " + string(cmd.TaskIdentifier)
-	}
-	if err := gitClient.AtomicWriteAndCommitPush(
-		ctx,
-		absPath,
-		content,
-		msg,
-	); err != nil {
-		return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
+		if err := gitClient.AtomicWriteAndCommitPush(
+			ctx,
+			absPath,
+			content,
+			msg,
+		); err != nil {
+			return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
+		}
+	} else {
+		if err := createTaskFileIfAbsent(
+			ctx,
+			gitClient,
+			absPath,
+			content,
+			msg,
+			relPath,
+			cmd,
+		); err != nil {
+			return err
+		}
 	}
 	glog.V(2).Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
 	// Unconditional Infof, not V(n)-gated, by design: a reopen overwrites a
@@ -227,6 +261,44 @@ func writeTaskFile(
 			"create-task: reopening terminal task at %s (prior status %s)",
 			relPath,
 			priorStatus,
+		)
+	}
+	return nil
+}
+
+// createTaskFileIfAbsent performs the create-only write for a non-reopen create
+// (a first-ever create or a recurring-task instance). git-rest refuses an
+// occupied path with 409 Conflict, surfaced here as ErrAlreadyExists and mapped
+// to task.ErrTaskAlreadyExists (a benign Failure, no git write). Extracted from
+// writeTaskFile to keep its nesting within the linter budget.
+func createTaskFileIfAbsent(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	absPath string,
+	content []byte,
+	msg string,
+	relPath string,
+	cmd task.CreateCommand,
+) error {
+	if err := gitClient.AtomicWriteIfAbsentAndCommitPush(ctx, absPath, content, msg); err != nil {
+		if errors.Is(err, gitclient.ErrAlreadyExists) {
+			glog.V(2).Infof(
+				"create-task: title path %s occupied (create-only write refused), returning ErrTaskAlreadyExists for %s",
+				relPath,
+				cmd.TaskIdentifier,
+			)
+			return errors.Wrapf(
+				ctx,
+				task.ErrTaskAlreadyExists,
+				"title path %s occupied",
+				relPath,
+			)
+		}
+		return errors.Wrapf(
+			ctx,
+			err,
+			"atomic create-only write and push for task %s",
+			cmd.TaskIdentifier,
 		)
 	}
 	return nil
@@ -467,6 +539,18 @@ func collapseCandidates(
 			cmd.TaskIdentifier,
 		)
 	}
+}
+
+// isRecurringTaskCommand reports whether cmd was published by the recurring-task
+// creator (created_by: recurring-task-creator). Such commands must never reopen a
+// terminal-status task file — the recurring pipeline republishes the same title
+// path every tick and the file IS the dedupe state, so a completed instance must
+// hold the slot until its period rolls. The predicate is created_by-only (unlike
+// isEligibleForSupersede, which additionally requires auto_abort_prior): monthly
+// schedules carry auto_abort_prior=false and must still be held.
+func isRecurringTaskCommand(cmd task.CreateCommand) bool {
+	createdBy, _ := cmd.Frontmatter.String("created_by")
+	return createdBy == "recurring-task-creator"
 }
 
 // isEligibleForSupersede reports whether cmd is a recurring-task instance

@@ -75,6 +75,19 @@ type GitRestClient struct {
 	postReturnsOnCall map[int]struct {
 		result1 error
 	}
+	PostIfAbsentStub        func(context.Context, string, []byte) error
+	postIfAbsentMutex       sync.RWMutex
+	postIfAbsentArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 []byte
+	}
+	postIfAbsentReturns struct {
+		result1 error
+	}
+	postIfAbsentReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -399,6 +412,74 @@ func (fake *GitRestClient) PostReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.postReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *GitRestClient) PostIfAbsent(arg1 context.Context, arg2 string, arg3 []byte) error {
+	var arg3Copy []byte
+	if arg3 != nil {
+		arg3Copy = make([]byte, len(arg3))
+		copy(arg3Copy, arg3)
+	}
+	fake.postIfAbsentMutex.Lock()
+	ret, specificReturn := fake.postIfAbsentReturnsOnCall[len(fake.postIfAbsentArgsForCall)]
+	fake.postIfAbsentArgsForCall = append(fake.postIfAbsentArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 []byte
+	}{arg1, arg2, arg3Copy})
+	stub := fake.PostIfAbsentStub
+	fakeReturns := fake.postIfAbsentReturns
+	fake.recordInvocation("PostIfAbsent", []interface{}{arg1, arg2, arg3Copy})
+	fake.postIfAbsentMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *GitRestClient) PostIfAbsentCallCount() int {
+	fake.postIfAbsentMutex.RLock()
+	defer fake.postIfAbsentMutex.RUnlock()
+	return len(fake.postIfAbsentArgsForCall)
+}
+
+func (fake *GitRestClient) PostIfAbsentCalls(stub func(context.Context, string, []byte) error) {
+	fake.postIfAbsentMutex.Lock()
+	defer fake.postIfAbsentMutex.Unlock()
+	fake.PostIfAbsentStub = stub
+}
+
+func (fake *GitRestClient) PostIfAbsentArgsForCall(i int) (context.Context, string, []byte) {
+	fake.postIfAbsentMutex.RLock()
+	defer fake.postIfAbsentMutex.RUnlock()
+	argsForCall := fake.postIfAbsentArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *GitRestClient) PostIfAbsentReturns(result1 error) {
+	fake.postIfAbsentMutex.Lock()
+	defer fake.postIfAbsentMutex.Unlock()
+	fake.PostIfAbsentStub = nil
+	fake.postIfAbsentReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *GitRestClient) PostIfAbsentReturnsOnCall(i int, result1 error) {
+	fake.postIfAbsentMutex.Lock()
+	defer fake.postIfAbsentMutex.Unlock()
+	fake.PostIfAbsentStub = nil
+	if fake.postIfAbsentReturnsOnCall == nil {
+		fake.postIfAbsentReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.postIfAbsentReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }
