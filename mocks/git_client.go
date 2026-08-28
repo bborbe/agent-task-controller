@@ -37,6 +37,20 @@ type GitClient struct {
 	atomicWriteAndCommitPushReturnsOnCall map[int]struct {
 		result1 error
 	}
+	AtomicWriteIfAbsentAndCommitPushStub        func(context.Context, string, []byte, string) error
+	atomicWriteIfAbsentAndCommitPushMutex       sync.RWMutex
+	atomicWriteIfAbsentAndCommitPushArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 []byte
+		arg4 string
+	}
+	atomicWriteIfAbsentAndCommitPushReturns struct {
+		result1 error
+	}
+	atomicWriteIfAbsentAndCommitPushReturnsOnCall map[int]struct {
+		result1 error
+	}
 	CommitAndPushStub        func(context.Context, string) error
 	commitAndPushMutex       sync.RWMutex
 	commitAndPushArgsForCall []struct {
@@ -255,6 +269,75 @@ func (fake *GitClient) AtomicWriteAndCommitPushReturnsOnCall(i int, result1 erro
 		})
 	}
 	fake.atomicWriteAndCommitPushReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPush(arg1 context.Context, arg2 string, arg3 []byte, arg4 string) error {
+	var arg3Copy []byte
+	if arg3 != nil {
+		arg3Copy = make([]byte, len(arg3))
+		copy(arg3Copy, arg3)
+	}
+	fake.atomicWriteIfAbsentAndCommitPushMutex.Lock()
+	ret, specificReturn := fake.atomicWriteIfAbsentAndCommitPushReturnsOnCall[len(fake.atomicWriteIfAbsentAndCommitPushArgsForCall)]
+	fake.atomicWriteIfAbsentAndCommitPushArgsForCall = append(fake.atomicWriteIfAbsentAndCommitPushArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 []byte
+		arg4 string
+	}{arg1, arg2, arg3Copy, arg4})
+	stub := fake.AtomicWriteIfAbsentAndCommitPushStub
+	fakeReturns := fake.atomicWriteIfAbsentAndCommitPushReturns
+	fake.recordInvocation("AtomicWriteIfAbsentAndCommitPush", []interface{}{arg1, arg2, arg3Copy, arg4})
+	fake.atomicWriteIfAbsentAndCommitPushMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPushCallCount() int {
+	fake.atomicWriteIfAbsentAndCommitPushMutex.RLock()
+	defer fake.atomicWriteIfAbsentAndCommitPushMutex.RUnlock()
+	return len(fake.atomicWriteIfAbsentAndCommitPushArgsForCall)
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPushCalls(stub func(context.Context, string, []byte, string) error) {
+	fake.atomicWriteIfAbsentAndCommitPushMutex.Lock()
+	defer fake.atomicWriteIfAbsentAndCommitPushMutex.Unlock()
+	fake.AtomicWriteIfAbsentAndCommitPushStub = stub
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPushArgsForCall(i int) (context.Context, string, []byte, string) {
+	fake.atomicWriteIfAbsentAndCommitPushMutex.RLock()
+	defer fake.atomicWriteIfAbsentAndCommitPushMutex.RUnlock()
+	argsForCall := fake.atomicWriteIfAbsentAndCommitPushArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPushReturns(result1 error) {
+	fake.atomicWriteIfAbsentAndCommitPushMutex.Lock()
+	defer fake.atomicWriteIfAbsentAndCommitPushMutex.Unlock()
+	fake.AtomicWriteIfAbsentAndCommitPushStub = nil
+	fake.atomicWriteIfAbsentAndCommitPushReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *GitClient) AtomicWriteIfAbsentAndCommitPushReturnsOnCall(i int, result1 error) {
+	fake.atomicWriteIfAbsentAndCommitPushMutex.Lock()
+	defer fake.atomicWriteIfAbsentAndCommitPushMutex.Unlock()
+	fake.AtomicWriteIfAbsentAndCommitPushStub = nil
+	if fake.atomicWriteIfAbsentAndCommitPushReturnsOnCall == nil {
+		fake.atomicWriteIfAbsentAndCommitPushReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.atomicWriteIfAbsentAndCommitPushReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

@@ -23,6 +23,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 )
 
 const testK = 7
@@ -50,6 +51,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		fakeGit = &mocks.GitClient{}
 		fakeGit.PathReturns(tmpDir)
 		fakeGit.AtomicWriteAndCommitPushStub = func(
+			ctx context.Context,
+			absPath string,
+			content []byte,
+			message string,
+		) error {
+			return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
+		}
+		fakeGit.AtomicWriteIfAbsentAndCommitPushStub = func(
 			ctx context.Context,
 			absPath string,
 			content []byte,
@@ -141,7 +150,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 			})
 		})
 
@@ -179,16 +188,16 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
 				})
 
-				// First create: file not found → writes.
+				// First create: file not found → writes via create-only.
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 
 				// Replay: file now exists → sentinel, no second write.
 				_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1)) // still 1
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1)) // still 1
 			})
 		})
 
@@ -205,7 +214,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 			})
 		})
 
@@ -304,6 +313,113 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			)
 		})
 
+		Context("recurring-task instance never reopens a terminal file", func() {
+			It(
+				"holds the title path over a completed file (recurring dedup contract)",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old-id\nassignee: alice\nstatus: completed\nphase: done\ncompleted_date: 2026-08-15T12:00:00Z\n---\ncompleted monthly backup work\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("monthly-recurring"),
+						Title:          "Monthly Recurring - 2026-08",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "recurring-task-creator",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
+
+			It(
+				"holds the title path over an aborted file (recurring dedup contract)",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old-id\nassignee: alice\nstatus: aborted\nphase: done\n---\nprior body\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("weekly-recurring"),
+						Title:          "Weekly Recurring - 2026W35",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "recurring-task-creator",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
+
+			It(
+				"reopens over a completed file when the command is not recurring",
+				func() {
+					fakeGit.ReadFileReturns(
+						[]byte(
+							"---\ntask_identifier: old-id\nassignee: alice\nstatus: completed\nphase: done\n---\nper-alert prior verdict\n",
+						),
+						nil,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("per-alert"),
+						Title:          "Analyze Alert",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee":   "claude",
+							"status":     "next",
+							"created_by": "sentry-collector-agent",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
+		})
+
+		Context("create-only write refuses an occupied path (defense-in-depth)", func() {
+			It(
+				"maps git-rest ErrAlreadyExists to task.ErrTaskAlreadyExists without a second write",
+				func() {
+					// The pre-check read falsely reports the path free (404) while the
+					// create-only write still hits the existing file — the TOCTOU the
+					// create-only write closes. git-rest answers 409, surfaced as
+					// ErrAlreadyExists, and the executor must treat it as a benign
+					// already-exists, never overwrite.
+					fakeGit.ReadFileReturns(nil, errors.New("GET file returned 404: not found"))
+					fakeGit.AtomicWriteIfAbsentAndCommitPushReturns(gitrestclient.ErrAlreadyExists)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("create-only-collision"),
+						Title:          "Create Only Collision",
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee": "claude",
+							"status":   "next",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
+		})
+
 		Context("non-terminal status holds the title path (no reopen)", func() {
 			DescribeTable(
 				"returns ErrTaskAlreadyExists without writing",
@@ -369,19 +485,19 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
 						Body:           "shared body\n",
 					})
-					// First-ever create: default 404 read frees the slot.
+					// First-ever create: default 404 read frees the slot (create-only write).
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					_, _, content0, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+					_, _, content0, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 
-					// Reopen: same command, but the slot now holds a terminal file.
+					// Reopen: same command, but the slot now holds a terminal file (upsert write).
 					fakeGit.ReadFileReturns(
 						[]byte("---\nstatus: aborted\n---\nprior verdict body\n"),
 						nil,
 					)
 					_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					_, _, content1, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(1)
+					_, _, content1, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
 
 					Expect(content1).To(Equal(content0))
 				},
@@ -458,7 +574,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					_, _, _, message := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+					_, _, _, message := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 					Expect(message).NotTo(ContainSubstring("reopen terminal task"))
 					Expect(message).To(ContainSubstring("create task"))
 				},
@@ -479,9 +595,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 
-				_, absPath, content, message := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+				_, absPath, content, message := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(
+					0,
+				)
 				Expect(absPath).To(HaveSuffix("New Task ABC.md"))
 				Expect(message).To(ContainSubstring(string(taskID)))
 
@@ -497,9 +615,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		})
 
 		Context("git write error", func() {
-			It("returns a wrapped error when AtomicWriteAndCommitPush fails", func() {
-				fakeGit.AtomicWriteAndCommitPushStub = nil
-				fakeGit.AtomicWriteAndCommitPushReturns(errors.New("git push failed"))
+			It("returns a wrapped error when AtomicWriteIfAbsentAndCommitPush fails", func() {
+				fakeGit.AtomicWriteIfAbsentAndCommitPushReturns(errors.New("git push failed"))
 
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("error-task"),
@@ -529,8 +646,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix("My Feature Task.md"))
 				Expect(absPath).NotTo(ContainSubstring(string(taskID)))
 			})
@@ -549,8 +666,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix(string(taskID) + ".md"))
 			})
 		})
@@ -568,8 +685,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicWriteAndCommitPushArgsForCall(0)
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix(string(taskID) + ".md"))
 			})
 		})
@@ -623,7 +740,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 				},
 			)
 
@@ -648,7 +765,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
 				},
 			)
 
@@ -722,7 +839,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(
-						fakeGit.AtomicWriteAndCommitPushCallCount(),
+						fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount(),
 					).To(Equal(1))
 					// new instance only
 					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))

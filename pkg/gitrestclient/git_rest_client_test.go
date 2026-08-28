@@ -6,6 +6,7 @@ package gitrestclient_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -231,6 +232,64 @@ var _ = Describe("GitRestClient", func() {
 				cancel()
 				err := client.Post(cancelCtx, "tasks/new.md", []byte("content"))
 				Expect(err).NotTo(BeNil())
+			})
+		})
+	})
+
+	Describe("PostIfAbsent", func() {
+		Context("create-only success on first attempt", func() {
+			BeforeEach(func() {
+				server = httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						Expect(r.Method).To(Equal(http.MethodPost))
+						Expect(r.URL.Path).To(Equal("/api/v1/files/tasks/new.md"))
+						Expect(r.URL.RawQuery).To(Equal("create_only=1"))
+						w.WriteHeader(http.StatusCreated)
+						_, _ = w.Write([]byte(`{"ok":true}`))
+					}),
+				)
+				client = gitrestclient.NewGitRestClientForTest(server.URL, "", "", zeroBackoff)
+			})
+
+			It("returns nil", func() {
+				err := client.PostIfAbsent(ctx, "tasks/new.md", []byte("content"))
+				Expect(err).To(BeNil())
+			})
+		})
+
+		Context("path already occupied (409)", func() {
+			BeforeEach(func() {
+				server = httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						Expect(r.URL.RawQuery).To(Equal("create_only=1"))
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"error":"file already exists"}`))
+					}),
+				)
+				client = gitrestclient.NewGitRestClientForTest(server.URL, "", "", zeroBackoff)
+			})
+
+			It("returns ErrAlreadyExists without retrying", func() {
+				err := client.PostIfAbsent(ctx, "tasks/new.md", []byte("content"))
+				Expect(err).NotTo(BeNil())
+				Expect(errors.Is(err, gitrestclient.ErrAlreadyExists)).To(BeTrue())
+			})
+		})
+
+		Context("upsert Post does not carry create_only", func() {
+			BeforeEach(func() {
+				server = httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						Expect(r.URL.RawQuery).To(Equal(""))
+						w.WriteHeader(http.StatusOK)
+					}),
+				)
+				client = gitrestclient.NewGitRestClientForTest(server.URL, "", "", zeroBackoff)
+			})
+
+			It("sends no query param", func() {
+				err := client.Post(ctx, "tasks/new.md", []byte("content"))
+				Expect(err).To(BeNil())
 			})
 		})
 	})

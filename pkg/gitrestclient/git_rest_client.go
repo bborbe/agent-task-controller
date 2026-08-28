@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,6 +22,12 @@ import (
 
 //counterfeiter:generate -o ../../mocks/git_rest_client.go --fake-name GitRestClient . GitRestClient
 
+// ErrAlreadyExists is returned by PostIfAbsent when the target path is already
+// occupied (git-rest responds 409 Conflict for a create-only write). It is a
+// benign conflict, not a transport failure — callers use errors.Is to treat it
+// as "already there" instead of an error worth retrying.
+var ErrAlreadyExists = stderrors.New("file already exists")
+
 // GitRestClient is the HTTP client for git-rest's /api/v1/files REST API.
 // All paths are relative to the repo root (e.g. "tasks/foo.md").
 type GitRestClient interface {
@@ -28,6 +35,10 @@ type GitRestClient interface {
 	Get(ctx context.Context, relPath string) ([]byte, error)
 	// Post writes content to relPath; git-rest auto-commits and pushes.
 	Post(ctx context.Context, relPath string, content []byte) error
+	// PostIfAbsent writes content to relPath only when no file exists there yet;
+	// git-rest auto-commits and pushes. Returns ErrAlreadyExists (via errors.Is)
+	// when relPath is already occupied — nothing is written in that case.
+	PostIfAbsent(ctx context.Context, relPath string, content []byte) error
 	// Delete removes the file at relPath; git-rest auto-commits and pushes.
 	Delete(ctx context.Context, relPath string) error
 	// List returns relative paths matching the single-level glob pattern (e.g. "tasks/*.md").
@@ -145,7 +156,30 @@ func (g *gitRestClient) Get(ctx context.Context, relPath string) ([]byte, error)
 
 // Post writes content to relPath with retry on 5xx or network errors.
 func (g *gitRestClient) Post(ctx context.Context, relPath string, content []byte) error {
+	return g.post(ctx, relPath, content, false)
+}
+
+// PostIfAbsent writes content to relPath only when no file exists there yet.
+// git-rest answers 409 Conflict for an occupied path; that is mapped to
+// ErrAlreadyExists (via errors.Is) and is not retried. All other failures share
+// Post's retry behavior.
+func (g *gitRestClient) PostIfAbsent(ctx context.Context, relPath string, content []byte) error {
+	return g.post(ctx, relPath, content, true)
+}
+
+// post writes content to relPath with retry on 5xx or network errors. When
+// createOnly is true the request carries ?create_only=1 and a 409 Conflict
+// response is returned as ErrAlreadyExists instead of being retried.
+func (g *gitRestClient) post(
+	ctx context.Context,
+	relPath string,
+	content []byte,
+	createOnly bool,
+) error {
 	reqURL := g.fileURL(relPath)
+	if createOnly {
+		reqURL += "?create_only=1"
+	}
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
 		select {
@@ -186,6 +220,15 @@ func (g *gitRestClient) Post(ctx context.Context, relPath string, content []byte
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			g.metrics.GitRestCallsTotal("post", "success").Inc()
 			return nil
+		}
+		if createOnly && resp.StatusCode == http.StatusConflict {
+			g.metrics.GitRestCallsTotal("post", "error").Inc()
+			return errors.Wrapf(
+				ctx,
+				ErrAlreadyExists,
+				"POST %s create-only: path already exists",
+				relPath,
+			)
 		}
 		g.metrics.GitRestCallsTotal("post", "error").Inc()
 		lastErr = errors.Errorf(
@@ -310,6 +353,15 @@ type GitClient interface {
 	// - gitClient (local-disk): sync.Mutex around the whole sequence.
 	// - gitRestGitClientAdapter: relies on per-task serialization (Kafka partitioning by task_id).
 	AtomicWriteAndCommitPush(
+		ctx context.Context,
+		absPath string,
+		content []byte,
+		message string,
+	) error
+	// AtomicWriteIfAbsentAndCommitPush writes content to absPath only when no file
+	// exists there yet, then commits+pushes. Returns ErrAlreadyExists (via
+	// errors.Is) when the path is occupied; nothing is written in that case.
+	AtomicWriteIfAbsentAndCommitPush(
 		ctx context.Context,
 		absPath string,
 		content []byte,
