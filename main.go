@@ -34,6 +34,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/publisher"
+	"github.com/bborbe/agent-task-controller/pkg/redrive"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
@@ -69,6 +70,8 @@ type application struct {
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
 	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"          display:"length" default:""`
 	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                  default:"7"`
+	RedriveEnabled           bool              `required:"false" arg:"redrive-enabled"             env:"REDRIVE_ENABLED"             usage:"enable the re-drive sweep that force re-publishes TaskUpdated for eligible never-spawned tasks"                                                                                    default:"true"`
+	RedriveInterval          time.Duration     `required:"false" arg:"redrive-interval"            env:"REDRIVE_INTERVAL"            usage:"interval between re-drive sweeps; 0 disables the sweep"                                                                                                                            default:"15m"`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop; extraction would split tightly-coupled wiring.
@@ -127,6 +130,11 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	trigger := make(chan struct{}, 1)
+	taskPublisher := publisher.NewTaskPublisher(
+		eventObjectSender,
+		lib.TaskV1SchemaID,
+		currentDateTime,
+	)
 	syncLoop := pkgsync.NewSyncLoop(
 		scanner.NewGitRestVaultScanner(
 			gitClient,
@@ -136,8 +144,18 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 			metrics.New(),
 			autoInject,
 		),
-		publisher.NewTaskPublisher(eventObjectSender, lib.TaskV1SchemaID, currentDateTime),
+		taskPublisher,
 		trigger,
+		metrics.New(),
+	)
+
+	redriveSweep := redrive.NewRedriveSweep(
+		gitClient,
+		taskPublisher,
+		a.TaskDir,
+		a.Branch,
+		a.RedriveInterval,
+		currentDateTime,
 		metrics.New(),
 	)
 
@@ -179,12 +197,15 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		metrics.New(),
 	)
 
-	return service.Run(
-		ctx,
+	components := []run.Func{
 		syncLoop.Run,
 		commandConsumer,
 		a.createHTTPServer(syncLoop, restClient),
-	)
+	}
+	if a.RedriveEnabled && a.RedriveInterval > 0 {
+		components = append(components, redriveSweep.Run)
+	}
+	return service.Run(ctx, components...)
 }
 
 func (a *application) createHTTPServer(

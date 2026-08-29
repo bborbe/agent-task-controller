@@ -205,9 +205,11 @@ func init() {
 	ScanCyclesTotal.WithLabelValues("changes").Add(0)
 	ScanCyclesTotal.WithLabelValues("no_changes").Add(0)
 	ScanCyclesTotal.WithLabelValues("error").Add(0)
+	ScanCyclesTotal.WithLabelValues("redrive").Add(0)
 
 	TasksPublishedTotal.WithLabelValues("changed").Add(0)
 	TasksPublishedTotal.WithLabelValues("deleted").Add(0)
+	TasksPublishedTotal.WithLabelValues("redrive").Add(0)
 
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)
