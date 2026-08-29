@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: re-drive sweep force-re-publishes TaskUpdated for eligible never-spawned tasks — a background loop re-emits TaskUpdated for tasks matching the executor's spawn filter (status `in_progress`, phase in {planning, execution, ai_review}, `stage` == controller branch, assignee set) but with no `current_job` (never spawned), so a task whose file hash never changed since creation is no longer stranded; the executor's own guards (active job, trigger cap, grace window) keep re-emission idempotent; controlled by `REDRIVE_ENABLED` (default on) and `REDRIVE_INTERVAL` (default 15m)
+
 ## v0.6.1
 
 - fix: recurring-task instances never reopen a terminal task file — a `create-task` from the `recurring-task-creator` publisher now holds the title path when the existing file's status is `completed`/`aborted` (the title-path file IS the recurring dedup state), so an hourly always-fire tick can no longer overwrite a completed recurring task with a blank `in_progress` instance; non-recurring per-alert commands keep the v0.6.0 reopen behavior
