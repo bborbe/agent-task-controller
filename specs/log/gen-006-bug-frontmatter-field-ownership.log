@@ -1,0 +1,2503 @@
+[13:48:49] Starting headless session...
+[13:48:50] [init] session=d5b7e577 model=deepseek-v4-flash[1m] cwd=/workspace tools=28
+[claude-code:unrecognized_model] {"model":"deepseek-v4-flash[1m]","query_source":"sdk"}
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:52] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] [system: thinking_tokens]
+[13:48:53] 💭 The user invoked `/dark-factory:generate-prompts-for-spec` with a spec path. Let me follow the command instructions:
+
+1. Invoke the `prompt-creator` agent to generate prompts from the spec
+2. Run a single audit pass: for each prompt file created, invoke `prompt-auditor` on that path
+3. Return the creator's summary followed by per-prompt audit reports verbatim
+4. Transition the spec to `prompted` only in host mode (DARK_FACTORY_MANAGED unset)
+
+Let me start by invoking the `prompt-creator` agent w…
+[13:48:57] I'll generate prompts from the approved spec. Let me start by invoking the `prompt-creator` agent.
+
+
+[13:48:57] [agent:dark-factory:prompt-creator] Generate prompts from spec 006
+    prompt: Generate dark-factory prompt files from the approved spec at `specs/in-progress/006-bug-frontmatter-field-ownership.md` (repo-root-relative path; cwd is the re…
+[13:48:57] [system: background_tasks_changed]
+[13:48:57] [system: task_started]
+[13:48:57]   ← agent reply: Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)
+[13:49:00] 💭 Let me start by reading the spec file at `specs/in-progress/006-bug-frontmatter-field-ownership.md` (cwd is the repo root).
+[13:49:00] [system: thinking_tokens]
+[13:49:00] [system: thinking_tokens]
+[13:49:00] [system: thinking_tokens]
+[13:49:00] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:01] [system: thinking_tokens]
+[13:49:02] [system: thinking_tokens]
+[13:49:02] [system: thinking_tokens]
+[13:49:02] [system: thinking_tokens]
+[13:49:02] [system: thinking_tokens]
+[13:49:02] [system: thinking_tokens]
+[13:49:02] 💭 The prompt-creator agent is running in the background. I'll wait for its completion notification. Meanwhile, I could check the environment — whether DARK_FACTORY_MANAGED is set — to know which mode I'm in. Let me do that while waiting.
+[13:49:03] I'll start by reading the spec file and understanding the repository structure.
+
+
+[13:49:03] [read] /workspace/specs/in-progress/006-bug-frontmatter-field-ownership.md
+[13:49:03] [system: task_progress]
+[13:49:03] $ ls -la /workspace
+[13:49:03] [system: task_progress]
+[13:49:03]   → 200 lines read
+[13:49:04] The prompt-creator agent is working in the background. While it runs, let me check which mode I'm in (daemon vs host) to know whether the spec transition step will be needed later.
+
+
+[13:49:04] $ if [ -z "$DARK_FACTORY_MANAGED" ]; then echo "MODE: host (DARK_FACTORY_MANAGED unset)"; else echo "MODE: daemon (DARK_FACTORY_MANAGED=$DARK_FACTORY_MANAGED)"; fi
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:04] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] [system: thinking_tokens]
+[13:49:05] 💭 This is Mode 1 — daemon-managed. So I will SKIP the `mark-prompted` step after the audit pass. The host-side generator will finalize the spec itself.
+
+Now I just wait for the prompt-creator agent to complete. I shouldn't do anything else that duplicates its work. Let me just wait for the notification.
+[13:49:05] Mode confirmed: **daemon-managed** (`DARK_FACTORY_MANAGED=true`), so I'll skip the `spec mark-prompted` transition after the audit — the host-side generator handles that.
+
+Now waiting for the prompt-creator agent to finish before auditing its output.
+[13:49:08] 💭 This is a dark-factory prompt generation task. I'm generating prompts from the spec at `specs/in-progress/006-bug-frontmatter-field-ownership.md`. The spec has a "Suggested Decomposition" table:
+
+| 1 | Field-ownership guard, terminal pin + widened terminal early return, guard log, single package-level declaration, all unit specs, and the CHANGELOG.md entry | DBs 1-7 | ACs 1-16, 19 | — |
+| 2 | docs/controller-design.md § "Frontmatter Merge" ownership table + terminal short-circuit note | DB 7 (do…
+[13:49:15] The spec is thorough and already contains a Suggested Decomposition table. Let me now read the source files and supporting material before writing prompts.
+
+
+[13:49:15] $ cat /workspace/.dark-factory.yaml; echo "---"; ls -la /workspace/prompts/; echo "---"; ls -la /workspace/prompts/completed/ 2>/dev/null; echo "---"; ls -la /workspace/pkg/result/
+[13:49:15] [system: task_progress]
+[13:49:15] [read] /workspace/pkg/result/result_writer.go
+[13:49:15] [system: task_progress]
+[13:49:15]   → 406 lines read
+[13:49:22] 💭 Now I understand the main file. Key functions:
+- `mergeFrontmatter(existing, incoming lib.TaskFrontmatter) lib.TaskFrontmatter` at line 355 — this is where the ownership guard goes
+- `applyRetryCounter(merged, existing lib.TaskFrontmatter, body string) string` at line 188 — has the terminal early return `if string(merged.Status()) == "completed"` at line 189
+- `buildResultModifyFn` at line 151 calls `mergeFrontmatter(currentOnDisk, req.Frontmatter)` then `r.applyRetryCounter(merged, currentOnDis…
+[13:49:23] Now let me read the test file (key parts), go.mod, and check the library types.
+
+
+[13:49:23] [read] /workspace/go.mod
+[13:49:23] [system: task_progress]
+[13:49:23] $ grep -n "mergeFrontmatter\|applyRetryCounter" /workspace/pkg/result/result_writer_test.go /workspace/pkg/result/result_writer.go 2>/dev/null
+[13:49:23] [system: task_progress]
+[13:49:23]   → 120 lines read
+[13:49:24] 💭 `mergeFrontmatter` is only called from `buildResultModifyFn` in result_writer.go. Good. So changing its signature is safe.
+
+Now let me look at the library types. Let me check `lib.TaskFrontmatter` in the agent module and the `domain` package for `TaskStatusCompleted`/`TaskStatusAborted` and `NormalizeTaskStatus`.
+
+Let me find the module cache.
+[13:49:24] Let me verify the library types: `TaskFrontmatter`, `Status()`, `domain.TaskStatusCompleted`, `TaskStatusAborted`, and `NormalizeTaskStatus`.
+
+
+[13:49:24] $ go env GOPATH 2>/dev/null; ls /home/node/go/pkg/mod/github.com/bborbe/ 2>/dev/null | head -30
+[13:49:24] [system: task_progress]
+[13:49:28] [system: task_started]
+[13:49:34] [system: task_notification]
+[13:49:40] 💭 The module cache listing didn't show. Let me try again.
+[13:49:40] $ ls /home/node/go/pkg/mod/github.com/bborbe/ 2>/dev/null; echo "---agent---"; ls -d /home/node/go/pkg/mod/github.com/bborbe/agent@* 2>/dev/null; echo "---vault-cli---"; ls -d /home/node/go/pkg/mod/git…
+[13:49:40] [system: task_progress]
+[13:49:40] ⚠ [Bash] error: Exit code 1\n---agent---\n(eval):1: no matches found: /home/node/go/pkg/mod/github.com/bborbe/agent@*\n---vault-cli---\n(eval):1: no matches found: /home/node/go/pkg/mod/github.com/bborbe/vault-cli@*
+[13:49:46] 💭 The module cache isn't in /home/node/go/pkg/mod. Let me check where modules are. Maybe GOPATH is elsewhere or modules aren't downloaded yet.
+[13:49:46] $ go env GOMODCACHE GOPATH GOFLAGS; echo "---"; ls /home/node/go/ 2>/dev/null; echo "---find---"; find / -maxdepth 6 -type d -name "agent@*" 2>/dev/null | head
+[13:49:46] [system: task_progress]
+[13:49:47] 💭 The module cache appears to be empty — `/home/node/go/pkg/mod` doesn't exist or is empty. Let me check whether the module cache exists and if the modules are downloadable. Let me check the /home/node/go/pkg/mod directory.
+[13:49:47] $ ls -la /home/node/go/pkg/ 2>/dev/null; ls -la /home/node/go/pkg/mod 2>/dev/null; echo "exit: $?"
+[13:49:47] [system: task_progress]
+[13:49:52] $ ls /home/node/go/pkg/mod/github.com/bborbe/ 2>/dev/null; echo "---"; ls -d /home/node/go/pkg/mod/github.com/bborbe/agent* 2>/dev/null; ls -d /home/node/go/pkg/mod/github.com/bborbe/vault-cli* 2>/dev/…
+[13:49:52] [system: task_progress]
+[13:49:52] ⚠ [Bash] error: Exit code 1\n---\n(eval):1: no matches found: /home/node/go/pkg/mod/github.com/bborbe/agent*\n(eval):1: no matches found: /home/node/go/pkg/mod/github.com/bborbe/vault-cli*
+[13:49:53] $ ls /home/node/go/pkg/mod/github.com/ | head -40
+[13:49:53] [system: task_progress]
+[13:49:54] 💭 The bborbe modules aren't in the cache. I need to download them. Let me try `go mod download` for the specific modules, or run `go mod download github.com/bborbe/agent` to fetch the module source. Actually, let me try downloading the whole module or at least the two key ones. This needs network access. Let me try.
+[13:49:55] The bborbe modules aren't cached yet. Let me download them so I can grep-verify the library APIs.
+
+
+[13:49:55] $ GOFLAGS=-mod=mod go mod download github.com/bborbe/agent github.com/bborbe/vault-cli github.com/bborbe/errors github.com/bborbe/time 2>&1 | tail -5; echo "exit: $?"; ls -d /home/node/go/pkg/mod/githu…
+[13:49:55] [system: task_progress]
+[13:50:09] $ grep -rn "func (.*TaskFrontmatter) Status()" /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/ 2>/dev/null; echo "===TaskFrontmatter type==="; grep -rn "type TaskFrontmatter" /home/node/go/pkg/m…
+[13:50:09] [system: task_progress]
+[13:50:09] $ grep -rn "TaskStatusCompleted\|TaskStatusAborted\|func NormalizeTaskStatus" /home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/ 2>/dev/null | head -20
+[13:50:09] [system: task_progress]
+[13:50:12] 💭 Let me read the actual source files:
+1. `/home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task-frontmatter.go` — the Status() accessor
+2. `/home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_status.go` — NormalizeTaskStatus and constants
+3. `/home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_frontmatter.go` — around line 187, the IsTerminal function probably
+
+Let me read those.
+[13:50:12] [read] /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task-frontmatter.go
+[13:50:12] [system: task_progress]
+[13:50:12] [read] /home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_status.go
+[13:50:12] [system: task_progress]
+[13:50:12]   → 169 lines read
+[13:50:12]   → 101 lines read
+[13:50:19] 💭 Now I have the exact types:
+
+- `lib.TaskFrontmatter` is `map[string]interface{}` from `github.com/bborbe/agent`
+- `func (f TaskFrontmatter) Status() domain.TaskStatus` — normalizes aliases via `domain.NormalizeTaskStatus` (e.g. `done` → `completed`)
+- `domain.TaskStatusCompleted = "completed"`, `domain.TaskStatusAborted = "aborted"` from `github.com/bborbe/vault-cli/pkg/domain`
+- `func NormalizeTaskStatus(raw string) (TaskStatus, bool)` exists
+
+Let me check how the current `result_writer.go` imp…
+[13:50:19] [read] /home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_frontmatter.go (offset=160, limit=60)
+[13:50:19] [system: task_progress]
+[13:50:19] $ grep -n "vault-cli/pkg/domain" /workspace/pkg/result/result_writer.go /workspace/pkg/result/result_writer_test.go 2>/dev/null; echo "---"; grep -rn "TaskStatusAborted\|TaskStatusCompleted" /workspace…
+[13:50:19] [system: task_progress]
+[13:50:19]   → 59 lines read
+[13:50:23] 💭 The `result` package does not yet import `vault-cli/pkg/domain`. The `lib` package (`github.com/bborbe/agent`) already re-exports `Status() domain.TaskStatus`. The spec requires comparing against `domain.TaskStatusCompleted` and `domain.TaskStatusAborted` constants. We need to import `github.com/bborbe/vault-cli/pkg/domain` in result_writer.go. That's fine — go.mod already requires vault-cli.
+
+Now let me read the test file, especially:
+- The test harness (writeTaskFile, mocks.GitClient)
+- The ex…
+[13:50:23] Now let me read the test file. First, get its structure.
+
+
+[13:50:23] $ wc -l /workspace/pkg/result/result_writer_test.go; echo "---"; grep -n "It(\|Context(\|Describe(\|DescribeTable(\|writeTaskFile" /workspace/pkg/result/result_writer_test.go | head -80
+[13:50:24] [system: task_progress]
+[13:50:24] [read] /workspace/pkg/result/result_writer_test.go (offset=45, limit=230)
+[13:50:24] [system: task_progress]
+[13:50:24]   → 229 lines read
+[13:50:26] 💭 Now I see the test structure. Let me look at the carved-out spec at line 1351 and the surrounding trigger_count context, plus the terminal-status test at line 1580. Also let me look at the trigger cap section (line 999-1240) and the previous_assignee spec at 1381.
+[13:50:26] [read] /workspace/pkg/result/result_writer_test.go (offset=1197, limit=240)
+[13:50:26] [system: task_progress]
+[13:50:26]   → 239 lines read
+[13:50:36] 💭 Now I see the carved-out spec at line 1351. It's an `It(...)` block that spans from line 1351 to 1403. The carve-out means: the second write (operator re-delegation) must be changed from sending `trigger_count: 0` in the incoming payload to an on-disk reset via `writeTaskFile` (the scanner's Empty-to-Named Reset semantics).
+
+The spec says: "the spec must be rewritten to model the reset the way the system actually performs it — the on-disk file is updated to `trigger_count: 0` with the new assign…
+[13:50:36] [read] /workspace/pkg/result/result_writer_test.go (offset=1578, limit=170)
+[13:50:36] [system: task_progress]
+[13:50:36]   → 169 lines read
+[13:50:37] 💭 Let me also look at the completed-status test around line 1540-1587 (spawn notification context that references the terminal early return) and the suite file. Also let me look at the trigger_count section 999-1197 for how the DescribeTable/It specs are written there, and the "needs_input result" context to understand the overall test style. Let me read the section 1540-1587 and 999-1095.
+[13:50:37] [read] /workspace/pkg/result/result_writer_test.go (offset=1468, limit=110)
+[13:50:37] [system: task_progress]
+[13:50:37]   → 109 lines read
+[13:50:41] 💭 Interesting — line 1558-1561: "Agent's terminal status wins over the stale-disk in_progress". Wait, this test (line 1497) — on-disk is `status: in_progress` after interleave, and the agent publishes `status: completed`. In this test, the agent's `completed` status wins. But the new ownership rules only guard the counters and a *terminal on-disk status*. On-disk status is `in_progress` (non-terminal), so incoming `completed` still applies. Good, this test must still pass unmodified. Actually wait…
+[13:50:41] $ grep -n '"trigger_count"\|"retry_count"' pkg/result/result_writer_test.go
+[13:50:41] [system: task_progress]
+[13:50:41] $ grep -n 'status: completed\|status: aborted\|"status":          "completed"\|"status":          "aborted"' pkg/result/result_writer_test.go
+[13:50:41] [system: task_progress]
+[13:50:44] 💭 Let me check the tests at lines 416, 527-567, 567-624, 1000-1095, and 1030 to see whether they publish incoming counter values that differ from disk, and check on-disk status fixtures in those cases. Let me look at each test that carries counters in the incoming payload, and check the on-disk status at the time.
+
+Lines with incoming counters:
+- 540: retry_count: 3 — which test? line 527 "..." (need to read 527-566)
+- 604: retry_count: 1 — line 590-623
+- 635: retry_count: 3 — line 624-647
+- 662: …
+[13:50:44] [read] /workspace/pkg/result/result_writer_test.go (offset=501, limit=260)
+[13:50:44] [system: task_progress]
+[13:50:44]   → 259 lines read
+[13:50:47] 💭 Now let me verify each existing test against the new ownership rules. The new rules:
+1. `trigger_count` / `retry_count`: on-disk wins when present on disk; absent from merged if not on disk (even if incoming carries it).
+2. Terminal on-disk status (aborted/completed via Status() normalization): pinned.
+
+Let me go through the existing tests that carry counters in the incoming payload and compare on-disk vs incoming:
+
+- Line 527-565: on-disk `retry_count: 3`, incoming `retry_count: 3` — equal, no …
+[13:50:47] [read] /workspace/pkg/result/result_writer_test.go (offset=999, limit=200)
+[13:50:47] [system: task_progress]
+[13:50:47]   → 199 lines read
+[13:50:49] 💭 Now I've verified all the counter-carrying tests:
+- All existing counter tests have on-disk == incoming counter values, so the new guard does NOT change their outcomes. The only exception is the carved-out block's second write (line 1389: `trigger_count: 0` incoming vs on-disk `trigger_count: 3`), which the spec explicitly carves out.
+
+Now let me check the tests where on-disk status is terminal vs incoming status. Let me check all the fixtures with on-disk `status: completed`/`status: aborted`:
+…
+[13:50:49] [read] /workspace/pkg/result/result_writer_test.go (offset=379, limit=125)
+[13:50:49] [system: task_progress]
+[13:50:49]   → 124 lines read
+[13:50:50] 💭 The realistic end-to-end test (line 379): on-disk `status: in_progress` (non-terminal), incoming `status: completed` → incoming wins. ✓ Unchanged by the new rules.
+
+So I've verified: all existing tests in result_writer_test.go are unaffected by the new guard EXCEPT the carved-out spec at line 1351 (second write with incoming `trigger_count: 0` vs on-disk `trigger_count: 3`). This matches the spec's Constraints exactly.
+
+Now let me check the docs/controller-design.md § "Frontmatter Merge" section…
+[13:50:51] All existing tests verified: every counter-carrying test has on-disk == incoming values except the carved block at line 1389. Now let me check the docs and suite file.
+
+
+[13:50:51] $ grep -n "^## Frontmatter Merge\|^## Terminal Task Status\|^## Assignee-Clear on Escalation\|^## Empty-to-Named Reset\|^## " /workspace/docs/controller-design.md | head -60
+[13:50:51] [system: task_progress]
+[13:50:51] [read] /workspace/pkg/result/result_suite_test.go
+[13:50:51] [system: task_progress]
+[13:50:51]   → 25 lines read
+[13:50:53] 💭 The docs have "## Frontmatter Merge" at line 52 and "## Terminal Task Status (create-task dedup)" at line 62. But the spec ACs say the section range is `/^## Frontmatter Merge/,/^## Terminal Task Status/p` — and the section is "## Terminal Task Status (create-task dedup)". The spec says `docs/controller-design.md` § "Terminal Task Status" — with the header being "## Terminal Task Status (create-task dedup)". The sed range `/^## Frontmatter Merge/,/^## Terminal Task Status/p` — the pattern `/^## …
+[13:50:53] [read] /workspace/docs/controller-design.md (offset=1, limit=120)
+[13:50:53] [system: task_progress]
+[13:50:53]   → 119 lines read
+[13:51:00] 💭 Now I have the full picture of the docs section. The `## Frontmatter Merge` section (lines 52-60) says: "Existing keys are preserved, agent keys override on conflict." This is the section that must document the ownership rules as a table.
+
+Note: the AC requires `sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'trigger_count'` >= 1. The "## Terminal Task Status (create-task dedup)" header matches `/^## Terminal Task Status/` as a regex prefix. Good…
+[13:51:00] [read] /workspace/CHANGELOG.md (offset=, limit=45)
+[13:51:00] [system: task_progress]
+[13:51:00] $ grep -rn "type Task struct" /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/*.go; echo "---DescribeTable usage---"; grep -rn "DescribeTable" /workspace/pkg/command/*_test.go | head -5
+[13:51:00] [system: task_progress]
+[13:51:00]   → 44 lines read
+[13:51:06] 💭 Let me check the `lib.Task` type and a DescribeTable usage example, and the Makefile targets. Also let me check the metrics and the `.gitignore`/hideGit situation. `.dark-factory.yaml` says `workflow: direct` — not worktree. So `.git` is not masked. But the spec's Verification has `git diff -U0 pkg/result/result_writer_test.go | grep -c '^-[^-]'` and the Constraints say test-suite integrity. Hmm — the git commands in verification. Since `workflow: direct`, hideGit is presumably not set. Let me c…
+[13:51:06] Let me check git availability and look at the most recent completed prompt for style reference.
+
+
+[13:51:06] $ git status 2>&1 | head -5; echo "---exit: $?"
+[13:51:06] [system: task_progress]
+[13:51:06] [read] /workspace/prompts/completed/011-spec-005-reopen-observability.md
+[13:51:06] [system: task_progress]
+[13:51:06] ⚠ [bash output]
+fatal: not a git repository (or any parent up to mount point /)
+Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+---exit: 0
+[13:51:06]   → 170 lines read
+[13:51:12] 💭 Very useful. The completed prompt 011 shows the style and structure. It's a single-prompt format with `<summary>`, `<objective>`, `<context>`, `<requirements>`, `<constraints>`, `<verification>`. It also shows the "DEPENDENCY — verify prompt 1 shipped" pattern with the `grep` check and `status: failed` sentinel.
+
+Note: git is NOT available in this workspace (`fatal: not a git repository`). This matches my constraint about git masking. So in `<verification>`, I should avoid bare `git diff` comman…
+[13:51:17] Git is unavailable in this environment (masked as char device). Let me check how prior completed prompts handled git-dependent verification.
+
+
+[13:51:17] $ grep -rn "git diff\|git status\|git log" /workspace/prompts/completed/*.md | head -20; echo "---hideGit check---"; grep -n "hideGit\|worktree" /workspace/.dark-factory.yaml; echo "---dod---"; cat /wo…
+[13:51:17] [system: task_progress]
+[13:51:40] 💭 No hideGit, no worktree in `.dark-factory.yaml`. Prior prompts never used bare `git diff` in verification. The spec's own Verification section includes `git diff -U0` — that's the spec's text, and the spec is "container-executable". But my constraint says if git is masked (which empirically it is in this workspace), don't emit bare git in verification.
+
+Wait — let me reconsider the situation. The `.dark-factory.yaml` workflow is `direct`, and there's no hideGit. But empirically `git status` fail…
+[13:51:40] [read] /workspace/Makefile
+[13:51:40] [system: task_progress]
+[13:51:40] $ ls /workspace/pkg/; echo "---mocks---"; ls /workspace/mocks/ | head; echo "---lib.Task---"; sed -n '19,60p' /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task.go
+[13:51:40] [system: task_progress]
+[13:51:40]   → 38 lines read
+[13:51:40] ⚠ [bash output]
+task_publisher.go
+vault_scanner.go
+---lib.Task---
+type Task struct {
+	base.Object[base.Identifier]
+	TaskIdentifier TaskIdentifier  `json:"taskIdentifier"`
+	Frontmatter    TaskFrontmatter `json:"frontmatter"`
+	Content        TaskContent     `json:"content"`
+}
+
+func (t Task) Validate(ctx context.Context) error {
+	return validation.All{
+		validation.Name("TaskIdentifier", t.TaskIdentifier),
+		validation.Name("Content", t.Content),
+	}.Validate(ctx)
+}
+
+func (t Task) Ptr() *Task {
+	return &t
+}
+[13:51:46] 💭 The Makefile doesn't have `test` or `precommit` targets at root (they're in Makefile.precommit and Makefile.docker). Let me check Makefile.precommit and Makefile.variables for the test/precommit targets.
+[13:51:46] [read] /workspace/Makefile.precommit
+[13:51:46] [system: task_progress]
+[13:51:46] [read] /workspace/Makefile.variables
+[13:51:46] [system: task_progress]
+[13:51:46]   → 1 lines read
+[13:51:46]   → 99 lines read
+[13:52:14] 💭 Single module repo (one go.mod at root). So `make test` / `make precommit` run at repo root — this is NOT a multi-service repo. The spec says `make precommit` exits 0 at repo root. Good.
+
+Note: `make precommit` includes `generate` which runs `go generate` (counterfeiter) and removes/regenerates mocks. Since I'm not adding new interfaces, the mock regeneration should be idempotent. But it also runs `go mod tidy` and removes vendor. Fine.
+
+Now I have everything I need to design the implementation.…
+[13:52:15] Let me check the test file's package and the trigger_count test context lines 760-999.
+
+
+[13:52:15] $ head -45 /workspace/pkg/result/result_writer_test.go
+[13:52:15] [system: task_progress]
+[13:52:15] ⚠ [bash output]
+
+var errTest = errors.New("test error")
+
+func extractTestFrontmatter(content string) (map[string]interface{}, error) {
+	if !strings.HasPrefix(content, "---\n") {
+		return nil, errors.New("no frontmatter")
+	}
+	rest := content[4:]
+	before, _, found := strings.Cut(rest, "\n---\n")
+	if !found {
+		return nil, errors.New("frontmatter not closed")
+	}
+	var fm map[string]interface{}
+	if err := yaml.Unmarshal([]byte(before), &fm); err != nil {
+		return nil, err
+	}
+	return fm, nil
+}
+
+var _ = Describe("ResultWriter", func() {
+[13:53:09] 💭 Critical finding: the test file is `package result_test` — an EXTERNAL test package. This means:
+1. It cannot call the unexported `mergeFrontmatter` directly.
+2. The DB 6 AC ("the merge helper reports its guard decisions to the caller alongside the merged map") — how does an external test observe decisions?
+
+Options:
+a) Export the decision type and merge helper. But the spec says "The change stays inside the existing pkg/result result-write chokepoint (mergeFrontmatter or a helper it calls)". Ex…
+[13:53:10] The test file is `package result_test` (external), which is critical for the DB 6 design. Let me verify how `lib.Task` is decoded from Kafka (int vs float64 numbers) since that affects the equality comparison.
+
+
+[13:53:10] $ grep -rn "UnmarshalJSON\|MarshalJSON\|func (t Task)" /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task.go | head; echo "---base.Object---"; grep -rn "func (.*TaskFrontmatter) Unmarshal…
+[13:53:10] [system: task_progress]
+[13:53:10] ⚠ [bash output]
+/home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task.go:26:func (t Task) Validate(ctx context.Context) error {
+/home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task.go:33:func (t Task) Ptr() *Task {
+---base.Object---
+---result executor decode---
+[13:53:12] $ grep -rn "TaskIdentifier:\|Frontmatter:\|req.Frontmatter\|lib.Task{" /workspace/pkg/command/task_result_executor.go 2>/dev/null | head; echo "---files in command---"; ls /workspace/pkg/command/ | gre…
+[13:53:12] [system: task_progress]
+[13:53:13] 💭 Let me look at task_result_executor.go to understand how `req lib.Task` is deserialized and what values the frontmatter carries.
+[13:53:13] [read] /workspace/pkg/command/task_result_executor.go (offset=, limit=90)
+[13:53:13] [system: task_progress]
+[13:53:13]   → 89 lines read
+[13:53:26] 💭 The `req` is deserialized via `commandObject.Command.Data.MarshalInto(ctx, &req)` — cqrs's marshaling. The cqrs layer serializes/deserializes with JSON typically. So incoming frontmatter numeric values from Kafka JSON would be float64 when decoded into `map[string]interface{}` (encoding/json default behavior).
+
+Hmm wait — but actually, `lib.Task` from the agent is published over Kafka. The agents build the frontmatter map in their own language and JSON-serialize it. The controller's cqrs `Marsha…
+[13:53:28] Let me verify the numeric types on both sides (YAML on-disk parse vs cqrs JSON decode), which determines the equality comparison design.
+
+
+[13:53:28] $ cat > /tmp/yamltype_test.go <<'EOF'\npackage main\n\nimport (\n	"fmt"\n	"gopkg.in/yaml.v3"\n)\n\nfunc main() {\n	var m map[string]interface{}\n	yaml.Unmarshal([]byte("trigger_count: 3\nstatus: comple…
+[13:53:28] [system: task_progress]
+[13:53:28] $ grep -rn "func (.*MarshalInto\|MarshalInto" /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/base/*.go /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/cdb/*.go 2>/dev/null | head; echo "---"; …
+[13:53:28] [system: task_progress]
+[13:53:30] $ cat > /tmp/yamltype.go <<'EOF'\npackage main\n\nimport (\n	"fmt"\n	"gopkg.in/yaml.v3"\n)\n\nfunc main() {\n	var m map[string]interface{}\n	yaml.Unmarshal([]byte("trigger_count: 3\nstatus: completed\n…
+[13:53:30] [system: task_progress]
+[13:53:30] $ ls /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/; grep -rn "MarshalInto" /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/ 2>/dev/null | grep -v _test | head
+[13:53:30] [system: task_progress]
+[13:53:33] 💭 yaml.v3 gives `int` for on-disk `trigger_count: 3`. Now let me find the cqrs module path. Let me download it or check where it is.
+[13:53:33] $ ls /home/node/go/pkg/mod/github.com/bborbe/ | grep -i cqrs; GOFLAGS=-mod=mod go mod download github.com/bborbe/cqrs 2>&1 | tail -2; ls -d /home/node/go/pkg/mod/github.com/bborbe/cqrs@* 2>/dev/null
+[13:53:33] [system: task_progress]
+[13:53:35] $ grep -rn "MarshalInto" /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/cdb/*.go 2>/dev/null | head -5; echo "---Data type---"; grep -rn "type CommandObject struct\|Data " /home/node/go/pkg/mod/gi…
+[13:53:35] [system: task_progress]
+[13:53:46] 💭 The cqrs layer uses `encoding/json` (via cdb files). So incoming `trigger_count` from Kafka JSON → `float64`. Combined with on-disk yaml.v3 → `int`. So a raw `!=` equality would produce spurious decisions on steady-state. Numeric-tolerant comparison is REQUIRED for the DB 6 "steady-state silent" promise.
+
+Let me confirm `MarshalInto` is `encoding/json` based. Let me check `base` package of cqrs.
+
+Actually, I've spent enough on this — the key facts are established:
+- On-disk YAML parse: `int`
+- I…
+[13:53:54] The cqrs layer uses `encoding/json`, so incoming numbers decode as float64 while on-disk YAML parses as int — numeric-tolerant equality is required for the DB 6 "steady-state silent" promise. Let me verify no other tests exercise the real writer and check the metrics interface.
+
+
+[13:53:54] $ grep -rn "NewResultWriter\|result.NewResultWriter" /workspace/pkg/ /workspace/main.go /workspace/mocks/ 2>/dev/null | grep -v _test | head; echo "---result executor test uses mock?---"; grep -n "mock…
+[13:53:54] [system: task_progress]
+[13:54:56] 💭 Only `main.go:166` calls `NewResultWriter`, and `pkg/command/task_result_executor_test.go` uses `mocks.ResultWriter`. So changing `mergeFrontmatter` (internal) to exported `MergeFrontmatter` with a new return signature is fully safe — only the one internal call site in `buildResultModifyFn`.
+
+I have everything I need. Let me now look at the trigger_count context to know the file's full structure, particularly what's at lines 868-999 (needs_input) to understand the harness, and the section at 760…
+[13:54:57] Let me look at a DescribeTable example in the repo to mirror the exact style for the new test specs.
+
+
+[13:54:57] $ sed -n '21,70p' /workspace/pkg/command/command_operations_test.go
+[13:54:57] [system: task_progress]
+[13:56:37] 💭 Good, I have the DescribeTable style. Now let me check the `domain` package import path and confirm `TaskStatus` type is what `Status()` returns. `lib.TaskFrontmatter.Status()` returns `domain.TaskStatus` from `github.com/bborbe/vault-cli/pkg/domain`. So the new import in result_writer.go: `domain "github.com/bborbe/vault-cli/pkg/domain"`.
+
+Let me verify the go.mod already has vault-cli as a direct require — yes, `github.com/bborbe/vault-cli v0.116.1` is a direct require (line 21). Good.
+
+Now — …
+[13:56:38] Let me check the in-progress prompts directory for frontmatter conventions and get the current UTC time.
+
+
+[13:56:38] $ ls -la /workspace/prompts/in-progress/ /workspace/prompts/log/ 2>/dev/null | head -30; echo "---UTC---"; date -u +"%Y-%m-%dT%H:%M:%SZ"
+[13:56:38] [system: task_progress]
+[13:58:00] 💭 The naming convention for prompts uses numeric prefixes (`010-spec-005-...`), but the workflow instructions say "NEVER number prompt filenames — dark-factory assigns numbers on approve". However the completed prompts DO have numbers. Hmm — the constraint in my system prompt says "NEVER number prompt filenames — dark-factory assigns numbers on approve". The existing completed prompts have numbers because dark-factory assigned them after approve (they were written without numbers, then numbered on…
+[13:59:01] API Error: Connection lost mid-response. The response above may be incomplete.
+[13:59:01] [system: background_tasks_changed]
+[13:59:01] [system: task_updated]
+[13:59:01] [system: task_notification]
+[13:59:01] [init] session=d5b7e577 model=deepseek-v4-flash[1m] cwd=/workspace tools=28
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:07] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] [system: thinking_tokens]
+[13:59:08] 💭 The prompt-creator agent failed due to an API error ("Connection lost mid-response"). The agent terminated early. This means it may not have completed writing the prompt files.
+
+Let me check whether it actually produced any prompt files before failing. The spec is at `specs/in-progress/006-bug-frontmatter-field-ownership.md`. Output goes to `prompts/`.
+
+Per the command instructions, the prompt-creator's work needs to complete before auditing. Since it failed, I should:
+1. Check if any prompt fil…
+[13:59:09] The prompt-creator agent hit a transient API error (connection lost mid-response) and terminated early. Let me check whether it produced any prompt files before failing.
+
+
+[13:59:09] $ cd /Users/bborbe/Documents/workspaces/agent-task-controller-fieldmerge 2>/dev/null || cd /workspace; echo "PWD: $(pwd)"; echo "--- prompts/ dir ---"; ls -la prompts/ 2>/dev/null || echo "(no prompts/…
+[13:59:10] [system: thinking_tokens]
+[13:59:10] [system: thinking_tokens]
+[13:59:10] [system: thinking_tokens]
+[13:59:10] [system: thinking_tokens]
+[13:59:10] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:11] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:12] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:13] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:14] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:15] [system: thinking_tokens]
+[13:59:16] [system: thinking_tokens]
+[13:59:16] [system: thinking_tokens]
+[13:59:16] [system: thinking_tokens]
+[13:59:16] [system: thinking_tokens]
+[13:59:16] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:17] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:18] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] [system: thinking_tokens]
+[13:59:19] 💭 Interesting. The cwd is `/workspace` (the docker mount). The repo appears to be mounted at `/workspace`. But wait — the command instructions say the spec path is relative to repo root = cwd, and under docker backend `/workspace` is the repo mount. Here PWD is `/workspace` and the spec exists at `/workspace/specs/in-progress/006-bug-frontmatter-field-ownership.md`. So this is the docker backend with the repo mounted at /workspace. Good.
+
+The `prompts/` directory exists with subdirs (cancelled, co…
+[13:59:24] The prompt-creator died from a transient API error *before writing any prompt files* — `prompts/` root and `prompts/in-progress/` are both empty of new content. The failure was infrastructure (connection lost), not a real completion of the task. The agent's context is intact and resumable, so the right move is to resume it to finish the generation rather than declare failure on a hiccup.
+
+
+[13:59:24] [SendMessage]
+[13:59:24] [system: background_tasks_changed]
+[13:59:24] [system: task_started]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] [system: thinking_tokens]
+[13:59:24] 💭 The agent is resumed. I'll wait for its completion notification. Nothing else to do in the meantime — I shouldn't duplicate its work.
+[13:59:25] The prompt-creator agent has been resumed and is continuing its work in the background. I'll wait for its completion notification before running the audit pass.
+[14:00:49] 💭 The coordinator wants me to continue. I've done all the research. Let me summarize what I have verified:
+
+1. Spec read: 2-prompt decomposition (field-ownership guard + docs).
+2. `pkg/result/result_writer.go` read fully — `mergeFrontmatter` at line 355, `applyRetryCounter` at 188 (early return `string(merged.Status()) == "completed"` at 189), `buildResultModifyFn` at 151.
+3. `pkg/result/result_writer_test.go` read (key sections) — external package `result_test`, harness at 45-115, carved block at…
+[14:00:49] The coordinator asked me to resume — my context is intact and all research is complete. Let me do one final verification of the cqrs JSON decode behavior, then write the two prompt files.
+
+
+[14:00:49] $ grep -rn "func .*MarshalInto" /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/ 2>/dev/null | grep -v _test | head -3; echo "---"; grep -rln "UseNumber\|json.NewDecoder" /home/node/go/pkg/mod/gith…
+[14:00:49] [system: task_progress]
+[14:00:50] ⚠ [bash output]
+/home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/base/base_event.go:77:func (e Event) MarshalInto(ctx context.Context, into interface{}) error {
+---
+[14:00:51] $ sed -n '60,95p' /home/node/go/pkg/mod/github.com/bborbe/cqrs@v0.6.8/base/base_event.go
+[14:00:51] [system: task_progress]
+[14:00:51] ⚠ [bash output]
+
+func (e Event) MarshalInto(ctx context.Context, into interface{}) error {
+	bytes, err := json.Marshal(e)
+	if err != nil {
+		return errors.Wrap(ctx, err, "marshal failed")
+	}
+	if err := json.Unmarshal(bytes, into); err != nil {
+		return errors.Wrap(ctx, err, "unmarshal failed")
+	}
+	return nil
+}
+
+// Merge this and the given event, given overwrite this
+func (e Event) Merge(event Event) Event {
+	result := Event{}
+	for k, v := range e {
+		result[k] = v
+	}
+	for k, v := range event {
+		result[k] = v
+[14:01:28] 💭 Confirmed: cqrs uses `json.Marshal` + `json.Unmarshal` (standard encoding/json, no UseNumber). So incoming frontmatter numbers decode as float64. On-disk YAML (yaml.v3) gives int. Numeric-tolerant equality is REQUIRED. My design is correct.
+
+Now let me write the two prompt files.
+
+Let me carefully draft prompt 1.
+
+I'll write it in full. Key sections:
+- frontmatter
+- <summary> (5-10 bullets, plain language)
+- <objective>
+- <context> (with coding-plugin docs at in-container path /home/node/.claude…
+[14:02:25] Confirmed: cqrs uses standard `encoding/json` (no `UseNumber`), so incoming counters decode as `float64` while on-disk YAML parses as `int` — numeric-tolerant equality is mandatory for the DB 6 steady-state-silent promise. All research is complete. Now I'll write the two prompt files.
+
+
+[14:02:25] [write] /workspace/prompts/1-spec-006-field-ownership-guard.md (38205 chars)
+[14:02:25] [system: task_progress]
+[14:02:25]   → File created successfully at: /workspace/prompts/1-spec-006-field-ownership-guard.md (file state is current in your con…
+[14:02:35] 💭 Now let me write prompt 2 (docs). It's docs-only, depends on prompt 1.
+
+Key ACs:
+- AC 17: `sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'trigger_count'` ≥1 AND `grep -c 'Controller-owned'` ≥1.
+- AC 18: `sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'terminal'` ≥1.
+
+Plus: the illustrative merge example must no longer imply blanket agent precedence, and the section must state the terminal short-c…
+[14:02:35] [write] /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md (10178 chars)
+[14:02:35] [system: task_progress]
+[14:02:35]   → File created successfully at: /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md (file state is current in you…
+[14:03:19] 💭 Both prompts written. Let me do a final self-audit against my checklist:
+
+1. **`<summary>` present?** Both have 5-10 bullet summaries. ✓
+
+2. **YAGNI pass?** No new config flags, opt-out knobs, tunable thresholds, or invented metrics. The `numericValue`/`frontmatterValueEqual` helpers are justified by DB 6's steady-state-silent promise (not a knob). `GuardDecision` export is required by the spec AC for the external test package. ✓
+
+3. **Sibling entry points covered?** `mergeFrontmatter` has exact…
+[14:03:29] Both prompts are written. Let me fix one compliance issue in prompt 2 — I included a bare `git diff` command in its `<verification>`, which violates the hideGit rule (the container's `.git` is masked; a failed git command would produce a false-positive pass). Removing it.
+
+
+[14:03:29] [write] /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md (10066 chars)
+[14:03:29] [system: task_progress]
+[14:03:29]   → The file /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md has been updated successfully. (file state is curr…
+[14:03:33] 💭 Both prompts are written. Let me do a final verification: confirm the files exist in the inbox and do a final self-audit.
+
+Let me verify the files are in `prompts/` (the inbox) with correct names, and do a quick sanity check on the frontmatter and that there are no stray issues.
+[14:03:35] Both prompts are written. Let me verify they landed in the inbox with correct naming and check the summary bullet counts.
+
+
+[14:03:35] $ ls -la /workspace/prompts/; echo "---summary bullet counts---"; for f in /workspace/prompts/1-spec-006-field-ownership-guard.md /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md; do echo "$…
+[14:03:35] [system: task_progress]
+[14:03:38] 💭 The summary bullet count is off because `grep -c '^- '` matches many lines (including bullets inside the requirements blocks that start with `- `). The actual summary sections have 8 bullets (prompt 1) and 5 bullets (prompt 2). That's fine — the count is inflated by requirements bullets. The structure is correct (each has `<summary>` section with bullets).
+
+No forbidden deliberation prose. Files in the inbox with execution-order prefixes. Frontmatter correct (spec, status, created — no extra fie…
+[14:03:44] Both prompt files are in the inbox with execution-order prefixes, no deliberation prose, and correct frontmatter. The task is complete.
+
+## Files created
+
+1. **`/workspace/prompts/1-spec-006-field-ownership-guard.md`** — the entire behavior change: field-ownership guard, terminal pin, widened terminal early return, guard log, single package-level declarations, all new unit specs, the carved-out test rewrite, and the CHANGELOG entry (spec ACs 1-16, 19).
+2. **`/workspace/prompts/2-spec-006-docs-frontmatter-ownership.md`** — `docs/controller-design.md` § "Frontmatter Merge" ownership table + terminal short-circuit note (spec ACs 17-18).
+
+## Key decisions
+
+- **Kept the spec's own 2-prompt decomposition** (matches the Sizing Guide for a single feature). Prompt 1 ships the code + changelog so a release can never cut with the fix merged and no changelog entry; prompt 2 is docs-only so the code diff stays reviewable and the doc text describes what shipped.
+- **Exported the merge helper** as `MergeFrontmatter(...) (lib.TaskFrontmatter, []GuardDecision)`. This is the load-bearing design call: `result_writer_test.go` is `package result_test` (external), so the DB 6 decision-reporting AC (assert on decision count, field, kept, rejected) is only reachable through an exported symbol. Consistent with the package already exporting `FindTaskFilePath`/`ExtractBody`. `mergeFrontmatter` has exactly one call site (`buildResultModifyFn:171`), verified by grep, so the signature change is safe.
+- **Numeric-tolerant value equality** (`frontmatterValueEqual` + `numericValue`). Verified empirically that on-disk YAML (yaml.v3) decodes `trigger_count: 3` as `int`, while the incoming payload arrives via cqrs's `json.Marshal`+`Unmarshal` (`base/base_event.go:77`, standard encoding/json, no `UseNumber`) as `float64`. Without this, every steady-state publish would log a spurious guard line, violating DB 6's "equal values produce no log line".
+- **Terminal pin keeps the raw on-disk status verbatim**; terminal is decided only by the normalizing `Status()` accessor vs `domain.TaskStatusCompleted`/`TaskStatusAborted` (both grep-verified in vault-cli v0.116.1). Status decisions compare normalized values, so an incoming alias (`done`) against on-disk `completed` stays silent.
+- **Carve-out rewrite** models the reset as the scanner's Empty-to-Named Reset actually performs it: `writeTaskFile` writes `trigger_count: 0` + the new assignee to disk (retaining `previous_assignee: claude`) before the second publish, instead of sending `trigger_count: 0` in the incoming payload. This is the only pre-existing test block modified; both intent assertions (`previous_assignee: claude`, `assignee: backtest-agent`) are preserved.
+- **No bare git in `<verification>`**: git is masked in this container (verified: `git status` → "not a git repository"), so AC 14's git-diff integrity evidence is declared audit-time (host) and the agent self-enforces it via the "only the carved block may change" discipline + full-suite pass. I also removed a stray `git diff --name-only` I'd initially put in prompt 2's verification.
+- **No scenario prompt**: the spec explicitly states "NO new E2E scenario" — every branch is reachable through the `mocks.GitClient` harness, satisfying the scenario four-condition test.
+- **Failure modes**: all rows map to requirements — non-integer on-disk counters kept verbatim (accessor reads 0, no escalation), absent/unknown on-disk status stays non-terminal, operator abort-in-flight pinned via RMW re-read, agent can't un-terminate (guard logs each publish), equal values silent, git-rest/corrupt-file error paths unchanged.
+
+## Docs referenced in `<context>`
+
+- In-container coding-plugin docs: `go-glog-guide.md`, `go-testing-guide.md`, `go-error-wrapping-guide.md`, `definition-of-done.md`, `changelog-guide.md` (prompt 1); none needed for prompt 2 (docs-only).
+- Project files read fully: `pkg/result/result_writer.go`, `pkg/result/result_writer_test.go` (key sections incl. carved block and harness), `docs/controller-design.md`, `CHANGELOG.md`, `go.mod`, `Makefile.precommit`.
+
+## Open questions (for the human reviewer)
+
+- **`MergeFrontmatter` + `GuardDecision` become public package API.** The spec's DB 6 AC forces decision-reporting to be observable and the test file is external, so export is the only single-file path. If the auditor prefers keeping `mergeFrontmatter` private, the alternative is a second internal test file in `package result` — flag for audit.
+- **Numeric equality helper**: the spec didn't spell out the int/float64 divergence; I introduced `frontmatterValueEqual`/`numericValue` as a package-private helper (~15 lines) to honor DB 6. Flag if the auditor considers it over-engineered.
+- **Changelog bullet wording** is my own phrasing (must contain `trigger_count` per the AC's `awk` check, which I verified exits 1 today).
+
+Suggest: run `/audit-prompt 1-spec-006-field-ownership-guard.md` and `/audit-prompt 2-spec-006-docs-frontmatter-ownership.md` to validate before approving.
+[14:03:44] [system: background_tasks_changed]
+[14:03:44] [system: task_updated]
+[14:03:44] [system: task_notification]
+[14:03:44] [init] session=d5b7e577 model=deepseek-v4-flash[1m] cwd=/workspace tools=28
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:45] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] [system: thinking_tokens]
+[14:03:46] 💭 The prompt-creator agent completed successfully and wrote two prompt files:
+1. `/workspace/prompts/1-spec-006-field-ownership-guard.md`
+2. `/workspace/prompts/2-spec-006-docs-frontmatter-ownership.md`
+
+Now, per the command instructions, I need to run a single audit pass: for each prompt file the creator wrote, invoke the `prompt-auditor` agent on that path. Collect each audit report. Do NOT retry, rewrite, or merge prompts based on findings.
+
+Let me verify the files exist first, then launch both…
+[14:03:47] The prompt-creator agent completed successfully — two prompt files written to the inbox. Let me verify they're on disk, then run the audit pass.
+
+
+[14:03:47] $ ls -la prompts/*.md && echo "---" && for f in prompts/1-spec-006-field-ownership-guard.md prompts/2-spec-006-docs-frontmatter-ownership.md; do echo "== $f =="; head -30 "$f"; echo; done
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] [system: thinking_tokens]
+[14:03:48] 💭 Both prompt files exist. Now I need to run the audit pass: invoke `prompt-auditor` on each prompt file. These are independent audits, so I can launch them in parallel in a single message.
+
+Important: per the memory note, the router rejects model overrides on subagents — I must NOT set a model override. Let the agents inherit the session model.
+
+Let me launch both audits in parallel.
+[14:03:50] Both prompt files are confirmed on disk with correct frontmatter and execution-order prefixes. Now running the audit pass — both prompts audited in parallel by independent `prompt-auditor` agents.
+
+
+[14:03:50] [agent:dark-factory:prompt-auditor] Audit prompt 1-spec-006-field-ownership-guard
+    prompt: Audit the dark-factory prompt file at `prompts/1-spec-006-field-ownership-guard.md` (repo-root-relative path; cwd is the repo root). Follow your Prompt Definit…
+[14:03:50] [system: background_tasks_changed]
+[14:03:50] [system: task_started]
+[14:03:50]   ← agent reply: Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)
+[14:03:50] [agent:dark-factory:prompt-auditor] Audit prompt 2-spec-006-docs-frontmatter-ownership
+    prompt: Audit the dark-factory prompt file at `prompts/2-spec-006-docs-frontmatter-ownership.md` (repo-root-relative path; cwd is the repo root). Follow your Prompt De…
+[14:03:50] [system: background_tasks_changed]
+[14:03:50] [system: task_started]
+[14:03:50]   ← agent reply: Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)
+[14:03:51] [system: thinking_tokens]
+[14:03:51] [system: thinking_tokens]
+[14:03:51] [system: thinking_tokens]
+[14:03:51] [system: thinking_tokens]
+[14:03:51] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] 💭 Let me start by understanding the environment. I'm at `/workspace` which is the repo root. Let me read the prompt file first.
+
+Let me look at the prompt file and gather context.
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] [system: thinking_tokens]
+[14:03:52] 💭 Both audit agents are running in the background. I'll wait for their completion notifications. No other work to do in the meantime — I shouldn't duplicate their audit work.
+
+Note: since I'm in daemon mode (DARK_FACTORY_MANAGED=true), I'll skip the `spec mark-prompted` step regardless of audit findings.
+[14:03:52] Both audit agents are running in parallel. Waiting for their completion notifications before assembling the report.
+[14:03:52] 💭 Let me start by reading the prompt file and understanding the environment. I need to:
+
+1. Read the prompt file at `prompts/1-spec-006-field-ownership-guard.md`
+2. Run `dark-factory config` from the project root to discover container mounts
+3. Verify code references by reading referenced source files
+4. Evaluate against all criteria
+5. Generate report
+
+Let me start. The cwd is the repo root at /workspace. Let me first look at the prompt file and run dark-factory config.
+[14:03:52] I'll start by reading the prompt file and gathering context about the project.
+
+
+[14:03:52] [read] /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md
+[14:03:52] [system: task_progress]
+[14:03:52] $ ls -la && echo "---PROMPTS---" && ls -la prompts/ 2>/dev/null && echo "---GIT---" && git remote get-url origin 2>/dev/null && echo "---DARKFACTORY---" && ls -la .dark-factory.yaml 2>/dev/null && cat …
+[14:03:52] [system: task_progress]
+[14:03:53]   → 116 lines read
+[14:03:53] I'll start by reading the prompt file and discovering the environment configuration.
+
+
+[14:03:53] [read] /workspace/prompts/1-spec-006-field-ownership-guard.md
+[14:03:53] [system: task_progress]
+[14:03:53] $ ls -la && echo "---PROMPTS---" && ls -la prompts/ 2>/dev/null && echo "---DARK-FACTORY CONFIG---" && dark-factory config 2>&1 | head -60
+[14:03:53] [system: task_progress]
+[14:03:53] ⚠ [Bash] error: Exit code 128\ntotal 148\ndrwxr-xr-x 1 node node  1152 Aug 31 13:29 .\ndrwxr-xr-x 1 root root    26 Aug 31 13:48 ..\n-rw------- 1 node node     6 Aug 31 13:25 .dark-factory.lock\n-rw-r--r-- 1 node node  4738 Aug 31 13:26 .dark-factory.log\n-rw-r--r-- 1 node node   141 Aug 31 13:25 .dark-factory.yaml\n-rw-r--r-- 1 node node     6 Aug 31 13:25 .dockerignore\ncrw-rw-rw- 1 root root  1, 3 Aug 22 20:2…
+[14:03:53]   → 513 lines read
+[14:04:06] 💭 Interesting. The `.git` in this repo is a character device (`crw-rw-rw-` — that's the worktree pointer file masked as /dev/null bind, per the hideGit/worktree masking). So this is a dark-factory execution container where git is masked. The git remote get-url origin returned exit 128 (fatal: not a git repository).
+
+Let me look at `.dark-factory.yaml`, the docs/controller-design.md, the spec, and the sibling prompt 1.
+
+Note: the current working directory is `/workspace` which seems to be the dark-…
+[14:04:06] $ cat /workspace/.dark-factory.yaml; echo "---LOG---"; cat /workspace/.dark-factory.log; echo "---SPECS---"; ls -la /workspace/specs/; echo "---DOCS---"; ls -la /workspace/docs/
+[14:04:06] [system: task_progress]
+[14:04:06] $ dark-factory config 2>&1 | head -50 || echo "NO dark-factory CLI available"
+[14:04:06] [system: task_progress]
+[14:04:07] 💭 The `dark-factory` CLI isn't on PATH in this environment. Let me check the .dark-factory.yaml config directly, and look at the prompts directory. Let me also check the config file and find the dark-factory binary or config.
+
+Let me check:
+1. `.dark-factory.yaml` for hideGit / workflow settings
+2. Whether there's a dark-factory config elsewhere
+3. The second prompt in the batch (`2-spec-006-docs-frontmatter-ownership.md`) - this is a sibling prompt
+4. The linked spec (`specs/006-...`)
+
+Let me loo…
+[14:04:08] The `dark-factory` CLI isn't on PATH. Let me read the config directly and inspect the spec and sibling prompts.
+
+
+[14:04:08] [read] /workspace/.dark-factory.yaml
+[14:04:08] [system: task_progress]
+[14:04:08] $ ls -la /workspace/specs/ && echo "---" && ls -la /workspace/prompts/in-progress/ && echo "---" && which dark-factory; ls ~/.dark-factory 2>/dev/null; ls /usr/local/bin | grep -i dark 2>/dev/null; ech…
+[14:04:08] [system: task_progress]
+[14:04:08]   → 7 lines read
+[14:04:09] 💭 The `dark-factory` CLI is not available. But I can infer the mount situation from the log: the daemon runs on the host with working directory `/Users/bborbe/Documents/workspaces/agent-task-controller-fieldmerge/`. The prompt uses `/workspace` as the container path (repo-root-relative with `cd /workspace`). Let me check the spec and the docs file, plus the sibling prompt 1.
+
+Key observations so far:
+- `hideGit=true` is set (from the log: `hideGit=true hideGitSource=arg`). So the container's `.git…
+[14:04:10] The `dark-factory` CLI isn't available here, but the log reveals the mount topology (`/Users/bborbe/Documents/workspaces/agent-task-controller-fieldmerge/` is the host path, `hideGit=true` via arg, workflow `direct`). Let me read the spec, the docs file, and the sibling prompt 1.
+
+
+[14:04:10] $ ls -la /workspace/specs/in-progress/ && echo "---" && ls -la /workspace/prompts/in-progress/ /workspace/prompts/completed/ 2>/dev/null | head -30
+[14:04:10] [system: task_progress]
+[14:04:10] [read] /workspace/docs/controller-design.md
+[14:04:10] [system: task_progress]
+[14:04:10]   → 194 lines read
+[14:04:11] 💭 Now let me read the spec file 006-bug-frontmatter-field-ownership.md and the sibling prompt 1 (1-spec-006-field-ownership-guard.md).
+[14:04:11] Now let me read the linked spec and the sibling prompt 1.
+
+
+[14:04:11] [read] /workspace/specs/in-progress/006-bug-frontmatter-field-ownership.md
+[14:04:11] [system: task_progress]
+[14:04:11]   → 200 lines read
+[14:04:23] 💭 The `.dark-factory.yaml` shows:
+- `workflow: direct` — NOT worktree, so `.git` is NOT masked unconditionally
+- No `hideGit: true` — so git commands should work
+- `pr: false`, `autoMerge: false`, `autoRelease: false`
+- `defaultBranch: master`
+
+Wait, the prompt says "The execution container's `.git` is masked, so do NOT attempt git here". Hmm, but `workflow: direct` — the git masking question. The hideGit check in my audit rules is about whether the container's `.git` is masked. With `workflow: di…
+[14:04:25] The config shows `workflow: direct` and no `hideGit` setting. Now let me locate the linked spec and read the sibling prompt.
+
+
+[14:04:25] $ find /workspace/specs -type f -name '*.md' 2>/dev/null; echo "---"; find /workspace -maxdepth 3 -name '*006*' -o -maxdepth 3 -name '*ownership*' 2>/dev/null | grep -v node_modules; echo "---grep spec…
+[14:04:25] [system: task_progress]
+[14:04:27] 💭 The spec is at `/workspace/specs/in-progress/006-bug-frontmatter-field-ownership.md`. Let me read it fully. Also read the sibling prompt `2-spec-006-docs-frontmatter-ownership.md`.
+
+Let me read the spec file.
+[14:04:27] Found the spec at `specs/in-progress/006-bug-frontmatter-field-ownership.md`. Let me read it and the sibling prompt.
+
+
+[14:04:27] [read] /workspace/specs/in-progress/006-bug-frontmatter-field-ownership.md
+[14:04:27] [system: task_progress]
+[14:04:27]   → 200 lines read
+[14:04:29] 💭 Now let me read the sibling prompt 2 to check sibling coverage, and the referenced source files. Let me read the key source files:
+- `/workspace/pkg/result/result_writer.go`
+- `/workspace/pkg/result/result_writer_test.go` (1748 lines, need chunked reads)
+- `/workspace/CHANGELOG.md`
+- `pkg/command/command_operations_test.go` (line 21)
+- `docs/controller-design.md` (for doc references)
+- `/workspace/pkg/command/task_increment_frontmatter_executor.go` (frozen file reference)
+
+Let me read the siblin…
+[14:04:30] Now let me read the sibling prompt and the key source files.
+
+
+[14:04:30] [read] /workspace/prompts/2-spec-006-docs-frontmatter-ownership.md
+[14:04:30] [system: task_progress]
+[14:04:30] $ ls -la /workspace/pkg/result/ && echo "---" && wc -l /workspace/pkg/result/*.go /workspace/CHANGELOG.md /workspace/pkg/command/task_increment_frontmatter_executor.go /workspace/pkg/command/command_op…
+[14:04:30] [system: task_progress]
+[14:04:30]   → 116 lines read
+[14:04:31] 💭 Now let me read the source files. Start with `result_writer.go` fully (406 lines).
+[14:04:31] Now let me read the source files referenced by the prompt.
+
+
+[14:04:31] [read] /workspace/pkg/result/result_writer.go
+[14:04:31] [system: task_progress]
+[14:04:31]   → 406 lines read
+[14:04:40] 💭 Now I have the spec. Let me now verify the code references. The prompt's `<requirements>` and `<context>` cite code references in `pkg/result/result_writer.go`:
+- `MergeFrontmatter`
+- `controllerOwnedFields`
+- `terminalStatuses`
+- `ownership guard kept on-disk` log
+- `restoreExistingPhase`
+- `applyRetryCounter`
+- `Status()` accessor (from `lib.TaskFrontmatter`)
+- `domain.TaskStatusCompleted`, `domain.TaskStatusAborted`
+
+Let me check the current state of `pkg/result/result_writer.go` — wait, but …
+[14:04:40] Now let me read the sibling prompt 1 (which this prompt depends on) and verify the referenced code in `pkg/result/result_writer.go`.
+
+
+[14:04:40] [read] /workspace/prompts/1-spec-006-field-ownership-guard.md
+[14:04:40] [system: task_progress]
+[14:04:40]   → 513 lines read
+[14:05:06] 💭 Now I understand the full prompt set. Let me verify the code references in the actual files.
+
+Key references in prompt 2:
+1. `docs/controller-design.md` — `## Frontmatter Merge` section lines 52-60 (I verified line 52 is `## Frontmatter Merge`, line 54-60 is the prose+example, line 62 is `## Terminal Task Status (create-task dedup)`, line 101 is `## Empty-to-Named Reset (spec 021)`). Let me verify line numbers precisely:
+   - Line 52: `## Frontmatter Merge` ✓
+   - Lines 54-60: prose + example ✓ …
+[14:05:09] Let me verify the current state of the referenced code files and run the section-scoped greps the prompt claims return 0 today.
+
+
+[14:05:09] $ echo "=== result_writer.go exists ===" && ls -la pkg/result/ && echo "=== functions referenced by prompt 2 ===" && grep -n 'func.*restoreExistingPhase\|func.*applyRetryCounter\|func.*applyTriggerCap\…
+[14:05:09] [system: task_progress]
+[14:05:09] $ echo "=== AC greps today (expect 0) ===" && sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'trigger_count' || true; sed -n '/^## Frontmatter Merge/,/…
+[14:05:09] [system: task_progress]
+[14:05:12] 💭 Current state confirmed:
+- `pkg/result/result_writer.go` exists with `buildResultModifyFn` (line 151), `applyRetryCounter` (line 188), `applyTriggerCap` (241), `applyRetryCap` (265), `ClearAssigneeIfHumanReview` (304), `restoreExistingPhase` (313), `mergeFrontmatter` (355). No `MergeFrontmatter`, no `controllerOwnedFields`, no `terminalStatuses`, no `ownership guard kept on-disk` — because prompt 1 has not shipped yet.
+- AC greps all return 0 today as claimed.
+- Header line numbers: 52, 62, 101 …
+[14:05:15] Current state confirmed: `mergeFrontmatter` (not yet exported), no `controllerOwnedFields`/`terminalStatuses`/`ownership guard kept on-disk` yet (prompt 1 hasn't shipped), AC greps are 0 today, and header line numbers 52/62/101 match. Let me verify the library facts the doc must describe, the go.mod deps, and scan the prompt for git/operator-only commands.
+
+
+[14:05:15] $ echo "=== go.mod deps ===" && grep -n 'bborbe/agent\|bborbe/vault-cli' go.mod; echo "=== Status() accessor in agent lib ===" && grep -rn 'func (f TaskFrontmatter) Status()' $(go env GOPATH)/pkg/mod/g…
+[14:05:15] [system: task_progress]
+[14:05:15] $ echo "=== git commands in prompt (scope requirements+verification+context) ===" && grep -nE '\bgit (clone|push|commit|checkout|add|pull|fetch|log|diff|status|rebase|remote)' prompts/2-spec-006-docs-f…
+[14:05:15] [system: task_progress]
+[14:05:25] 💭 The source file matches the prompt's references closely:
+- `mergeFrontmatter` at line 353-364 ✓ (prompt says "around line 353-364")
+- `buildResultModifyFn` at line 151 ✓ (prompt says line 151)
+- `applyRetryCounter` at line 188 ✓, terminal early return at line 189 `if string(merged.Status()) == "completed" {` ✓
+- `mergeFrontmatter` call site at line 171 ✓ (prompt says line 171)
+- `resultWriter` struct at line 47-52, prompt says "after the resultWriter struct (around line 52)" ✓
+- `FindTaskFilePat…
+[14:05:26] Source file matches the cited references well. Now let me read the test file sections and CHANGELOG, and verify the external library symbols.
+
+
+[14:05:26] [read] /workspace/pkg/result/result_writer_test.go (offset=, limit=220)
+[14:05:26] [system: task_progress]
+[14:05:26] [read] /workspace/CHANGELOG.md (offset=, limit=40)
+[14:05:26] [system: task_progress]
+[14:05:26]   → 219 lines read
+[14:05:26]   → 39 lines read
+[14:05:28] 💭 CHANGELOG verified:
+- `## Unreleased` at line 8 ✓
+- one `fix:` bullet (terminal-task reopens) ✓
+- first `## v` heading is `## v0.6.1` at line 12 ✓ (awk check: `awk '/^## v/{exit} /trigger_count/{f=1} END{exit !f}'` — currently the Unreleased section has no trigger_count, so exits 1 today as the spec claims ✓)
+
+Wait — there's a nuance: the awk exits at `^## v`. `## v0.6.1` matches. Today the file between line 8-11 (Unreleased) has no `trigger_count` → f=0 → END{exit !0}=exit 1. ✓ matches spec cla…
+[14:05:28] CHANGELOG and test harness verified. Now let me read the carved-out spec block, the cap escalation context, and the end of the test file.
+
+
+[14:05:28] [read] /workspace/pkg/result/result_writer_test.go (offset=1340, limit=120)
+[14:05:28] [system: task_progress]
+[14:05:28]   → 119 lines read
+[14:05:29] 💭 All library facts verify:
+- `github.com/bborbe/agent v0.83.0` (go.mod line 6) ✓
+- `func (f TaskFrontmatter) Status() domain.TaskStatus` at agent_task-frontmatter.go:18 ✓
+- `domain.TaskStatusCompleted TaskStatus = "completed"` and `TaskStatusAborted = "aborted"` in vault-cli v0.116.1 ✓
+- `github.com/bborbe/vault-cli v0.116.1` is a direct require ✓
+
+No git commands in the prompt (the only match for my grep pattern was a false positive from the `- Do NOT commit — dark-factory handles git.` line in …
+[14:05:31] All library facts verify against module sources (agent v0.83.0 `Status()` accessor at `agent_task-frontmatter.go:18`, vault-cli v0.116.1 `TaskStatusCompleted`/`TaskStatusAborted`). No git commands, no `go mod vendor`, no `~/`/`$HOME` paths, and no operator-only commands in the prompt. Let me confirm the Makefile targets and single-service layout, then check the coding-plugin docs referenced indirectly.
+
+
+[14:05:31] $ echo "=== Makefile targets ===" && grep -nE '^test:|^precommit:|^[a-z-]+:' Makefile | head -20; echo "=== single module? other go.mod in tree ===" && find . -name go.mod -not -path './.git/*' 2>/dev/…
+[14:05:31] [system: task_progress]
+[14:05:31] $ echo "=== prompt 2 frontmatter ===" && sed -n '1,8p' prompts/2-spec-006-docs-frontmatter-ownership.md; echo "=== verify dependency gate grep fails today ===" && grep -n 'controllerOwnedFields' pkg/re…
+[14:05:31] [system: task_progress]
+[14:05:31] 💭 The carved block at 1351-1403 is verified. The prompt's description matches:
+- First write lines 1354-1377 (writeTaskFile + lib.Task + WriteResult + assertions) ✓ — but note the first-write assertions end around 1377. The `It(` block runs 1351-1403. ✓
+- Second-write incoming at 1383-1394 has `"trigger_count": 0, // operator reset` at line 1389 ✓
+- Second Expect at 1395 ✓
+- assertions at 1399 and 1401 ✓
+
+The prompt's Requirement 7 rewrite:
+- Delete `"trigger_count": 0, // operator reset` from sec…
+[14:05:32] Carved block verified. Now let me read the cap escalation context area and the end of the test file.
+
+
+[14:05:32] [read] /workspace/pkg/result/result_writer_test.go (offset=1459, limit=160)
+[14:05:32] [system: task_progress]
+[14:05:32]   → 159 lines read
+[14:05:32] 💭 Let me check the Makefile more fully — the grep only matched run:/deps:/fix: which is odd. Let me look at the full Makefile to find the test/precommit targets (they may be included from Makefile.precommit or defined differently).
+[14:05:32] The dependency gate grep correctly fails today (exit 1, no match). Let me look at the Makefile structure since `test:`/`precommit:` targets weren't in the top-level grep (they may be included from other Makefiles).
+
+
+[14:05:32] [read] /workspace/Makefile
+[14:05:32] [system: task_progress]
+[14:05:32]   → 38 lines read
+[14:05:34] 💭 The `Makefile` includes `Makefile.precommit` and `Makefile.docker` and `Makefile.variables`. The `test` and `precommit` targets must be in `Makefile.precommit`. Let me check.
+[14:05:34] $ echo "=== Makefile.precommit targets ===" && grep -nE '^[a-zA-Z0-9_.-]+:' Makefile.precommit | head -30; echo "=== Makefile.docker targets ===" && grep -nE '^[a-zA-Z0-9_.-]+:' Makefile.docker | head …
+[14:05:34] [system: task_progress]
+[14:05:37] 💭 Now I see the structure:
+- `Context("trigger_count cap escalation")` — I need to find where it starts. The prompt says it "closes around line 1494". Line 1494 is `})` closing a Context. Let me check — line 1494 closes the context that contains the `It("preserves assignee and does not escalate when max_triggers is absent (recurring task)")` block (1465-1493). So `Context("trigger_count cap escalation")` must have opened earlier. Let me find it.
+
+Wait — the prompt says: "8a. Inside `Context("trigg…
+[14:05:37] Let me map the Context/Describe structure of the test file precisely.
+
+
+[14:05:37] $ grep -n 'Context("' pkg/result/result_writer_test.go | head -60
+[14:05:37] [system: task_progress]
+[14:05:37] ⚠ [bash output]
+118:		Context("normal write", func() {
+153:		Context("frontmatter merge", func() {
+214:		Context("overwrite", func() {
+245:		Context("unknown task identifier", func() {
+264:		Context("empty frontmatter", func() {
+289:		Context("frontmatter with nested values", func() {
+337:		Context("content with YAML delimiters", func() {
+379:		Context("realistic end-to-end", func() {
+501:		Context("retry counter", func() {
+760:		Context("spawn notification", func() {
+868:		Context("needs_input result", func() {
+999:		Context("trigger_count cap escalation", func() {
+1496:		Context("interleaved partial update between read and write (race-fix regression)", func() {
+1589:		Context("atomic write and push error", func() {
+1619:		Context("Review section preservation", func() {
+[14:05:40] 💭 So:
+- `Context("trigger_count cap escalation")` opens at line 999 and closes at line 1494 (the `})` at 1494). ✓ matches the prompt's "closes around line 1494".
+- `Context("atomic write and push error")` at 1589. ✓ matches "around line 1589".
+
+Wait — but the prompt's Requirement 8b says "place it right after `Context("trigger_count cap escalation")` closes and before `Context("atomic write and push error")` around line 1589". But between 1494 and 1589 there's `Context("interleaved partial update …
+[14:05:40] $ grep -n 'Describe("' pkg/result/result_writer_test.go
+[14:05:40] [system: task_progress]
+[14:05:40] [read] /workspace/pkg/result/result_writer_test.go (offset=1694, limit=55)
+[14:05:40] [system: task_progress]
+[14:05:40]   → 54 lines read
+[14:05:43] 💭 - `Describe("ResultWriter")` at 45, `Describe("WriteResult")` at 117, `Describe("FindTaskFilePath")` at 1656, `Describe("ExtractBody")` at 1714 (closes 1747), final file closing `})` at 1748.
+
+So 8c's instruction: "Add a new top-level `Describe("MergeFrontmatter", func() { ... })` after `Describe("ExtractBody")` closes and before the file's final closing `})` (around line 1747-1748)." — this is accurate. ✓
+
+Now let me verify the external library facts:
+1. `lib.TaskFrontmatter` is `map[string]int…
+[14:05:43] The file structure matches the cited anchors. Now let me verify the external library symbols claimed in the prompt's `<context>`.
+
+
+[14:05:43] $ grep -n 'bborbe/agent\|bborbe/vault-cli\|golang/glog' go.mod
+[14:05:43] [system: task_progress]
+[14:05:43] $ MODROOT=$(go env GOMODCACHE 2>/dev/null); echo "MODCACHE=$MODROOT"; ls -d $MODROOT/github.com/bborbe/agent@* 2>/dev/null; ls -d $MODROOT/github.com/bborbe/vault-cli@* 2>/dev/null
+[14:05:43] [system: task_progress]
+[14:05:46] 💭 Now let me grep the module sources for the key symbols:
+1. `type TaskFrontmatter` in agent
+2. `func (f TaskFrontmatter) Status()` and its normalizing behavior
+3. `func (f TaskFrontmatter) TriggerCount()` / `RetryCount()`
+4. `TaskStatusCompleted` / `TaskStatusAborted` in vault-cli/pkg/domain
+5. `NormalizeTaskStatus` in vault-cli/pkg/domain
+6. Whether agent imports vault-cli/pkg/domain
+7. glog.Infof exists
+[14:05:46] $ AGENT=/home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0\necho "=== TaskFrontmatter type + Status/TriggerCount/RetryCount ==="\ngrep -rn 'type TaskFrontmatter' $AGENT/ 2>/dev/null | head\necho "--…
+[14:05:46] [system: task_progress]
+[14:05:46] $ VC=/home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1\necho "=== domain constants ==="\ngrep -rn 'TaskStatusCompleted\|TaskStatusAborted\|TaskStatus =\|NormalizeTaskStatus' $VC/pkg/domain/*.g…
+[14:05:46] [system: task_progress]
+[14:05:48] 💭 The domain constants and NormalizeTaskStatus verified (TaskStatusCompleted, TaskStatusAborted exist; NormalizeTaskStatus maps "done" → completed, "aborted" → aborted). agent imports vault-cli/pkg/domain. result_writer.go doesn't import domain. Good.
+
+Let me read the actual task-frontmatter source to verify Status() uses NormalizeTaskStatus, and check TriggerCount/RetryCount handle int and float64. Also verify glog.Infof (the glob failed due to the file being in a subdir or the path having a vers…
+[14:05:48] $ sed -n '1,110p' /home/node/go/pkg/mod/github.com/bborbe/agent@v0.83.0/agent_task-frontmatter.go
+[14:05:48] [system: task_progress]
+[14:05:48] $ find /home/node/go/pkg/mod/github.com/golang/glog@v1.2.5 -maxdepth 2 -name '*.go' | head; echo "---Infof---"; grep -rn 'func Infof' /home/node/go/pkg/mod/github.com/golang/glog@v1.2.5/glog.go 2>/dev/…
+[14:05:48] [system: task_progress]
+[14:05:48] ⚠ [bash output]
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+// MaxTriggers returns the maximum number of spawn-trigger events allowed for this task.
+// Returns 3 if the field is absent, matching the default for max_retries.
+func (f TaskFrontmatter) MaxTriggers() int {
+	switch v := f["max_triggers"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 3
+	}
+}
+[14:05:48] ⚠ [bash output]
+bfs: error: /home/node/go/pkg/mod/github.com/golang/glog@v1.2.5: No such file or directory.
+---Infof---
+[14:05:50] 💭 The agent lib is verified:
+- `type TaskFrontmatter map[string]interface{}` ✓
+- `Status()` uses `domain.NormalizeTaskStatus` — returns canonical or `domain.TaskStatus(v)` for unknown. ✓ (matches prompt's claim)
+- `RetryCount()` and `TriggerCount()` accept `int` and `float64`. ✓ (matches prompt's claim "both accept int and float64 underlying values")
+
+The glog module path is different. Let me find it.
+[14:05:50] $ find /home/node/go/pkg/mod/github.com/golang -maxdepth 1 -type d -name 'glog*' 2>/dev/null; echo "---"; GL=$(find /home/node/go/pkg/mod/github.com/golang -maxdepth 1 -type d -name 'glog*' 2>/dev/null…
+[14:05:50] [system: task_progress]
+[14:05:50] $ echo "=== any other mergeFrontmatter / WriteResult / buildResultModifyFn references ==="; grep -rn 'mergeFrontmatter\|buildResultModifyFn\|applyRetryCounter' pkg/ | grep -v '_test.go'; echo "--- Writ…
+[14:05:50] [system: task_progress]
+[14:05:50] ⚠ [bash output]
+// license that can be found in the LICENSE file.
+
+package command
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	lib "github.com/bborbe/agent"
+	task "github.com/bborbe/agent/command/task"
+	"github.com/bborbe/cqrs/base"
+	"github.com/bborbe/cqrs/cdb"
+	"github.com/bborbe/errors"
+	libkv "github.com/bborbe/kv"
+	"github.com/golang/glog"
+	"gopkg.in/yaml.v3"
+
+--- multi-service? nested go.mod ---
+/workspace/go.mod
+[14:05:54] 💭 Findings so far:
+- `mergeFrontmatter` has a single call site at line 171 (plus a comment reference at line 200 — `via mergeFrontmatter` — the prompt's claim "the ONLY call site is buildResultModifyFn (line 171), so changing its signature is safe" is verified; the comment at line 200 references the old name, which would become stale after renaming to `MergeFrontmatter` — minor: the comment at line 200 mentions "via mergeFrontmatter" — after the rename this comment becomes stale. Worth a small rec…
+[14:05:58] Let me verify the coding plugin docs paths cited in `<context>` and check the remaining referenced files.
+
+
+[14:05:58] $ for p in /home/node/.claude/plugins/marketplaces/coding/docs/go-glog-guide.md /home/node/.claude/plugins/marketplaces/coding/docs/go-testing-guide.md /home/node/.claude/plugins/marketplaces/coding/do…
+[14:05:58] [system: task_progress]
+[14:05:58] $ echo "=== docs/controller-design.md frontmatter merge section ==="; sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md; echo "=== line 21 command_operations_test D…
+[14:05:58] [system: task_progress]
+[14:05:58] ⚠ [bash output]
+go-context-cancellation-in-loops.md
+go-cqrs.md
+go-doc-best-practices.md
+go-dockerfile-guide.md
+go-enum-type-pattern.md
+go-error-wrapping-guide.md
+go-factory-pattern.md
+go-filter-pattern.md
+go-functional-composition-pattern.md
+go-functional-options-pattern.md
+go-glog-guide.md
+go-http-handler-refactoring-guide.md
+go-http-service-guide.md
+go-json-error-handler-guide.md
+go-k8s-binary-conventions.md
+go-kubernetes-crd-controller-guide.md
+go-library-guide.md
+go-licensing-guide.md
+go-linting-guide.md
+---
+[14:06:06] 💭 Now I have the full picture:
+- `make test` exists (Makefile.precommit:37) — container-executable go test. ✓
+- `make precommit` exists (Makefile.precommit:5) — container-executable (ensure format generate test check addlicense). ✓
+- `make buca` is `build upload clean apply` — this is the deploy path (operator-only). The prompt correctly does NOT use it. ✓
+- The repo is single-module (one go.mod). `make test` at root is correct. ✓
+
+Now let me finalize my analysis of all the audit dimensions.
+
+Let …
+[14:06:06] I have completed all verification passes. Let me do one final check on the remaining referenced functions' locations and the `spawn_notification` handling path to confirm the doc content matches what prompt 1 will ship.
+
+
+[14:06:06] $ echo "=== applyRetryCounter body (terminal early return location) ===" && sed -n '188,240p' pkg/result/result_writer.go; echo "=== spawn_notification references ===" && grep -n 'spawn_notification' p…
+[14:06:06] [system: task_progress]
+[14:06:09] 💭 This confirms the current `applyRetryCounter` has:
+- The terminal early return `if string(merged.Status()) == "completed" { return body }` (line 189-190) — prompt 1 requirement 6 widens this to `isTerminalStatus(merged.Status())`.
+- The `spawn_notification` delete at line 221 (`delete(merged, "spawn_notification")`) which happens AFTER the trigger cap and assignee clear. For a pinned-terminal task, the widened early return at line 189 fires FIRST, so the spawn_notification delete never runs → th…
+[14:06:58] All verification passes are complete. Here is the full audit report.
+
+---
+
+# Prompt Audit Report: Document frontmatter field-ownership contract in controller-design.md
+
+**File**: `/workspace/prompts/2-spec-006-docs-frontmatter-ownership.md`
+**Score**: 9/10
+**Status**: Excellent
+
+## DoD Checklist
+- [x] `<summary>` present and plain-language (minor: see Recommendations)
+- [x] `<objective>` states end state (2 sentences, what + why)
+- [x] `<context>` present
+- [x] `<requirements>` numbered and specific (5 steps, exact headers + AC strings)
+- [x] `<constraints>` present (6 bullets, copied from spec)
+- [x] `<verification>` present with runnable command
+- [x] All paths repo-relative (`cd /workspace` is the container mount root; the only absolute form used, backed by the mount per the global container CLAUDE.md)
+- [x] No bare `git ` commands in `<verification>` when `hideGit` is on — **`hideGit=true` is in effect** (set via daemon arg, per `.dark-factory.log`: `hideGit=true hideGitSource=arg`, `workflow=direct`). The prompt contains ZERO git commands and explicitly instructs "Do NOT use git to check (the execution container's `.git` is masked)" — this is exemplary handling of the masked-git failure mode.
+- [x] No operator-only commands in `<verification>` (`make test` + `sed`/`grep` only; `make buca`/`apply` correctly absent — they exist in `Makefile.docker` and are deploy-path, correctly excluded)
+- [x] File in `prompts/` inbox (not `prompts/in-progress/`)
+- [x] Filename not prefixed with dark-factory global number; single-digit `2-` ordering prefix matches the allowed `^[1-9]-spec-\d{3}-.*\.md$` multi-prompt convention
+- [x] Filename reflects primary change (`docs-frontmatter-ownership` = the docs half)
+- [x] Status is `draft` (valid inbox status); frontmatter has only `spec`/`status`/`created`; `spec: ["006-bug-frontmatter-field-ownership"]` is the canonical full-slug form
+
+## Failure Mode Coverage
+- [x] Spec failure modes addressed — all 10 rows of the spec's Failure Modes table are covered across the prompt set: the counters/terminal-pin/short-circuit/guard-log rows by prompt 1 (code), and the two rows with doc relevance (Empty-to-Named Reset as the only counter-lowering mechanism; spawn_notification survival on a terminal task) by this prompt's Requirements 3 and 4
+- [x] Security concerns from spec addressed — log-safety (names only task/field/both values, never body/full frontmatter) is documented in Requirement 4 and enforced in prompt 1 Req 5; "guard is unconditional / no agent control over counters" is reflected in Constraints
+- [x] External calls have timeout/cancellation specified — N/A (no external calls; docs-only)
+- [x] New constants/strings through library validators have a test calling the validator — N/A. The three strings (`trigger_count`, `Controller-owned`, `terminal`) are the spec's own AC 17/18 greps, and the `<verification>` section-scoped `sed`/`grep` checks traverse that exact contract
+- [x] No `go mod vendor` in `<requirements>` or `<verification>`
+- [x] No cross-repo writes — no `git clone`/`git push`/`gh pr` anywhere in the prompt
+- [x] Container-autonomous — no kubectl/deploy/PR-trigger/behavioral-observation steps; the operator-side Rung-3 AC (AC 20) is correctly left in the spec's Verification ladder (the spec's Suggested Decomposition explicitly assigns it there, and the prompt does not attempt it)
+- [x] Sibling entry points covered — the sibling here is prompt 1 (`/workspace/prompts/1-spec-006-field-ownership-guard.md`). This is a sequential dependency, not parallel entry points, and the prompt handles parity correctly:
+  - Dependency gate (Context): `cd /workspace && grep -n 'controllerOwnedFields' pkg/result/result_writer.go` — I confirmed this grep returns no match today (exit 1) and will match after prompt 1 Req 2 declares `var controllerOwnedFields`; the gate fails loud with `status: failed` rather than writing docs from assumptions. Correct pattern for a dependent prompt.
+  - Every behavior the doc must describe was cross-checked against prompt 1's implementation: `MergeFrontmatter`/`controllerOwnedFields`/`terminalStatuses`/`ownership guard kept on-disk` names all match prompt 1 Reqs 2/3/5; the widened early return in `applyRetryCounter` (currently `if string(merged.Status()) == "completed"` at line 189, becomes `isTerminalStatus(...)`) produces exactly the short-circuit enumerated in Requirement 3; the `spawn_notification` delete at line 221 sits below the early return so it survives a pinned-terminal write — the doc's claim is accurate.
+
+## Documentation Placement
+- [x] No inlined reusable patterns (>10 lines) — the ownership table is the prompt's own deliverable, not inlined project knowledge
+- [x] Existing project docs referenced in `<context>` — yes: the full current section text, `## Terminal Task Status (create-task dedup)` (line 62) and `## Empty-to-Named Reset (spec 021)` (line 101) are quoted and their interplay explained
+- [x] Existing coding plugin docs referenced — N/A (no Go code; pure markdown prose edit)
+- [x] Domain knowledge that outlives the prompt is in `project/docs/` — yes, the ownership contract is exactly what this prompt ships into `docs/controller-design.md`, the correct durable home
+
+## Code Reference Verification
+
+| Reference | File | Status |
+|-----------|------|--------|
+| `## Frontmatter Merge` at line 52; section content lines 53-60 | `docs/controller-design.md` | Verified, Correct |
+| `## Terminal Task Status (create-task dedup)` at line 62 | `docs/controller-design.md` | Verified, Correct |
+| `## Empty-to-Named Reset (spec 021)` at line 101 | `docs/controller-design.md` | Verified, Correct |
+| `buildResultModifyFn` (line 151), `applyRetryCounter` (188), `restoreExistingPhase` (313), `mergeFrontmatter` (355) | `pkg/result/result_writer.go` | Verified, Correct |
+| `MergeFrontmatter`, `controllerOwnedFields`, `terminalStatuses`, `ownership guard kept on-disk` log | `pkg/result/result_writer.go` | Pending — shipped by prompt 1; correctly gated by the fail-loud dependency grep (names match prompt 1 Reqs 2/3/5) |
+| `func (f TaskFrontmatter) Status() domain.TaskStatus` | `github.com/bborbe/agent@v0.83.0/agent_task-frontmatter.go:18` (go.mod line 6) | Verified, Correct |
+| `TaskStatusCompleted` / `TaskStatusAborted` constants | `github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_status.go:31,35` (direct require) | Verified, Correct |
+| AC greps return 0 today; both `trigger_count`/`Controller-owned`/`terminal` would be ≥1 after edit | section range lines 52-61 | Verified — all three measure 0 today, as the prompt claims |
+
+Line-number anchoring: the prompt anchors by headers (the right approach) and uses line numbers only as hints (52-60, 62, 101) — all verified exact. The `sed` range subtlety (regex `/^## Terminal Task Status/` prefix-matches the `(create-task dedup)` header) is correctly documented in Context, and Requirement/Constraint 2 protects the header from being moved or renamed.
+
+## Coding Guidelines Compliance
+| Guideline | File | Status |
+|-----------|------|--------|
+| N/A — no Go code in this prompt; no coding-plugin guideline applies | — | Compliant |
+
+## YAGNI Pass (scope-creep detector)
+- [x] No opt-out flag / escape hatch
+- [x] No config field, threshold, or branch beyond the spec
+- [x] The three-row ownership table maps 1:1 to the spec's Goal/DBs 1/3/5 — no added rows, no tunables
+
+No hits.
+
+## Critical Issues
+None.
+
+## Recommendations
+1. **Summary contains a file path and field names (minor).** `<summary>` bullet 1 references `docs/controller-design.md` and the `## Frontmatter Merge` header; bullets 1-3 carry field names (`trigger_count`, `retry_count`, `status`, `spawn_notification`, `previous_assignee`). The DoD summary criterion is plain language with no file paths. For a docs prompt the field names are close to the observable outcome, but the file path and section header could be dropped.
+   - Find/replace: in bullet 1, change "The `## Frontmatter Merge` section of `docs/controller-design.md` now documents the field-ownership contract as a table" → "The frontmatter-merge section of the controller design doc now documents the field-ownership contract as a table" (or equivalent path-free phrasing).
+2. **`|| true` on the AC greps masks a zero-count outcome (soft, inherited from the spec).** Every verification grep is wrapped in `|| true`, so the block exits 0 even if all three counts come back 0 — the same false-positive-pass shape the DoD warns about, inverted. The prompt does say "Expect ≥1 from each" and the executor reads the printed counts, but a hard guard would remove the dependence on executor diligence.
+   - Find/replace: replace the three lines
+     ```
+     cd /workspace && sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'trigger_count' || true
+     ```
+     (and the two siblings) with a version that fails on a zero count, e.g. `... | grep -c 'trigger_count' | grep -q '^[1-9]'` without `|| true`, or add a follow-up instruction: "if any of the three counts prints 0, fix the section and report `status: failed` rather than proceeding." Note this deviates from the spec's own `|| true` wrapper, so confirm with the spec owner before tightening.
+
+## Strengths
+- **Exemplary dependency handling:** the `controllerOwnedFields` grep gate with fail-loud `status: failed` STOP semantics is the correct pattern for a prompt 2 that must describe code prompt 1 ships — it prevents writing docs from assumptions and the pinned symbol names match prompt 1 exactly.
+- **Fully container-autonomous and hideGit-aware:** zero git commands despite `hideGit=true` in effect, and the scope check explicitly substitutes filesystem inspection for `git diff`, correctly recognizing the masked `.git` and the daemon's exit-code-blind executor.
+- **Accurate code references:** all header line numbers (52/62/101) and function locations verified; the documented short-circuit behavior was traced through the real `applyRetryCounter` control flow (early return at line 189 precedes the `spawn_notification` delete at line 221 and the cap/assignee/restore paths) and matches prompt 1's widened-return implementation point-for-point.
+- **Section-scoped verification:** the AC greps are the spec's exact mechanism, the prompt correctly explains the `sed` prefix-match subtlety, and it documents the today-zero baseline.
+- **No scope creep:** the ownership table, the example fixture (which demonstrates all three rules in one case — counter survives, terminal pinned, agent-owned `phase` lands), and the short-circuit/reset prose map 1:1 to the spec's Goal, DBs, and ACs 17/18, with the changelog correctly deferred to prompt 1.
+- **Constraints faithfully copied from the spec:** unconditional guard (no opt-out), terminal statuses exactly `aborted`/`completed`, `phase: done` is not a status, pin-not-freeze, do-not-commit.
+
+## Summary
+A well-scoped, fully container-executable docs prompt with an exemplary fail-loud dependency gate on prompt 1, accurate references throughout (all line numbers, headers, and library facts verified against source), and faithful AC/constraint coverage from spec 006. No critical issues. Two minor recommendations: soften the summary's file-path/field-name wording to meet the plain-language criterion, and consider hardening the AC greps against a false-pass zero-count outcome (the one residual verification-reliability risk, inherited from the spec's `|| true` wrapper).
+
+Priority action: approve as-is; optionally apply Recommendation 2 (fail on zero grep count) before the next spec that uses the same `|| true` doc-grep pattern.
+[14:06:58] [system: background_tasks_changed]
+[14:06:58] [system: task_updated]
+[14:06:58] [system: task_notification]
+[14:06:58] [init] session=d5b7e577 model=deepseek-v4-flash[1m] cwd=/workspace tools=28
+[14:06:58] [system: thinking_tokens]
+[14:06:58] [system: thinking_tokens]
+[14:06:58] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] [system: thinking_tokens]
+[14:06:59] 💭 The prompt 2 audit completed with a 9/10 score, no critical issues. I'm still waiting for prompt 1's audit to complete. Let me wait for that notification before assembling the full report.
+[14:06:59] Prompt 2's audit is in (9/10, no critical issues). Still waiting on the prompt 1 audit before assembling the report.
+[14:07:41] 💭 Verified:
+- Coding plugin docs at `/home/node/.claude/plugins/marketplaces/coding/docs/` all exist (glog, testing, error-wrapping, definition-of-done, changelog). The `~/.claude-yolo` path does NOT exist in this environment — the prompt uses the correct `/home/node/.claude/...` path. Good.
+- docs/controller-design.md `## Frontmatter Merge` section at ~lines 52-60 matches what prompt 2 quotes. And the section currently has no `trigger_count`/`Controller-owned`/`terminal` (AC 17/18 today=0 — match…
+[14:07:51] Let me verify the remaining referenced items: domain constants source, Makefile targets, the Empty-to-Named Reset doc section, and the daemon invocation in the log.
+
+
+[14:07:52] $ echo "=== domain task_status.go ==="; sed -n '1,80p' /home/node/go/pkg/mod/github.com/bborbe/vault-cli@v0.116.1/pkg/domain/task_status.go 2>/dev/null || find /home/node/go/pkg/mod/github.com/bborbe/v…
+[14:07:52] [system: task_progress]
+[14:07:52] $ echo "=== Makefile targets ==="; grep -n '^test:\|^precommit:\|goimports' Makefile Makefile.precommit 2>/dev/null | head; echo "=== Empty-to-Named Reset doc ==="; grep -n 'Empty-to-Named Reset\|spec …
+[14:07:52] [system: task_progress]
+[14:07:52] ⚠ [bash output]
+// Validate returns an error if the status is not a valid canonical value.
+func (s TaskStatus) Validate(ctx context.Context) error {
+	if !AvailableTaskStatuses.Contains(s) {
+		return errors.Wrapf(ctx, validation.Error, "unknown task status '%s'", s)
+	}
+	return nil
+}
+
+// Ptr returns a pointer to a copy of the status.
+func (s TaskStatus) Ptr() *TaskStatus {
+	return &s
+}
+
+// IsValidTaskStatus returns true if the status is a valid canonical status value.
+func IsValidTaskStatus(status TaskStatus) bool {
+	return AvailableTaskStatuses.Contains(status)
+}
+
+// NormalizeTaskStatus converts alias status values to their canonical form.
+// Returns the canonical status and true if valid, or empty and false if unknown.
+[14:08:00] 💭 Very important finding: the daemon invocation log shows:
+
+`hideGit=true hideGitSource=arg` — the daemon runs with `--set hideGit=true` (hideGitSource=arg). So the execution container's `.git` IS masked! The prompt's claim "The execution container's `.git` is masked" is CORRECT for this daemon configuration. This confirms the hideGit concern is real.
+
+But — does the prompt's `<verification>` contain any `git ` command? Let me re-check. The verification block has:
+- `cd /workspace && make test`
+- …
+[14:08:01] Key finding: the daemon log shows `hideGit=true hideGitSource=arg` — the container `.git` IS masked, confirming the prompt's defensive note. Let me verify the critical claim that all existing tests carry equal on-disk/incoming counter values, and check the retry counter / spawn notification contexts.
+
+
+[14:08:01] $ echo "=== retry_count / trigger_count occurrences in test file with line numbers ==="; grep -n 'trigger_count\|retry_count' pkg/result/result_writer_test.go | head -80
+[14:08:01] [system: task_progress]
+[14:08:01] ⚠ [bash output]
+1264:						"trigger_count":   3,
+1287:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: \"\"\n---\n"+existingEscalationBody,
+1295:							"trigger_count":   3,
+1322:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+1330:							"trigger_count":   3,
+1357:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+1365:							"trigger_count":   3,
+1389:							"trigger_count":   0, // operator reset
+1411:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: \"\"\n---\n## Result\nStatus: failed\n",
+1419:							"trigger_count":   3,
+1438:					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+1446:						"trigger_count":   3,
+1468:					// trigger_count 5 would trip the lib default-3 cap; absent max_triggers
+1473:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\ntrigger_count: 5\nassignee: sentry-collector-agent\n---\n## Result\nStatus: failed\n",
+1481:							"trigger_count":   5,
+1503:						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 1\n---\nProbe body\n",
+1522:						// trigger_count to 2 between our initial read and the modify
+1524:						interleaved := "---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 2\nspawn_notification: true\n---\nProbe body\n"
+1564:					// 2. The interleaved partial update's trigger_count: 2 is preserved
+1566:					//    snapshot from FindTaskFilePath would have written trigger_count: 1
+[14:08:20] 💭 Let me examine the cases where the incoming payload carries a counter and check whether the on-disk value matches:
+
+1. Line 502-521 "does not modify retry_count on failure" — on-disk retry_count 1, need to check incoming. Let me look.
+2. Line 528-548 "escalates when retry_count meets max_retries 3" — on-disk 3, incoming 3 (line 540) — equal ✓
+3. Line 567-584 "does not modify retry_count when result is completed" — on-disk 2, incoming? need to check.
+4. Line 591-611 "max_retries 0" — on-disk 1, i…
+[14:08:20] Let me read the specific test blocks where I need to confirm on-disk vs incoming counter values.
+
+
+[14:08:20] [read] /workspace/pkg/result/result_writer_test.go (offset=501, limit=120)
+[14:08:20] [system: task_progress]
+[14:08:20]   → 119 lines read
+[14:08:23] 💭 Important check on line 567-588: "does not modify retry_count when result is completed".
+
+On-disk: `status: in_progress, retry_count: 2, assignee: claude`. Incoming: `status: completed, phase: done` (NO retry_count key).
+
+Post-guard flow:
+- Merge: on-disk status in_progress (non-terminal) → no pin; merged status = completed (incoming wins). retry_count: on disk → disk wins (2), incoming doesn't carry → merged retry_count = 2. ✓
+- applyRetryCounter: merged.Status() = completed → isTerminalStatus(…
+[14:08:23] [read] /workspace/pkg/result/result_writer_test.go (offset=760, limit=145)
+[14:08:23] [system: task_progress]
+[14:08:23]   → 144 lines read
+[14:08:24] 💭 These spawn notification and needs_input tests:
+- Line 761-788: on-disk retry_count 0, incoming does NOT carry retry_count. Post-guard: disk 0 wins, merged 0. Written retry_count: 0 ✓. Note: incoming carries spawn_notification: true → spawn_notification branch deletes it. Still passes. ✓
+- Line 790-811: on-disk 0, incoming no retry_count. ✓
+- Line 817-864: on-disk spawn_notification true, no counters, incoming no counters. Phase human_review → ClearAssigneeIfHumanReview clears assignee. ✓ Unchan…
+[14:08:24] [read] /workspace/pkg/result/result_writer_test.go (offset=1090, limit=110)
+[14:08:24] [system: task_progress]
+[14:08:24]   → 109 lines read
+[14:08:34] 💭 All these existing tests carry on-disk == incoming counter values (or no counter in incoming), consistent with the prompt's claim. The "trigger_count zero" test (1093) has NO trigger_count on disk and NO trigger_count in incoming → the guard's `!onDisk` branch: incoming doesn't carry it either → nothing to delete → fine. Passes. ✓
+
+The "keeps phase: human_review sticky" test (1117): on-disk trigger_count 3, incoming doesn't carry trigger_count. Post-guard: disk 3 wins → merged 3. applyTriggerCap…
+[14:08:34] Let me verify the glog module presence, the root Makefile, and run a final consistency check on the verification commands' expectations.
+
+
+[14:08:34] $ echo "=== find glog module ==="; find /home/node/go/pkg/mod -maxdepth 4 -type d -name 'glog@*' 2>/dev/null | head; find /home/node/go/pkg/mod/cache/download/github.com/golang -maxdepth 3 -name 'glog*…
+[14:08:34] [system: task_progress]
+[14:08:37] 💭 The root Makefile includes Makefile.precommit which has `test:` at line 38 and `precommit:` at line 5. Let me confirm the `test:` target definition and that `make test` runs `go test ./...` at root. Let me view Makefile.precommit around lines 30-50. Also the glog module isn't in local cache — but glog is imported in result_writer.go and the go.sum lists it; the executor container would download it at build time. `glog.Infof` is a standard glog API. I'll note that this specific symbol couldn't be…
+[14:08:37] $ sed -n '1,60p' /workspace/Makefile.precommit
+[14:08:37] [system: task_progress]
+[14:09:25] 💭 Verified:
+- `make test` at root: `go test -mod=mod ...` — single module repo, correct at root. ✓
+- `make precommit`: `ensure format generate test check addlicense`. ✓
+- `generate:` runs `rm -rf mocks avro` and `go generate -mod=mod ./...` — this regenerates the mocks package! Wait — the prompt says "Do not modify any existing block other than the carve-out" in the test file, and "do not change ClearAssigneeIfHumanReview...". But `make precommit` runs `generate` which runs `rm -rf mocks avro` and…
+[14:10:05] I have completed a thorough audit. All code references were verified against source, the linked spec, the sibling prompt, the daemon config, and the module sources. Here is the full report.
+
+---
+
+# Prompt Audit Report: Field-ownership guard, terminal pin, guard log, unit specs, changelog
+
+**File**: `/workspace/prompts/1-spec-006-field-ownership-guard.md`
+**Score**: 7/10
+**Status**: Good (one must-fix contract-test gap; otherwise exemplary)
+
+## DoD Checklist
+
+- [x] `<summary>` present and plain-language — 9 bullets, observable outcomes, no Go signatures or file paths
+- [x] `<objective>` states end state (single field-ownership-aware chokepoint; all proven by unit specs)
+- [x] `<context>` present and richly anchored
+- [x] `<requirements>` numbered (1–10) and specific, with exact file paths, function signatures, and import paths
+- [x] `<constraints>` present, copied from spec, includes "Do NOT commit"
+- [x] `<verification>` present with runnable commands (`make test`, greps, `awk`, `make precommit`)
+- [x] All paths repo-relative or container-mount-backed (`cd /workspace` is the mounted repo root; `/home/node/.claude/plugins/marketplaces/coding/docs/*.md` all verified to exist). No `~/` or host-absolute paths.
+- [x] No bare `git ` command in `<verification>` — and this matters: the daemon log (`.dark-factory.log`) shows `hideGit=true hideGitSource=arg`, so the execution container's `.git` is genuinely masked. The prompt correctly avoids git and defers the AC 14 diff to the host auditor.
+- [x] No operator-only commands in `<verification>` (`docker`, `make buca`, `kubectl*`, `dark-factory`, `scripts/*.sh`, `gh ...`) — all container-executable
+- [x] File in `prompts/` inbox (not `prompts/in-progress/`)
+- [x] Filename `1-spec-006-field-ownership-guard.md` — single-digit ordering prefix `1-` for a multi-prompt spec is the documented allowed form; not a dark-factory global prefix
+- [x] Filename reflects the primary change (the field-ownership guard)
+- [x] `status: draft` (valid inbox status); frontmatter carries only `spec`/`status`/`created`; `spec` is a YAML array in canonical full-slug form
+
+## Failure Mode Coverage
+
+- [x] Spec failure-modes table rows all addressed by requirements (rows 1, 3, 4, 5, 6, 7 covered by 8a/8b tests + Requirement 4; row 2 covered by Requirement 4's explicit "do not coerce" instruction, though untested — see Recommendations; rows 8–9 are unchanged-code, N/A)
+- [x] Security section addressed: "input validation" (guard iterates fixed package-level declarations, never derives keys/field names from the incoming payload) and "log safety" (Requirement 5's format names only task identifier, field, and the two values — never body/full frontmatter)
+- [x] External calls timeout/cancellation — N/A (no new external calls; `AtomicReadModifyWriteAndCommitPush` is pre-existing and untouched)
+- [!] New values flowing through a boundary have a contract test — **Critical gap**, see Critical Issue 1 (the int/float64 steady-state equality path is entirely untested)
+- [x] No `go mod vendor` in `<requirements>`/`<verification>` (and `Makefile.precommit` confirms `ensure` wipes `vendor/`, so the prompt's avoidance is correct)
+- [x] No cross-repo writes (no `git clone` of any remote, no `git push`/`gh pr create`)
+- [x] Container-autonomous: Requirement 10 explicitly defers Rung-3 (AC 20) to the operator-side Verification ladder; no kubectl/deploy/observe steps anywhere; no operator-vs-agent step split
+- [x] Sibling entry points covered: `mergeFrontmatter` has a single call site (`result_writer.go:171` — verified by grep); no sibling merge/write path exists in `pkg/result`; the one cross-package consumer of shared code (`ClearAssigneeIfHumanReview` in `pkg/command/task_update_frontmatter_executor.go`) is explicitly addressed in Constraints (signature/semantics frozen, only the set of tasks reaching it changes). `task_increment_frontmatter_executor.go` is correctly frozen.
+
+## Documentation Placement
+
+- [x] No inlined reusable pattern that should live in a doc — the inlined Go is the load-bearing implementation itself, and it matches existing project patterns (verified: Ginkgo/Gomega + `DescribeTable` precedent at `pkg/command/command_operations_test.go:21`, package-level exported helpers like `FindTaskFilePath`/`ExtractBody`, no new `fmt.Errorf`). The inlined volume (~290 lines across Requirements 2–8) exceeds the 200-line backup-signal threshold, but no pattern collision was found in the line-by-line check, so this is not flagged.
+- [x] Coding plugin docs referenced in `<context>` (`go-glog-guide.md`, `go-testing-guide.md`, `go-error-wrapping-guide.md`, `definition-of-done.md`, `changelog-guide.md`) — all verified to exist at `/home/node/.claude/plugins/marketplaces/coding/docs/`
+- [x] Domain knowledge that outlives the prompt is routed to `docs/controller-design.md` via sibling prompt `2-spec-006-docs-frontmatter-ownership.md` (ACs 17–18)
+
+## Code Reference Verification
+
+| Reference | File | Status |
+|-----------|------|--------|
+| `mergeFrontmatter` at ~353–364, sole call site line 171 | `pkg/result/result_writer.go` | Correct |
+| `buildResultModifyFn` line 151 | `pkg/result/result_writer.go` | Correct |
+| `applyRetryCounter` line 188, early return line 189 `if string(merged.Status()) == "completed"` | `pkg/result/result_writer.go` | Correct |
+| `resultWriter` struct ends line 52, before `FindTaskFilePath` (line 57) — Requirement 2 insertion point | `pkg/result/result_writer.go` | Correct |
+| `It("agent keys override existing keys")` line 186 | `pkg/result/result_writer_test.go` | Correct |
+| `BeforeEach` 57–105, `writeTaskFile` 111, imports `os`/`filepath`/`result` | `pkg/result/result_writer_test.go` | Correct |
+| Carved block `It("previous_assignee persists…")` 1351–1403; first write 1355–1377; `"trigger_count": 0, // operator reset` at line 1389; second `Expect` 1395; assertions 1399/1401 | `pkg/result/result_writer_test.go` | Correct |
+| `Context("trigger_count cap escalation")` opens 999, closes 1494 (8a insertion point) | `pkg/result/result_writer_test.go` | Correct |
+| `Context("atomic write and push error")` at 1589 | `pkg/result/result_writer_test.go` | Correct (see Recommendation 1: an interleaved Context 1496–1587 sits between the two cited anchors) |
+| `Describe("ExtractBody")` 1714 → closes 1747, final `})` 1748 (8c insertion point) | `pkg/result/result_writer_test.go` | Correct |
+| `## Unreleased` line 8 (one existing `fix:` bullet), first `## v` heading `## v0.6.1` line 12 | `CHANGELOG.md` | Correct; the `awk` verification exits 1 today, matching the spec's claim |
+| `type TaskFrontmatter map[string]interface{}`; `Status()` routes through `domain.NormalizeTaskStatus` and returns `domain.TaskStatus(v)` for unknown; `TriggerCount()`/`RetryCount()` accept `int` and `float64` | agent module `v0.83.0` (`agent_task-frontmatter.go`) | Correct (grep-verified) |
+| `domain.TaskStatusCompleted TaskStatus = "completed"`, `domain.TaskStatusAborted TaskStatus = "aborted"`; `NormalizeTaskStatus` maps `done`→`completed`, `aborted`→`aborted` | vault-cli `v0.116.1` `pkg/domain/task_status.go` | Correct (grep-verified) |
+| `domain` not yet imported in `result_writer.go`; direct require at `go.mod:21`; agent already imports vault-cli domain (no cycle) | `go.mod`, module sources | Correct |
+| `glog.Infof` | glog v1.2.5 (direct dep `go.mod:22`, already imported and used in `result_writer.go`) | Not locally grep-verifiable (module not in this cache), but it is the standard unconditional glog INFO API and the module is an existing direct dep — low risk |
+| `goimports-reviser` runs in `make precommit` | `Makefile.precommit:15` | Correct |
+| `make test`/`make precommit` at repo root | Single-module repo (one `go.mod`); root `Makefile` includes `Makefile.precommit` with `test:` and `precommit:` targets | Correct — not a multi-service repo, so the global "never at root" rule does not apply |
+| Carve-out claim that only one existing block carries differing on-disk vs incoming counter | All counter-carrying tests sampled (lines 501–1473): on-disk == incoming or no counter in incoming; the only differing case is the carve-out (line 1389) | Correct |
+| `Empty-to-Named Reset (spec 021)` referenced in Requirement 7 | `docs/controller-design.md:101` | Correct |
+
+## Coding Guidelines Compliance
+
+| Guideline | Doc | Status |
+|-----------|-----|--------|
+| Guard log is unconditional `glog.Infof`, never `glog.V(n).Infof`, names only task/field/values | `go-glog-guide.md` | Compliant (Requirements 5 + Constraints are explicit) |
+| No `fmt.Errorf`, no `context.Background()` in `pkg/` | `go-error-wrapping-guide.md` | Compliant (no new error paths added) |
+| Ginkgo/Gomega, external test package, `DescribeTable`, coverage ≥80% for changed code | `go-testing-guide.md` | Compliant |
+| No test-only package-level mutable state (`var X` + `SetX` pair) | `go-composition.md` | Compliant (`controllerOwnedFields`/`terminalStatuses` are production declarations demanded by DB 7, not test helpers) |
+| No new interfaces → no counterfeiter requirement | — | N/A |
+
+## YAGNI Pass (scope-creep detector)
+
+- [x] No opt-out flag / escape hatch for the shipped behavior (spec Non-goals explicitly forbid a config flag/env/opt-out; Constraints repeat it)
+- [x] `controllerOwnedFields`, `terminalStatuses`, `GuardDecision`, `frontmatterValueEqual`/`numericValue`, and the widened early return are each demanded by spec DBs 4/6/7
+- [x] No tunable thresholds, no "future consumer might want…" knobs, no test cases exercising a non-existent flag
+
+Clean pass.
+
+## Critical Issues
+
+**1. The int/float64 steady-state equality contract (DB 6) has no test — the one boundary the prompt itself flags as load-bearing is unguarded.**
+
+The prompt's own `<context>` (line 52) states: the on-disk counter is YAML-decoded as `int`, the incoming counter reaches `WriteResult` after a JSON round-trip through cqrs that decodes it as `float64`, and therefore `frontmatterValueEqual` "MUST … treat `int` and `float64` as numerically equal, or every steady-state publish would log a spurious guard line, violating DB 6."
+
+Yet no shipped test ever produces a `float64` counter value. In the test harness there is no JSON round-trip — incoming frontmatter is built directly as a Go literal (`lib.TaskFrontmatter{"trigger_count": 1}` → `int`). So:
+- 8b counter rows compare on-disk YAML `int` vs incoming Go `int`;
+- 8c's two `It`s compare `int(3)` vs `int(3)` and `int(3)` vs `int(1)`.
+
+If `numericValue` were deleted and `frontmatterValueEqual` reduced to `a == b`, every one of the prompt's tests would still pass, while production would emit a spurious `ownership guard kept on-disk: task … field trigger_count kept 3 rejected 3` line on every steady-state publish — a DB 6 violation and log flood. This is precisely the audit's boundary-crossing pattern (a new value crosses a serialization boundary; shape tests pass; the boundary contract fails at runtime). A cheap level-1 test is available: call `result.MergeFrontmatter` with a mixed int/float64 pair.
+
+**Fix** — in Requirement 8c, inside the new `Describe("MergeFrontmatter", …)`, insert the following two `It` blocks after the existing second `It` (the "reports exactly one decision …" block ending with `Expect(decisions[0].Rejected).To(Equal(1))` and its closing `})`), before the `Describe`'s final `})`:
+
+> OLD:
+> ```
+>            Expect(decisions[0].Field).To(Equal("trigger_count"))
+>            Expect(decisions[0].Kept).To(Equal(3))
+>            Expect(decisions[0].Rejected).To(Equal(1))
+>        })
+>    })
+> ```
+>
+> NEW:
+> ```
+>            Expect(decisions[0].Field).To(Equal("trigger_count"))
+>            Expect(decisions[0].Kept).To(Equal(3))
+>            Expect(decisions[0].Rejected).To(Equal(1))
+>        })
+>
+>        // DB 6 steady-state contract: the incoming counter arrives JSON-decoded as
+>        // float64 (cqrs round-trip) while the on-disk counter is YAML-decoded int.
+>        // frontmatterValueEqual's numeric normalization is the only thing preventing
+>        // a spurious guard log line on every steady-state publish — this is the
+>        // mixed-type path the equal-int row above does not exercise.
+>        It("reports zero guard decisions when the incoming float64 counter equals the on-disk int", func() {
+>            existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+>            incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(3)}
+>            _, decisions := result.MergeFrontmatter(existing, incoming)
+>            Expect(decisions).To(HaveLen(0))
+>        })
+>
+>        It("reports one decision when the incoming float64 counter differs from the on-disk int", func() {
+>            existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 5}
+>            incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(1)}
+>            _, decisions := result.MergeFrontmatter(existing, incoming)
+>            Expect(decisions).To(HaveLen(1))
+>            Expect(decisions[0].Field).To(Equal("trigger_count"))
+>            Expect(decisions[0].Kept).To(Equal(5))
+>            Expect(decisions[0].Rejected).To(Equal(float64(1)))
+>        })
+>    })
+> ```
+
+This pins the exact boundary the prompt's context warns about, with no serialization harness needed.
+
+## Recommendations
+
+1. **8b placement anchor is imprecise.** Requirement 8b says to place the new `Context("field ownership guard")` "right after `Context("trigger_count cap escalation")` closes and before `Context("atomic write and push error")` around line 1589." But `Context("interleaved partial update between read and write (race-fix regression)")` (lines 1496–1587) sits between those two anchors. The actual insertion point is between line 1587 (interleaved context close) and line 1589. The anchor "before `Context("atomic write and push error")`" disambiguates it, but reword to: "place it after `Context("interleaved partial update …")` closes (line 1587) and before `Context("atomic write and push error")` (line 1589)."
+
+2. **Spec failure-mode row "On-disk counter is not an integer" is untested.** Requirement 4 correctly instructs "Do NOT coerce the on-disk counter value to an integer when keeping it," but no test proves a non-integer on-disk value (e.g. `trigger_count: "3"` or `null`) is kept verbatim while the caps stay silent. A cheap 8b table row (on-disk `trigger_count: "3"`, incoming `trigger_count: 7`) would pin the verbatim-keep. Recommendation severity: the row is "unchanged from today" for the cap outcome, so a regression would be a silent drift rather than a break.
+
+3. **Document the widened-early-return side effect for incoming-terminal status on a non-terminal task.** The Requirement 6 widening also short-circuits when the *incoming* status is terminal on a non-terminal on-disk task (e.g. incoming `status: aborted` against on-disk `in_progress` — today that falls through into the cap/assignee machinery; post-fix it returns immediately). This is spec-mandated (Design Decision 2) and no existing test breaks (none carries incoming `aborted`), but the prompt describes the change only in terms of pinned-terminal tasks. One sentence noting this consequence would prevent an executor from "fixing" it as an unintended regression. Optionally add a test row.
+
+4. **Stale comment after the rename.** `result_writer.go:200` (inside `applyRetryCounter`'s comment block) says "inherited it via mergeFrontmatter." After Requirement 3 renames to `MergeFrontmatter`, this becomes stale. The prompt freezes "Do not change any other statement in applyRetryCounter" — a comment-name update is cosmetic, not a statement change, so the executor should be told to update it (e.g. "via the merge") to keep the rename consistent.
+
+## Strengths
+
+- Exceptionally well-anchored: every line-number citation (merge call 171, early return 189, struct end 52, carve-out 1351–1403, cap context close 1494, atomic-write context 1589, ExtractBody close 1747) was verified against the actual files and matches.
+- The carve-out rewrite is logically sound: I traced the second-write flow with the new guard — on-disk `trigger_count: 0` (via the inserted `writeTaskFile`) prevents the cap from re-firing and clearing `assignee: backtest-agent`, while `previous_assignee: claude` on disk is preserved because the incoming payload no longer carries the counter. This is exactly the reset the spec's Empty-to-Named Reset performs, and the spec's intent assertions are retained.
+- The claim that only the carve-out carries a differing on-disk/incoming counter is true (verified by reading every counter-bearing test block).
+- Container-autonomy is clean: no deploy/observe/kubectl, and the AC 14 git-diff check is correctly deferred to the host auditor — a real requirement here, since the daemon runs with `hideGit=true` (confirmed in `.dark-factory.log`).
+- Sibling-coverage and YAGNI passes are clean; failure modes and the spec's Security section are addressed.
+
+## Summary
+
+This is a high-quality prompt: all code references verified correct, the test plan maps 1:1 to ACs 1–16 and 19, the carve-out is sound, and it is fully container-autonomous. One must-fix before approval: Requirement 8c ships no test that exercises the int/float64 numeric-equality path that the prompt's own context identifies as essential to DB 6 — the exact boundary-crossing gap the audit exists to catch. Add the two mixed-type `It` blocks above, and this is ready to ship.
+
+Note: I am audit-only and have not modified the prompt file. The find/replace pair in Critical Issue 1 is provided so you can apply it directly.
+[14:10:05] [system: background_tasks_changed]
+[14:10:05] [system: task_updated]
+[14:10:05] [system: task_notification]
+[14:10:05] [init] session=d5b7e577 model=deepseek-v4-flash[1m] cwd=/workspace tools=28
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:06] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] [system: thinking_tokens]
+[14:10:07] 💭 Both audits are complete:
+- Prompt 1: 7/10, Good, one must-fix (Critical Issue 1: int/float64 equality contract test missing)
+- Prompt 2: 9/10, Excellent, no critical issues
+
+Per the command instructions:
+- Return the creator's summary, followed by the per-prompt audit reports verbatim.
+- Do NOT retry, rewrite, or merge prompts based on findings — the human reviewer owns that decision.
+- Transition the spec to `prompted` only in host mode. I confirmed this is daemon mode (DARK_FACTORY_MANAGED=tr…
+[14:10:28] Both audits are complete. This session is daemon-managed (`DARK_FACTORY_MANAGED=true`), so per the skip conditions I'm **not** transitioning the spec to `prompted` — the host-side generator finalizes it after this container exits. Auditing is non-blocking, so the findings below don't change that.
+
+## Generated Prompts
+
+The prompt-creator agent wrote **2 prompt files** to the `prompts/` inbox (execution-order prefixes, correct frontmatter):
+
+1. **`prompts/1-spec-006-field-ownership-guard.md`** — the entire behavior change: field-ownership guard, terminal pin, widened terminal early return, guard log, single package-level declarations, all new unit specs, the carved-out test rewrite, and the CHANGELOG entry (spec ACs 1–16, 19).
+2. **`prompts/2-spec-006-docs-frontmatter-ownership.md`** — `docs/controller-design.md` § "Frontmatter Merge" ownership table + terminal short-circuit note (spec ACs 17–18).
+
+**Key decisions** (from the creator):
+- **Kept the spec's own 2-prompt decomposition** (matches the Sizing Guide for a single feature). Prompt 1 ships code + changelog so a release can never cut with the fix merged and no changelog entry; prompt 2 is docs-only so the code diff stays reviewable.
+- **Exported the merge helper** as `MergeFrontmatter(...) (lib.TaskFrontmatter, []GuardDecision)`. This is load-bearing: `result_writer_test.go` is `package result_test` (external), so the DB 6 decision-reporting AC is only reachable through an exported symbol. `mergeFrontmatter` has exactly one call site (`buildResultModifyFn:171`, grep-verified), so the signature change is safe.
+- **Numeric-tolerant value equality** (`frontmatterValueEqual` + `numericValue`): on-disk YAML decodes `trigger_count: 3` as `int`, while the incoming payload arrives via cqrs JSON round-trip as `float64`. Without this, every steady-state publish logs a spurious guard line, violating DB 6.
+- **Terminal pin keeps the raw on-disk status verbatim**; terminal is decided by the normalizing `Status()` accessor vs `domain.TaskStatusCompleted`/`TaskStatusAborted` (both grep-verified in vault-cli v0.116.1).
+- **Carve-out rewrite** models the reset the way the scanner actually performs it: `writeTaskFile` writes `trigger_count: 0` + new assignee to disk (retaining `previous_assignee: claude`) before the second publish. This is the only pre-existing test block modified.
+- **No bare git in `<verification>`**: git is masked in this container (`hideGit=true` per daemon config), so AC 14's git-diff integrity evidence is declared audit-time (host).
+- **No scenario prompt**: the spec explicitly states "NO new E2E scenario" — every branch is reachable through the `mocks.GitClient` harness.
+
+**Open questions** (for the human reviewer):
+- `MergeFrontmatter` + `GuardDecision` become public package API (DB 6 forces decision-reporting observable; test file is external). If the auditor prefers private, alternative is a second internal test file in `package result`.
+- Numeric equality helper (`frontmatterValueEqual`/`numericValue`, ~15 lines) introduced to honor DB 6 — flag if considered over-engineered.
+- Changelog bullet wording is the creator's own phrasing (must contain `trigger_count` per the AC's `awk` check).
+
+## Audit Findings
+
+### prompts/1-spec-006-field-ownership-guard.md
+
+> # Prompt Audit Report: Field-ownership guard, terminal pin, guard log, unit specs, changelog
+>
+> **File**: `/workspace/prompts/1-spec-006-field-ownership-guard.md`
+> **Score**: 7/10
+> **Status**: Good (one must-fix contract-test gap; otherwise exemplary)
+>
+> ## DoD Checklist
+> - [x] `<summary>` present and plain-language — 9 bullets, observable outcomes, no Go signatures or file paths
+> - [x] `<objective>` states end state (single field-ownership-aware chokepoint; all proven by unit specs)
+> - [x] `<context>` present and richly anchored
+> - [x] `<requirements>` numbered (1–10) and specific, with exact file paths, function signatures, and import paths
+> - [x] `<constraints>` present, copied from spec, includes "Do NOT commit"
+> - [x] `<verification>` present with runnable commands (`make test`, greps, `awk`, `make precommit`)
+> - [x] All paths repo-relative or container-mount-backed (`cd /workspace` is the mounted repo root; `/home/node/.claude/plugins/marketplaces/coding/docs/*.md` all verified to exist). No `~/` or host-absolute paths.
+> - [x] No bare `git ` command in `<verification>` — the daemon log (`.dark-factory.log`) shows `hideGit=true hideGitSource=arg`, so the execution container's `.git` is genuinely masked. The prompt correctly avoids git and defers the AC 14 diff to the host auditor.
+> - [x] No operator-only commands in `<verification>` (`docker`, `make buca`, `kubectl*`, `dark-factory`, `scripts/*.sh`, `gh ...`) — all container-executable
+> - [x] File in `prompts/` inbox (not `prompts/in-progress/`)
+> - [x] Filename `1-spec-006-field-ownership-guard.md` — single-digit ordering prefix `1-` for a multi-prompt spec is the documented allowed form
+> - [x] Filename reflects the primary change (the field-ownership guard)
+> - [x] `status: draft` (valid inbox status); frontmatter carries only `spec`/`status`/`created`; `spec` is a YAML array in canonical full-slug form
+>
+> ## Failure Mode Coverage
+> - [x] Spec failure-modes table rows all addressed by requirements (rows 1, 3, 4, 5, 6, 7 covered by 8a/8b tests + Requirement 4; row 2 covered by Requirement 4's "do not coerce" instruction, though untested — see Recommendations; rows 8–9 unchanged-code, N/A)
+> - [x] Security section addressed: "input validation" (guard iterates fixed package-level declarations, never derives keys from incoming payload) and "log safety" (Requirement 5 names only task identifier, field, two values)
+> - [x] External calls timeout/cancellation — N/A (no new external calls; `AtomicReadModifyWriteAndCommitPush` pre-existing)
+> - [!] New values flowing through a boundary have a contract test — **Critical gap**, see Critical Issue 1
+> - [x] No `go mod vendor` in `<requirements>`/`<verification>` (Makefile.precommit confirms `ensure` wipes `vendor/`)
+> - [x] No cross-repo writes
+> - [x] Container-autonomous: Requirement 10 defers Rung-3 (AC 20) to the operator-side Verification ladder
+> - [x] Sibling entry points covered: `mergeFrontmatter` has a single call site (`result_writer.go:171`); the one cross-package consumer (`ClearAssigneeIfHumanReview`) is explicitly frozen in Constraints
+>
+> ## Documentation Placement
+> - [x] No inlined reusable pattern that should live in a doc — the inlined Go is load-bearing implementation matching existing patterns (Ginkgo/Gomega + `DescribeTable` precedent at `pkg/command/command_operations_test.go:21`, package-level exported helpers like `FindTaskFilePath`/`ExtractBody`, no new `fmt.Errorf`)
+> - [x] Coding plugin docs referenced in `<context>` — all verified to exist
+> - [x] Domain knowledge that outlives the prompt routed to `docs/controller-design.md` via sibling prompt 2
+>
+> ## Code Reference Verification
+> | Reference | File | Status |
+> |-----------|------|--------|
+> | `mergeFrontmatter` at ~353–364, sole call site line 171 | `pkg/result/result_writer.go` | Correct |
+> | `buildResultModifyFn` line 151 | `pkg/result/result_writer.go` | Correct |
+> | `applyRetryCounter` line 188, early return line 189 `if string(merged.Status()) == "completed"` | `pkg/result/result_writer.go` | Correct |
+> | `resultWriter` struct ends line 52, before `FindTaskFilePath` (line 57) — Requirement 2 insertion point | `pkg/result/result_writer.go` | Correct |
+> | `It("agent keys override existing keys")` line 186 | `pkg/result/result_writer_test.go` | Correct |
+> | `BeforeEach` 57–105, `writeTaskFile` 111, imports `os`/`filepath`/`result` | `pkg/result/result_writer_test.go` | Correct |
+> | Carved block `It("previous_assignee persists…")` 1351–1403; `"trigger_count": 0, // operator reset` at line 1389 | `pkg/result/result_writer_test.go` | Correct |
+> | `Context("trigger_count cap escalation")` opens 999, closes 1494 (8a insertion point) | `pkg/result/result_writer_test.go` | Correct |
+> | `Context("atomic write and push error")` at 1589 | `pkg/result/result_writer_test.go` | Correct (see Recommendation 1) |
+> | `Describe("ExtractBody")` 1714 → closes 1747, final `})` 1748 (8c insertion point) | `pkg/result/result_writer_test.go` | Correct |
+> | `## Unreleased` line 8, first `## v` heading `## v0.6.1` line 12 | `CHANGELOG.md` | Correct; `awk` verification exits 1 today |
+> | `type TaskFrontmatter map[string]interface{}`; `Status()`, `TriggerCount()`/`RetryCount()` accept `int` and `float64` | agent module `v0.83.0` | Correct (grep-verified) |
+> | `TaskStatusCompleted`/`TaskStatusAborted`; `NormalizeTaskStatus` maps `done`→`completed` | vault-cli `v0.116.1` | Correct (grep-verified) |
+> | `domain` not yet imported in `result_writer.go`; direct require `go.mod:21` | go.mod | Correct |
+> | `glog.Infof` | glog v1.2.5 (direct dep `go.mod:22`, already used) | Low risk (not locally grep-verifiable) |
+> | `goimports-reviser` runs in `make precommit` | `Makefile.precommit:15` | Correct |
+> | `make test`/`make precommit` at repo root | Single-module repo | Correct — not multi-service |
+> | Carve-out claim that only one existing block carries differing on-disk vs incoming counter | result_writer_test.go | Correct |
+> | `Empty-to-Named Reset (spec 021)` referenced in Requirement 7 | `docs/controller-design.md:101` | Correct |
+>
+> ## Coding Guidelines Compliance
+> | Guideline | Doc | Status |
+> |-----------|-----|--------|
+> | Guard log is unconditional `glog.Infof`, never `glog.V(n)`, names only task/field/values | `go-glog-guide.md` | Compliant |
+> | No `fmt.Errorf`, no `context.Background()` in `pkg/` | `go-error-wrapping-guide.md` | Compliant |
+> | Ginkgo/Gomega, external test package, `DescribeTable`, coverage ≥80% | `go-testing-guide.md` | Compliant |
+> | No test-only package-level mutable state | `go-composition.md` | Compliant |
+> | No new interfaces → no counterfeiter requirement | — | N/A |
+>
+> ## YAGNI Pass
+> Clean pass. `controllerOwnedFields`, `terminalStatuses`, `GuardDecision`, `frontmatterValueEqual`/`numericValue`, and the widened early return are each demanded by spec DBs 4/6/7. No opt-out flag, no tunables.
+>
+> ## Critical Issues
+>
+> **1. The int/float64 steady-state equality contract (DB 6) has no test — the one boundary the prompt itself flags as load-bearing is unguarded.**
+>
+> The prompt's own `<context>` (line 52) states: the on-disk counter is YAML-decoded as `int`, the incoming counter reaches `WriteResult` after a JSON round-trip through cqrs that decodes it as `float64`, and therefore `frontmatterValueEqual` "MUST … treat `int` and `float64` as numerically equal, or every steady-state publish would log a spurious guard line, violating DB 6."
+>
+> Yet no shipped test ever produces a `float64` counter value. In the test harness there is no JSON round-trip — incoming frontmatter is built directly as a Go literal (`lib.TaskFrontmatter{"trigger_count": 1}` → `int`). So:
+> - 8b counter rows compare on-disk YAML `int` vs incoming Go `int`;
+> - 8c's two `It`s compare `int(3)` vs `int(3)` and `int(3)` vs `int(1)`.
+>
+> If `numericValue` were deleted and `frontmatterValueEqual` reduced to `a == b`, every one of the prompt's tests would still pass, while production would emit a spurious `ownership guard kept on-disk: task … field trigger_count kept 3 rejected 3` line on every steady-state publish — a DB 6 violation and log flood. This is precisely the audit's boundary-crossing pattern (a new value crosses a serialization boundary; shape tests pass; the boundary contract fails at runtime). A cheap level-1 test is available: call `result.MergeFrontmatter` with a mixed int/float64 pair.
+>
+> **Fix** — in Requirement 8c, inside the new `Describe("MergeFrontmatter", …)`, insert the following two `It` blocks after the existing second `It` (the "reports exactly one decision …" block ending with `Expect(decisions[0].Rejected).To(Equal(1))` and its closing `})`), before the `Describe`'s final `})`:
+>
+> ```
+> // DB 6 steady-state contract: the incoming counter arrives JSON-decoded as
+> // float64 (cqrs round-trip) while the on-disk counter is YAML-decoded int.
+> // frontmatterValueEqual's numeric normalization is the only thing preventing
+> // a spurious guard log line on every steady-state publish.
+> It("reports zero guard decisions when the incoming float64 counter equals the on-disk int", func() {
+>     existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+>     incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(3)}
+>     _, decisions := result.MergeFrontmatter(existing, incoming)
+>     Expect(decisions).To(HaveLen(0))
+> })
+>
+> It("reports one decision when the incoming float64 counter differs from the on-disk int", func() {
+>     existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 5}
+>     incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(1)}
+>     _, decisions := result.MergeFrontmatter(existing, incoming)
+>     Expect(decisions).To(HaveLen(1))
+>     Expect(decisions[0].Field).To(Equal("trigger_count"))
+>     Expect(decisions[0].Kept).To(Equal(5))
+>     Expect(decisions[0].Rejected).To(Equal(float64(1)))
+> })
+> ```
+>
+> This pins the exact boundary the prompt's context warns about, with no serialization harness needed.
+>
+> ## Recommendations
+>
+> 1. **8b placement anchor is imprecise.** `Context("interleaved partial update between read and write (race-fix regression)")` (lines 1496–1587) sits between `Context("trigger_count cap escalation")` close (1494) and `Context("atomic write and push error")` (1589). Reword to: "place it after `Context("interleaved partial update …")` closes (line 1587) and before `Context("atomic write and push error")` (line 1589)."
+> 2. **Spec failure-mode row "On-disk counter is not an integer" is untested.** Requirement 4 correctly instructs "Do NOT coerce", but no test proves a non-integer on-disk value (e.g. `trigger_count: "3"` or `null`) is kept verbatim. A cheap 8b table row would pin the verbatim-keep.
+> 3. **Document the widened-early-return side effect for incoming-terminal status on a non-terminal task.** The Requirement 6 widening also short-circuits when the *incoming* status is terminal on a non-terminal on-disk task (spec-mandated, Design Decision 2). One sentence noting this consequence would prevent an executor from "fixing" it as an unintended regression.
+> 4. **Stale comment after the rename.** `result_writer.go:200` (inside `applyRetryCounter`) says "inherited it via mergeFrontmatter" — stale after the rename to `MergeFrontmatter`. Executor should be told to update it.
+>
+> ## Strengths
+> - Exceptionally well-anchored: every line-number citation verified against the actual files and matches.
+> - The carve-out rewrite is logically sound — traced the second-write flow with the new guard; on-disk `trigger_count: 0` prevents the cap from re-firing and clearing `assignee: backtest-agent`, while `previous_assignee: claude` is preserved.
+> - The claim that only the carve-out carries a differing on-disk/incoming counter is true (verified by reading every counter-bearing test block).
+> - Container-autonomy is clean; AC 14 git-diff check correctly deferred to host auditor (`hideGit=true` confirmed).
+> - Sibling-coverage and YAGNI passes are clean; failure modes and Security section addressed.
+>
+> **Summary**: High-quality prompt — all code references verified, test plan maps 1:1 to ACs 1–16 and 19, carve-out sound, fully container-autonomous. **One must-fix before approval**: Requirement 8c ships no test exercising the int/float64 numeric-equality path — add the two mixed-type `It` blocks above. Note: audit-only; the prompt file was not modified.
+
+---
+
+### prompts/2-spec-006-docs-frontmatter-ownership.md
+
+> # Prompt Audit Report: Document frontmatter field-ownership contract in controller-design.md
+>
+> **File**: `/workspace/prompts/2-spec-006-docs-frontmatter-ownership.md`
+> **Score**: 9/10
+> **Status**: Excellent
+>
+> ## DoD Checklist
+> - [x] `<summary>` present and plain-language (minor: see Recommendations)
+> - [x] `<objective>` states end state (2 sentences, what + why)
+> - [x] `<context>` present
+> - [x] `<requirements>` numbered and specific (5 steps, exact headers + AC strings)
+> - [x] `<constraints>` present (6 bullets, copied from spec)
+> - [x] `<verification>` present with runnable command
+> - [x] All paths repo-relative (`cd /workspace` is the container mount root)
+> - [x] No bare `git ` commands when `hideGit` is on — **`hideGit=true` is in effect** (daemon arg). The prompt contains ZERO git commands and explicitly instructs "Do NOT use git to check (the execution container's `.git` is masked)" — exemplary.
+> - [x] No operator-only commands (`make test` + `sed`/`grep` only; `make buca`/`apply` correctly absent)
+> - [x] File in `prompts/` inbox; filename `2-` prefix matches multi-prompt convention; `status: draft`; canonical `spec` array
+>
+> ## Failure Mode Coverage
+> - [x] All 10 spec failure-mode rows covered across the prompt set (doc-relevant rows via Requirements 3 and 4)
+> - [x] Security concerns addressed (log-safety documented in Req 4, enforced in prompt 1 Req 5)
+> - [x] External calls timeout/cancellation — N/A (docs-only)
+> - [x] New constants/strings through library validators tested — N/A; AC greps traverse the exact contract
+> - [x] No `go mod vendor`, no cross-repo writes, container-autonomous (AC 20 correctly left in the spec's Verification ladder)
+> - [x] Sibling entry points covered: dependency gate on prompt 1 (`grep -n 'controllerOwnedFields'` — confirmed returns no match today, will match after prompt 1 Req 2), and every behavior the doc describes was cross-checked against prompt 1's implementation (names match; widened early return produces exactly the documented short-circuit; `spawn_notification` delete at line 221 sits below the early return so it survives a pinned-terminal write)
+>
+> ## Documentation Placement
+> - [x] No inlined reusable patterns (>10 lines)
+> - [x] Existing project docs referenced in `<context>` (full current section text, `## Terminal Task Status (create-task dedup)` line 62, `## Empty-to-Named Reset (spec 021)` line 101)
+> - [x] Domain knowledge routed to `docs/controller-design.md` — the correct durable home
+>
+> ## Code Reference Verification
+> | Reference | File | Status |
+> |-----------|------|--------|
+> | `## Frontmatter Merge` at line 52; section content lines 53-60 | `docs/controller-design.md` | Verified, Correct |
+> | `## Terminal Task Status (create-task dedup)` at line 62 | `docs/controller-design.md` | Verified, Correct |
+> | `## Empty-to-Named Reset (spec 021)` at line 101 | `docs/controller-design.md` | Verified, Correct |
+> | `buildResultModifyFn` (151), `applyRetryCounter` (188), `restoreExistingPhase` (313), `mergeFrontmatter` (355) | `pkg/result/result_writer.go` | Verified, Correct |
+> | `MergeFrontmatter`, `controllerOwnedFields`, `terminalStatuses`, guard log | `pkg/result/result_writer.go` | Pending — shipped by prompt 1; correctly gated by fail-loud dependency grep |
+> | `func (f TaskFrontmatter) Status() domain.TaskStatus` | `bborbe/agent@v0.83.0` | Verified, Correct |
+> | `TaskStatusCompleted`/`TaskStatusAborted` constants | `bborbe/vault-cli@v0.116.1` | Verified, Correct |
+> | AC greps return 0 today; all three would be ≥1 after edit | section range 52-61 | Verified |
+>
+> ## Coding Guidelines Compliance
+> N/A — no Go code in this prompt.
+>
+> ## YAGNI Pass
+> Clean — three-row ownership table maps 1:1 to spec's Goal/DBs 1/3/5. No added rows, no tunables, no opt-out.
+>
+> ## Critical Issues
+> None.
+>
+> ## Recommendations
+>
+> 1. **Summary contains a file path and field names (minor).** Bullet 1 references `docs/controller-design.md` and the `## Frontmatter Merge` header; bullets 1-3 carry field names. The DoD summary criterion is plain language with no file paths — the path/header could be dropped ("The frontmatter-merge section of the controller design doc now documents…").
+> 2. **`|| true` on the AC greps masks a zero-count outcome (soft, inherited from the spec).** Every verification grep is wrapped in `|| true`, so the block exits 0 even if all three counts come back 0. The prompt does say "Expect ≥1 from each" and the executor reads printed counts, but a hard guard (`... | grep -q '^[1-9]'` without `|| true`) would remove dependence on executor diligence. Note this deviates from the spec's own `|| true` wrapper — confirm with the spec owner before tightening.
+>
+> ## Strengths
+> - **Exemplary dependency handling:** the `controllerOwnedFields` grep gate with fail-loud `status: failed` STOP semantics is the correct pattern for a prompt 2 that must describe code prompt 1 ships.
+> - **Fully container-autonomous and hideGit-aware:** zero git commands despite `hideGit=true`; scope check substitutes filesystem inspection for `git diff`.
+> - **Accurate code references:** all header line numbers and function locations verified; documented short-circuit behavior traced through real `applyRetryCounter` control flow (early return at 189 precedes the `spawn_notification` delete at 221).
+> - **Section-scoped verification:** AC greps are the spec's exact mechanism, `sed` prefix-match subtlety documented, today-zero baseline documented.
+> - **No scope creep:** ownership table, example fixture, and short-circuit/reset prose map 1:1 to the spec's Goal, DBs, ACs 17/18, with changelog correctly deferred to prompt 1.
+>
+> **Summary**: A well-scoped, fully container-executable docs prompt with an exemplary fail-loud dependency gate, accurate references throughout, and faithful AC/constraint coverage. No critical issues. Two minor recommendations. Priority action: approve as-is; optionally apply Recommendation 2 before the next spec using the same `|| true` doc-grep pattern.
+
+---
+
+**Summary of state:** 2 prompts generated, both audited. Prompt 1 has **one must-fix** (missing int/float64 equality contract test — the exact boundary DB 6 depends on); prompt 2 is clean. Per the command's skip conditions (daemon mode), no spec transition was performed — `spec 006` remains `approved` and the host-side generator will finalize it. Per instructions, I've made **no changes** to either prompt — the human reviewer owns the must-fix/recommendation decisions.
+[14:10:28] result: Mode confirmed: **daemon-managed** (`DARK_FACTORY_MANAGED=true`), so I'll skip the `spec mark-prompted` transition after the audit — the host-side generator handles that.
+
+Now waiting for the prompt-creator agent to finish before auditing its output. | duration: 15359ms | cost: $0.4478 | tokens: 106 in / 1079 out
+[14:10:28] result: The prompt-creator agent has been resumed and is continuing its work in the background. I'll wait for its completion notification before running the audit pass. | duration: 23264ms | cost: $3.2943 | tokens: 506 in / 1654 out
+[14:10:28] result: Both audit agents are running in parallel. Waiting for their completion notifications before assembling the report. | duration: 7785ms | cost: $4.7839 | tokens: 290 in / 927 out
+[14:10:28] result: Prompt 2's audit is in (9/10, no critical issues). Still waiting on the prompt 1 audit before assembling the report. | duration: 1122ms | cost: $7.1219 | tokens: 193 in / 74 out
+[14:10:28] result: Both audits are complete. This session is daemon-managed (`DARK_FACTORY_MANAGED=true`), so per the skip conditions I'm **not** transitioning the spec to `prompted` — the host-side generator finalizes it after this container exits. Auditing is non-blocking, so the findings below don't change that.
+
+## Generated Prompts
+
+The prompt-creator agent wrote **2 prompt files** to the `prompts/` inbox (execution-order prefixes, correct frontmatter):
+
+1. **`prompts/1-spec-006-field-ownership-guard.md`** — the entire behavior change: field-ownership guard, terminal pin, widened terminal early return, guard log, single package-level declarations, all new unit specs, the carved-out test rewrite, and the CHANGELOG entry (spec ACs 1–16, 19).
+2. **`prompts/2-spec-006-docs-frontmatter-ownership.md`** — `docs/controller-design.md` § "Frontmatter Merge" ownership table + terminal short-circuit note (spec ACs 17–18).
+
+**Key decisions** (from the creator):
+- **Kept the spec's own 2-prompt decomposition** (matches the Sizing Guide for a single feature). Prompt 1 ships code + changelog so a release can never cut with the fix merged and no changelog entry; prompt 2 is docs-only so the code diff stays reviewable.
+- **Exported the merge helper** as `MergeFrontmatter(...) (lib.TaskFrontmatter, []GuardDecision)`. This is load-bearing: `result_writer_test.go` is `package result_test` (external), so the DB 6 decision-reporting AC is only reachable through an exported symbol. `mergeFrontmatter` has exactly one call site (`buildResultModifyFn:171`, grep-verified), so the signature change is safe.
+- **Numeric-tolerant value equality** (`frontmatterValueEqual` + `numericValue`): on-disk YAML decodes `trigger_count: 3` as `int`, while the incoming payload arrives via cqrs JSON round-trip as `float64`. Without this, every steady-state publish logs a spurious guard line, violating DB 6.
+- **Terminal pin keeps the raw on-disk status verbatim**; terminal is decided by the normalizing `Status()` accessor vs `domain.TaskStatusCompleted`/`TaskStatusAborted` (both grep-verified in vault-cli v0.116.1).
+- **Carve-out rewrite** models the reset the way the scanner actually performs it: `writeTaskFile` writes `trigger_count: 0` + new assignee to disk (retaining `previous_assignee: claude`) before the second publish. This is the only pre-existing test block modified.
+- **No bare git in `<verification>`**: git is masked in this container (`hideGit=true` per daemon config), so AC 14's git-diff integrity evidence is declared audit-time (host).
+- **No scenario prompt**: the spec explicitly states "NO new E2E scenario" — every branch is reachable through the `mocks.GitClient` harness.
+
+**Open questions** (for the human reviewer):
+- `MergeFrontmatter` + `GuardDecision` become public package API (DB 6 forces decision-reporting observable; test file is external). If the auditor prefers private, alternative is a second internal test file in `package result`.
+- Numeric equality helper (`frontmatterValueEqual`/`numericValue`, ~15 lines) introduced to honor DB 6 — flag if considered over-engineered.
+- Changelog bullet wording is the creator's own phrasing (must contain `trigger_count` per the AC's `awk` check).
+
+## Audit Findings
+
+### prompts/1-spec-006-field-ownership-guard.md
+
+> # Prompt Audit Report: Field-ownership guard, terminal pin, guard log, unit specs, changelog
+>
+> **File**: `/workspace/prompts/1-spec-006-field-ownership-guard.md`
+> **Score**: 7/10
+> **Status**: Good (one must-fix contract-test gap; otherwise exemplary)
+>
+> ## DoD Checklist
+> - [x] `<summary>` present and plain-language — 9 bullets, observable outcomes, no Go signatures or file paths
+> - [x] `<objective>` states end state (single field-ownership-aware chokepoint; all proven by unit specs)
+> - [x] `<context>` present and richly anchored
+> - [x] `<requirements>` numbered (1–10) and specific, with exact file paths, function signatures, and import paths
+> - [x] `<constraints>` present, copied from spec, includes "Do NOT commit"
+> - [x] `<verification>` present with runnable commands (`make test`, greps, `awk`, `make precommit`)
+> - [x] All paths repo-relative or container-mount-backed (`cd /workspace` is the mounted repo root; `/home/node/.claude/plugins/marketplaces/coding/docs/*.md` all verified to exist). No `~/` or host-absolute paths.
+> - [x] No bare `git ` command in `<verification>` — the daemon log (`.dark-factory.log`) shows `hideGit=true hideGitSource=arg`, so the execution container's `.git` is genuinely masked. The prompt correctly avoids git and defers the AC 14 diff to the host auditor.
+> - [x] No operator-only commands in `<verification>` (`docker`, `make buca`, `kubectl*`, `dark-factory`, `scripts/*.sh`, `gh ...`) — all container-executable
+> - [x] File in `prompts/` inbox (not `prompts/in-progress/`)
+> - [x] Filename `1-spec-006-field-ownership-guard.md` — single-digit ordering prefix `1-` for a multi-prompt spec is the documented allowed form
+> - [x] Filename reflects the primary change (the field-ownership guard)
+> - [x] `status: draft` (valid inbox status); frontmatter carries only `spec`/`status`/`created`; `spec` is a YAML array in canonical full-slug form
+>
+> ## Failure Mode Coverage
+> - [x] Spec failure-modes table rows all addressed by requirements (rows 1, 3, 4, 5, 6, 7 covered by 8a/8b tests + Requirement 4; row 2 covered by Requirement 4's "do not coerce" instruction, though untested — see Recommendations; rows 8–9 unchanged-code, N/A)
+> - [x] Security section addressed: "input validation" (guard iterates fixed package-level declarations, never derives keys from incoming payload) and "log safety" (Requirement 5 names only task identifier, field, two values)
+> - [x] External calls timeout/cancellation — N/A (no new external calls; `AtomicReadModifyWriteAndCommitPush` pre-existing)
+> - [!] New values flowing through a boundary have a contract test — **Critical gap**, see Critical Issue 1
+> - [x] No `go mod vendor` in `<requirements>`/`<verification>` (Makefile.precommit confirms `ensure` wipes `vendor/`)
+> - [x] No cross-repo writes
+> - [x] Container-autonomous: Requirement 10 defers Rung-3 (AC 20) to the operator-side Verification ladder
+> - [x] Sibling entry points covered: `mergeFrontmatter` has a single call site (`result_writer.go:171`); the one cross-package consumer (`ClearAssigneeIfHumanReview`) is explicitly frozen in Constraints
+>
+> ## Documentation Placement
+> - [x] No inlined reusable pattern that should live in a doc — the inlined Go is load-bearing implementation matching existing patterns (Ginkgo/Gomega + `DescribeTable` precedent at `pkg/command/command_operations_test.go:21`, package-level exported helpers like `FindTaskFilePath`/`ExtractBody`, no new `fmt.Errorf`)
+> - [x] Coding plugin docs referenced in `<context>` — all verified to exist
+> - [x] Domain knowledge that outlives the prompt routed to `docs/controller-design.md` via sibling prompt 2
+>
+> ## Code Reference Verification
+> | Reference | File | Status |
+> |-----------|------|--------|
+> | `mergeFrontmatter` at ~353–364, sole call site line 171 | `pkg/result/result_writer.go` | Correct |
+> | `buildResultModifyFn` line 151 | `pkg/result/result_writer.go` | Correct |
+> | `applyRetryCounter` line 188, early return line 189 `if string(merged.Status()) == "completed"` | `pkg/result/result_writer.go` | Correct |
+> | `resultWriter` struct ends line 52, before `FindTaskFilePath` (line 57) — Requirement 2 insertion point | `pkg/result/result_writer.go` | Correct |
+> | `It("agent keys override existing keys")` line 186 | `pkg/result/result_writer_test.go` | Correct |
+> | `BeforeEach` 57–105, `writeTaskFile` 111, imports `os`/`filepath`/`result` | `pkg/result/result_writer_test.go` | Correct |
+> | Carved block `It("previous_assignee persists…")` 1351–1403; `"trigger_count": 0, // operator reset` at line 1389 | `pkg/result/result_writer_test.go` | Correct |
+> | `Context("trigger_count cap escalation")` opens 999, closes 1494 (8a insertion point) | `pkg/result/result_writer_test.go` | Correct |
+> | `Context("atomic write and push error")` at 1589 | `pkg/result/result_writer_test.go` | Correct (see Recommendation 1) |
+> | `Describe("ExtractBody")` 1714 → closes 1747, final `})` 1748 (8c insertion point) | `pkg/result/result_writer_test.go` | Correct |
+> | `## Unreleased` line 8, first `## v` heading `## v0.6.1` line 12 | `CHANGELOG.md` | Correct; `awk` verification exits 1 today |
+> | `type TaskFrontmatter map[string]interface{}`; `Status()`, `TriggerCount()`/`RetryCount()` accept `int` and `float64` | agent module `v0.83.0` | Correct (grep-verified) |
+> | `TaskStatusCompleted`/`TaskStatusAborted`; `NormalizeTaskStatus` maps `done`→`completed` | vault-cli `v0.116.1` | Correct (grep-verified) |
+> | `domain` not yet imported in `result_writer.go`; direct require `go.mod:21` | go.mod | Correct |
+> | `glog.Infof` | glog v1.2.5 (direct dep `go.mod:22`, already used) | Low risk (not locally grep-verifiable) |
+> | `goimports-reviser` runs in `make precommit` | `Makefile.precommit:15` | Correct |
+> | `make test`/`make precommit` at repo root | Single-module repo | Correct — not multi-service |
+> | Carve-out claim that only one existing block carries differing on-disk vs incoming counter | result_writer_test.go | Correct |
+> | `Empty-to-Named Reset (spec 021)` referenced in Requirement 7 | `docs/controller-design.md:101` | Correct |
+>
+> ## Coding Guidelines Compliance
+> | Guideline | Doc | Status |
+> |-----------|-----|--------|
+> | Guard log is unconditional `glog.Infof`, never `glog.V(n)`, names only task/field/values | `go-glog-guide.md` | Compliant |
+> | No `fmt.Errorf`, no `context.Background()` in `pkg/` | `go-error-wrapping-guide.md` | Compliant |
+> | Ginkgo/Gomega, external test package, `DescribeTable`, coverage ≥80% | `go-testing-guide.md` | Compliant |
+> | No test-only package-level mutable state | `go-composition.md` | Compliant |
+> | No new interfaces → no counterfeiter requirement | — | N/A |
+>
+> ## YAGNI Pass
+> Clean pass. `controllerOwnedFields`, `terminalStatuses`, `GuardDecision`, `frontmatterValueEqual`/`numericValue`, and the widened early return are each demanded by spec DBs 4/6/7. No opt-out flag, no tunables.
+>
+> ## Critical Issues
+>
+> **1. The int/float64 steady-state equality contract (DB 6) has no test — the one boundary the prompt itself flags as load-bearing is unguarded.**
+>
+> The prompt's own `<context>` (line 52) states: the on-disk counter is YAML-decoded as `int`, the incoming counter reaches `WriteResult` after a JSON round-trip through cqrs that decodes it as `float64`, and therefore `frontmatterValueEqual` "MUST … treat `int` and `float64` as numerically equal, or every steady-state publish would log a spurious guard line, violating DB 6."
+>
+> Yet no shipped test ever produces a `float64` counter value. In the test harness there is no JSON round-trip — incoming frontmatter is built directly as a Go literal (`lib.TaskFrontmatter{"trigger_count": 1}` → `int`). So:
+> - 8b counter rows compare on-disk YAML `int` vs incoming Go `int`;
+> - 8c's two `It`s compare `int(3)` vs `int(3)` and `int(3)` vs `int(1)`.
+>
+> If `numericValue` were deleted and `frontmatterValueEqual` reduced to `a == b`, every one of the prompt's tests would still pass, while production would emit a spurious `ownership guard kept on-disk: task … field trigger_count kept 3 rejected 3` line on every steady-state publish — a DB 6 violation and log flood. This is precisely the audit's boundary-crossing pattern (a new value crosses a serialization boundary; shape tests pass; the boundary contract fails at runtime). A cheap level-1 test is available: call `result.MergeFrontmatter` with a mixed int/float64 pair.
+>
+> **Fix** — in Requirement 8c, inside the new `Describe("MergeFrontmatter", …)`, insert the following two `It` blocks after the existing second `It` (the "reports exactly one decision …" block ending with `Expect(decisions[0].Rejected).To(Equal(1))` and its closing `})`), before the `Describe`'s final `})`:
+>
+> ```
+> // DB 6 steady-state contract: the incoming counter arrives JSON-decoded as
+> // float64 (cqrs round-trip) while the on-disk counter is YAML-decoded int.
+> // frontmatterValueEqual's numeric normalization is the only thing preventing
+> // a spurious guard log line on every steady-state publish.
+> It("reports zero guard decisions when the incoming float64 counter equals the on-disk int", func() {
+>     existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+>     incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(3)}
+>     _, decisions := result.MergeFrontmatter(existing, incoming)
+>     Expect(decisions).To(HaveLen(0))
+> })
+>
+> It("reports one decision when the incoming float64 counter differs from the on-disk int", func() {
+>     existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 5}
+>     incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": float64(1)}
+>     _, decisions := result.MergeFrontmatter(existing, incoming)
+>     Expect(decisions).To(HaveLen(1))
+>     Expect(decisions[0].Field).To(Equal("trigger_count"))
+>     Expect(decisions[0].Kept).To(Equal(5))
+>     Expect(decisions[0].Rejected).To(Equal(float64(1)))
+> })
+> ```
+>
+> This pins the exact boundary the prompt's context warns about, with no serialization harness needed.
+>
+> ## Recommendations
+>
+> 1. **8b placement anchor is imprecise.** `Context("interleaved partial update between read and write (race-fix regression)")` (lines 1496–1587) sits between `Context("trigger_count cap escalation")` close (1494) and `Context("atomic write and push error")` (1589). Reword to: "place it after `Context("interleaved partial update …")` closes (line 1587) and before `Context("atomic write and push error")` (line 1589)."
+> 2. **Spec failure-mode row "On-disk counter is not an integer" is untested.** Requirement 4 correctly instructs "Do NOT coerce", but no test proves a non-integer on-disk value (e.g. `trigger_count: "3"` or `null`) is kept verbatim. A cheap 8b table row would pin the verbatim-keep.
+> 3. **Document the widened-early-return side effect for incoming-terminal status on a non-terminal task.** The Requirement 6 widening also short-circuits when the *incoming* status is terminal on a non-terminal on-disk task (spec-mandated, Design Decision 2). One sentence noting this consequence would prevent an executor from "fixing" it as an unintended regression.
+> 4. **Stale comment after the rename.** `result_writer.go:200` (inside `applyRetryCounter`) says "inherited it via mergeFrontmatter" — stale after the rename to `MergeFrontmatter`. Executor should be told to update it.
+>
+> ## Strengths
+> - Exceptionally well-anchored: every line-number citation verified against the actual files and matches.
+> - The carve-out rewrite is logically sound — traced the second-write flow with the new guard; on-disk `trigger_count: 0` prevents the cap from re-firing and clearing `assignee: backtest-agent`, while `previous_assignee: claude` is preserved.
+> - The claim that only the carve-out carries a differing on-disk/incoming counter is true (verified by reading every counter-bearing test block).
+> - Container-autonomy is clean; AC 14 git-diff check correctly deferred to host auditor (`hideGit=true` confirmed).
+> - Sibling-coverage and YAGNI passes are clean; failure modes and Security section addressed.
+>
+> **Summary**: High-quality prompt — all code references verified, test plan maps 1:1 to ACs 1–16 and 19, carve-out sound, fully container-autonomous. **One must-fix before approval**: Requirement 8c ships no test exercising the int/float64 numeric-equality path — add the two mixed-type `It` blocks above. Note: audit-only; the prompt file was not modified.
+
+---
+
+### prompts/2-spec-006-docs-frontmatter-ownership.md
+
+> # Prompt Audit Report: Document frontmatter field-ownership contract in controller-design.md
+>
+> **File**: `/workspace/prompts/2-spec-006-docs-frontmatter-ownership.md`
+> **Score**: 9/10
+> **Status**: Excellent
+>
+> ## DoD Checklist
+> - [x] `<summary>` present and plain-language (minor: see Recommendations)
+> - [x] `<objective>` states end state (2 sentences, what + why)
+> - [x] `<context>` present
+> - [x] `<requirements>` numbered and specific (5 steps, exact headers + AC strings)
+> - [x] `<constraints>` present (6 bullets, copied from spec)
+> - [x] `<verification>` present with runnable command
+> - [x] All paths repo-relative (`cd /workspace` is the container mount root)
+> - [x] No bare `git ` commands when `hideGit` is on — **`hideGit=true` is in effect** (daemon arg). The prompt contains ZERO git commands and explicitly instructs "Do NOT use git to check (the execution container's `.git` is masked)" — exemplary.
+> - [x] No operator-only commands (`make test` + `sed`/`grep` only; `make buca`/`apply` correctly absent)
+> - [x] File in `prompts/` inbox; filename `2-` prefix matches multi-prompt convention; `status: draft`; canonical `spec` array
+>
+> ## Failure Mode Coverage
+> - [x] All 10 spec failure-mode rows covered across the prompt set (doc-relevant rows via Requirements 3 and 4)
+> - [x] Security concerns addressed (log-safety documented in Req 4, enforced in prompt 1 Req 5)
+> - [x] External calls timeout/cancellation — N/A (docs-only)
+> - [x] New constants/strings through library validators tested — N/A; AC greps traverse the exact contract
+> - [x] No `go mod vendor`, no cross-repo writes, container-autonomous (AC 20 correctly left in the spec's Verification ladder)
+> - [x] Sibling entry points covered: dependency gate on prompt 1 (`grep -n 'controllerOwnedFields'` — confirmed returns no match today, will match after prompt 1 Req 2), and every behavior the doc describes was cross-checked against prompt 1's implementation (names match; widened early return produces exactly the documented short-circuit; `spawn_notification` delete at line 221 sits below the early return so it survives a pinned-terminal write)
+>
+> ## Documentation Placement
+> - [x] No inlined reusable patterns (>10 lines)
+> - [x] Existing project docs referenced in `<context>` (full current section text, `## Terminal Task Status (create-task dedup)` line 62, `## Empty-to-Named Reset (spec 021)` line 101)
+> - [x] Domain knowledge routed to `docs/controller-design.md` — the correct durable home
+>
+> ## Code Reference Verification
+> | Reference | File | Status |
+> |-----------|------|--------|
+> | `## Frontmatter Merge` at line 52; section content lines 53-60 | `docs/controller-design.md` | Verified, Correct |
+> | `## Terminal Task Status (create-task dedup)` at line 62 | `docs/controller-design.md` | Verified, Correct |
+> | `## Empty-to-Named Reset (spec 021)` at line 101 | `docs/controller-design.md` | Verified, Correct |
+> | `buildResultModifyFn` (151), `applyRetryCounter` (188), `restoreExistingPhase` (313), `mergeFrontmatter` (355) | `pkg/result/result_writer.go` | Verified, Correct |
+> | `MergeFrontmatter`, `controllerOwnedFields`, `terminalStatuses`, guard log | `pkg/result/result_writer.go` | Pending — shipped by prompt 1; correctly gated by fail-loud dependency grep |
+> | `func (f TaskFrontmatter) Status() domain.TaskStatus` | `bborbe/agent@v0.83.0` | Verified, Correct |
+> | `TaskStatusCompleted`/`TaskStatusAborted` constants | `bborbe/vault-cli@v0.116.1` | Verified, Correct |
+> | AC greps return 0 today; all three would be ≥1 after edit | section range 52-61 | Verified |
+>
+> ## Coding Guidelines Compliance
+> N/A — no Go code in this prompt.
+>
+> ## YAGNI Pass
+> Clean — three-row ownership table maps 1:1 to spec's Goal/DBs 1/3/5. No added rows, no tunables, no opt-out.
+>
+> ## Critical Issues
+> None.
+>
+> ## Recommendations
+>
+> 1. **Summary contains a file path and field names (minor).** Bullet 1 references `docs/controller-design.md` and the `## Frontmatter Merge` header; bullets 1-3 carry field names. The DoD summary criterion is plain language with no file paths — the path/header could be dropped ("The frontmatter-merge section of the controller design doc now documents…").
+> 2. **`|| true` on the AC greps masks a zero-count outcome (soft, inherited from the spec).** Every verification grep is wrapped in `|| true`, so the block exits 0 even if all three counts come back 0. The prompt does say "Expect ≥1 from each" and the executor reads printed counts, but a hard guard (`... | grep -q '^[1-9]'` without `|| true`) would remove dependence on executor diligence. Note this deviates from the spec's own `|| true` wrapper — confirm with the spec owner before tightening.
+>
+> ## Strengths
+> - **Exemplary dependency handling:** the `controllerOwnedFields` grep gate with fail-loud `status: failed` STOP semantics is the correct pattern for a prompt 2 that must describe code prompt 1 ships.
+> - **Fully container-autonomous and hideGit-aware:** zero git commands despite `hideGit=true`; scope check substitutes filesystem inspection for `git diff`.
+> - **Accurate code references:** all header line numbers and function locations verified; documented short-circuit behavior traced through real `applyRetryCounter` control flow (early return at 189 precedes the `spawn_notification` delete at 221).
+> - **Section-scoped verification:** AC greps are the spec's exact mechanism, `sed` prefix-match subtlety documented, today-zero baseline documented.
+> - **No scope creep:** ownership table, example fixture, and short-circuit/reset prose map 1:1 to the spec's Goal, DBs, ACs 17/18, with changelog correctly deferred to prompt 1.
+>
+> **Summary**: A well-scoped, fully container-executable docs prompt with an exemplary fail-loud dependency gate, accurate references throughout, and faithful AC/constraint coverage. No critical issues. Two minor recommendations. Priority action: approve as-is; optionally apply Recommendation 2 before the next spec using the same `|| true` doc-grep pattern.
+
+---
+
+**Summary of state:** 2 prompts generated, both audited. Prompt 1 has **one must-fix** (missing int/float64 equality contract test — the exact boundary DB 6 depends on); prompt 2 is clean. Per the command's skip conditions (daemon mode), no spec transition was performed — `spec 006` remains `approved` and the host-side generator will finalize it. Per instructions, I've made **no changes** to either prompt — the human reviewer owns the must-fix/recommendation decisions. | duration: 23242ms | cost: $8.6269 | tokens: 2 in / 6384 out
