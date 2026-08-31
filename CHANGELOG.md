@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.3
 
 - docs: document the frontmatter field-ownership contract in `docs/controller-design.md` — the `## Frontmatter Merge` section described blanket agent precedence, which v0.6.2 replaced; it now carries an ownership table (controller-owned `trigger_count`/`retry_count`, the terminal `status` pin, agent-owned everything else), a merge example demonstrating all three rules, the terminal short-circuit out of the escalation machinery, and the `ownership guard kept on-disk` log plus the Empty-to-Named Reset as the only counter-lowering path (spec 006)
 
