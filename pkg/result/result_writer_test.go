@@ -1893,6 +1893,43 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 			Expect(fakeGC.ReadFileCallCount()).To(BeNumerically(">=", 1))
 		})
 
+		// Regression: 2026-08-31. Two Schedule CRs sharing a name across the dev and
+		// prod fleets minted the same UUID5, so two task files carried one
+		// task_identifier. The match loop had no break and no duplicate check, so it
+		// silently kept the LAST path from an unsorted ListFiles — a result was written
+		// onto `Sentry Alert Fan-Out - 2026-08-31` and marked it done/completed for a
+		// run no executor performed. Picking either file is wrong; the only safe
+		// outcome is a loud error.
+		It("returns an error when two files share one task_identifier", func() {
+			fakeGC := &mocks.GitClient{}
+			fakeGC.ListFilesReturns([]string{"tasks/first.md", "tasks/second.md"}, nil)
+			fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: dup\n---\n"), nil)
+			fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: dup\n---\n"), nil)
+
+			matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "dup")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier"))
+			Expect(err.Error()).To(ContainSubstring("tasks/first.md"))
+			Expect(err.Error()).To(ContainSubstring("tasks/second.md"))
+			Expect(matchedRelPath).To(Equal(""))
+			Expect(fm).To(BeNil())
+		})
+
+		It("still resolves when a duplicate exists for a DIFFERENT identifier", func() {
+			fakeGC := &mocks.GitClient{}
+			fakeGC.ListFilesReturns(
+				[]string{"tasks/a.md", "tasks/b.md", "tasks/c.md"},
+				nil,
+			)
+			fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: dup\n---\n"), nil)
+			fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: dup\n---\n"), nil)
+			fakeGC.ReadFileReturnsOnCall(2, []byte("---\ntask_identifier: target\n---\n"), nil)
+
+			matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matchedRelPath).To(Equal("tasks/c.md"))
+		})
+
 		It("returns empty path when no file matches", func() {
 			fakeGC := &mocks.GitClient{}
 			fakeGC.ListFilesReturns([]string{"tasks/a.md"}, nil)

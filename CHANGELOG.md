@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: `FindTaskFilePath` now errors when two task files share one `task_identifier`, instead of silently keeping the last match from an unsorted `ListFiles`. Picking either file writes an agent's result onto a file that may belong to a different task. Observed 2026-08-31: two Schedule CRs sharing a name across the dev and prod fleets minted the same UUID5 (`recurring-task-creator` derives the identifier from the CR name, and both fleets publish into one vault), so `Sentry Alert Fan-Out - 2026-08-31` and `Daily Sentry Triage - 2026-08-31` both carried `a1651737-…`; the write-back marked the fan-out `phase: done` / `status: completed` carrying the other task's 42-alert analysis, for a run no executor ever performed. The error names both colliding paths and returns an empty path so no caller writes. All four call sites already propagate. The producer-side collision is fixed separately in bborbe/nuke#137.
+
 ## v0.6.2
 
 - fix: stop result writes from rolling back controller-owned state — the result writer now keeps the on-disk `trigger_count`/`retry_count` (an incoming payload can never reset them, so the trigger/retry caps compare against real spawn counts) and pins a terminal on-disk `status` (`aborted`/`completed`), so an operator abort survives every publish and a pinned-terminal task no longer accrues escalation sections (spec 006)
