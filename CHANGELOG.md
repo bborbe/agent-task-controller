@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.2
 
 - fix: stop result writes from rolling back controller-owned state — the result writer now keeps the on-disk `trigger_count`/`retry_count` (an incoming payload can never reset them, so the trigger/retry caps compare against real spawn counts) and pins a terminal on-disk `status` (`aborted`/`completed`), so an operator abort survives every publish and a pinned-terminal task no longer accrues escalation sections (spec 006)
 
