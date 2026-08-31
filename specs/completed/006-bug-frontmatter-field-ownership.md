@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-08-31T11:48:48Z"
 generating: "2026-08-31T11:48:48Z"
 prompted: "2026-08-31T12:10:29Z"
 verifying: "2026-08-31T12:32:26Z"
+completed: "2026-08-31T13:48:55Z"
 branch: dark-factory/bug-frontmatter-field-ownership
 ---
 
