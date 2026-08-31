@@ -56,6 +56,9 @@ type resultWriter struct {
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
 // the .md file whose frontmatter has task_identifier == id, plus the parsed existing frontmatter.
 // Returns ("", nil, nil) when no match is found (not an error).
+// Returns ("", nil, err) naming both paths when more than one file carries id: the match is
+// ambiguous, so no caller may write. Callers must check the error before treating an empty
+// path as "not found" — the two outcomes mean opposite things.
 func FindTaskFilePath(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
