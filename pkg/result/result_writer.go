@@ -56,6 +56,9 @@ type resultWriter struct {
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
 // the .md file whose frontmatter has task_identifier == id, plus the parsed existing frontmatter.
 // Returns ("", nil, nil) when no match is found (not an error).
+// Returns ("", nil, err) naming both paths when more than one file carries id: the match is
+// ambiguous, so no caller may write. Callers must check the error before treating an empty
+// path as "not found" — the two outcomes mean opposite things.
 func FindTaskFilePath(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -90,6 +93,20 @@ func FindTaskFilePath(
 		glog.V(3).
 			Infof("FindTaskFilePath: file %s has task_identifier=%s", relPath, fm.TaskIdentifier)
 		if lib.TaskIdentifier(fm.TaskIdentifier) == id {
+			// Two files sharing one task_identifier is never resolvable: picking
+			// either one writes an agent's result onto a file that may belong to a
+			// different task. The previous behaviour silently kept the LAST match
+			// from an unsorted ListFiles, which on 2026-08-31 marked
+			// `Sentry Alert Fan-Out - 2026-08-31` done/completed carrying another
+			// task's analysis, for a run no executor ever performed. Fail loudly
+			// instead — the caller must not write anything.
+			if matchedRelPath != "" {
+				return "", nil, errors.Errorf(
+					ctx,
+					"duplicate task_identifier %s in %s and %s",
+					id, matchedRelPath, relPath,
+				)
+			}
 			matchedRelPath = relPath
 			glog.V(2).Infof("FindTaskFilePath: matched file %s for task %s", matchedRelPath, id)
 			var existingFm lib.TaskFrontmatter
