@@ -71,7 +71,20 @@ The terminal `status` is pinned and the controller-owned counter keeps its on-di
 
 **Terminal short-circuit.** A terminal on-disk `status` takes the task out of the escalation machinery uniformly for both terminal statuses: no `## Trigger Cap Escalation` or `## Retry Escalation` section is appended, `assignee` is not cleared, `previous_assignee` is not written, `phase` is not restored by `restoreExistingPhase`, and an inherited `spawn_notification: true` key survives the write. Escalation exists to park a live runaway task, and a task an operator has already ended is not that.
 
-**Guard logging and the one reset path.** When the guard discards an incoming value that differs from the kept on-disk value, the writer emits one unconditional INFO line containing `ownership guard kept on-disk`, naming the task, the field, and both values. Equal values produce no log line, so steady-state publishes stay silent (a JSON-decoded incoming `float64` counter compares equal to a YAML-decoded on-disk `int`, and a status alias that normalizes to the same value is likewise silent). The scanner's Empty-to-Named Reset (see `## Empty-to-Named Reset (spec 021)`, which writes `trigger_count: 0` / `retry_count: 0` to disk) is the only mechanism that may lower a controller-owned counter.
+**Guard logging.** When the guard discards an incoming value that differs from the kept on-disk value, the writer emits one unconditional INFO line containing `ownership guard kept on-disk`, naming the task, the field, and both values. Equal values produce no log line, so steady-state publishes stay silent (a JSON-decoded incoming `float64` counter compares equal to a YAML-decoded on-disk `int`, and a status alias that normalizes to the same value is likewise silent).
+
+Comparison uses `frontmatterValueEqual`, never `==`. Frontmatter values are `any` decoded from YAML (on disk) or JSON (incoming), either of which can yield a map or a slice, and `==` on two `any` values holding the same uncomparable dynamic type panics at runtime with `comparing uncomparable type map[string]interface {}`. A panic here would kill the single result-write chokepoint, so the helper compares numerics by value across int/float representations and falls back to `reflect.DeepEqual`, which never panics.
+
+**What the guard does and does not cover.** The ownership guard is applied by `MergeFrontmatter`, which has exactly one call site: the result write-back path in `resultWriter`. The atomic frontmatter commands (`## Atomic Frontmatter Commands`) take a different route — `buildUpdateModifyFn` applies its `Updates` straight onto the on-disk frontmatter — and are therefore *not* subject to the guard.
+
+That separation is deliberate rather than an oversight. The guard exists to reject a stale spawn-time snapshot that would silently roll back concurrent controller writes; it is not meant to freeze the file against the system's own deliberate, explicitly-addressed writes. An `UpdateFrontmatterCommand` naming a field is an intentional write; an agent result payload carrying that field is a side effect of when the job happened to start.
+
+Two mechanisms may therefore legitimately lower a controller-owned counter, and both write to disk outside the guard:
+
+- the scanner's Empty-to-Named Reset (see `## Empty-to-Named Reset (spec 021)`), which writes `trigger_count: 0` / `retry_count: 0` when a task is re-delegated to a named assignee; and
+- a **trigger-scope reset**, published by the executor as an `UpdateFrontmatterCommand` when a task's `trigger_scope` (`<phase>:<ref[:8]>`) changes. It writes the new scope and `trigger_count: 1` in one atomic write — 1 rather than 0 because the spawn it precedes is the first attempt in the new scope. This is what lets the executor's trigger cap run by default instead of opt-in: a re-dispatch representing real progress (new phase, or a new commit on the target repo) earns a fresh budget, while repeated attempts at the same phase and ref burn the existing one down.
+
+What remains true in every case is the guard's actual purpose: no *agent result payload* can raise or lower a controller-owned counter, or revive a terminal status.
 
 ## Terminal Task Status (create-task dedup)
 
