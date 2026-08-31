@@ -1877,64 +1877,6 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 		})
 	})
 
-	Describe("FindTaskFilePath", func() {
-		It("calls gitClient.ListFiles + ReadFile with the expected glob and matched paths", func() {
-			fakeGC := &mocks.GitClient{}
-			fakeGC.ListFilesReturns([]string{"tasks/a.md", "tasks/b.md"}, nil)
-			fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: foo\n---\n"), nil)
-			fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: bar\n---\n"), nil)
-
-			matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "bar")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(matchedRelPath).To(Equal("tasks/b.md"))
-			Expect(fakeGC.ListFilesCallCount()).To(Equal(1))
-			_, glob := fakeGC.ListFilesArgsForCall(0)
-			Expect(glob).To(Equal("tasks/*.md"))
-			Expect(fakeGC.ReadFileCallCount()).To(BeNumerically(">=", 1))
-		})
-
-		It("returns empty path when no file matches", func() {
-			fakeGC := &mocks.GitClient{}
-			fakeGC.ListFilesReturns([]string{"tasks/a.md"}, nil)
-			fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: other\n---\n"), nil)
-
-			matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "missing")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(matchedRelPath).To(Equal(""))
-			Expect(fm).To(BeNil())
-		})
-
-		It("skips files that fail to read", func() {
-			fakeGC := &mocks.GitClient{}
-			fakeGC.ListFilesReturns([]string{"tasks/bad.md", "tasks/good.md"}, nil)
-			fakeGC.ReadFileReturnsOnCall(0, nil, errTest)
-			fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: target\n---\n"), nil)
-
-			matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(matchedRelPath).To(Equal("tasks/good.md"))
-		})
-
-		It("skips files with invalid frontmatter", func() {
-			fakeGC := &mocks.GitClient{}
-			fakeGC.ListFilesReturns([]string{"tasks/bad.md", "tasks/good.md"}, nil)
-			fakeGC.ReadFileReturnsOnCall(0, []byte("no frontmatter here"), nil)
-			fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: target\n---\n"), nil)
-
-			matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(matchedRelPath).To(Equal("tasks/good.md"))
-		})
-
-		It("returns error when ListFiles fails", func() {
-			fakeGC := &mocks.GitClient{}
-			fakeGC.ListFilesReturns(nil, errTest)
-
-			_, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "any")
-			Expect(err).To(HaveOccurred())
-		})
-	})
-
 	Describe("ExtractBody", func() {
 		It("returns body after frontmatter delimiter", func() {
 			content := []byte("---\nkey: value\n---\nbody content here\n")

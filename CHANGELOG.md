@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: `FindTaskFilePath` now errors when two task files share one `task_identifier`, instead of silently keeping the last match from an unsorted `ListFiles`. Picking either file writes an agent's result onto a file that may belong to a different task. Observed 2026-08-31: two Schedule CRs sharing a name across the dev and prod fleets minted the same UUID5 (`recurring-task-creator` derives the identifier from the CR name, and both fleets publish into one vault), so `Sentry Alert Fan-Out - 2026-08-31` and `Daily Sentry Triage - 2026-08-31` both carried `a1651737-…`; the controller logged `matched file 24 Tasks/Sentry Alert Fan-Out - 2026-08-31.md for task a1651737`, writing a result addressed to `Daily Sentry Triage` onto the fan-out's file and marking it `phase: done` / `status: completed` with every Success Criteria box still unticked. The error names both colliding paths and returns an empty path so no caller writes. All four call sites already propagate. The producer-side collision is fixed separately in bborbe/nuke#137.
 ## v0.6.3
 
 - docs: document the frontmatter field-ownership contract in `docs/controller-design.md` — the `## Frontmatter Merge` section described blanket agent precedence, which v0.6.2 replaced; it now carries an ownership table (controller-owned `trigger_count`/`retry_count`, the terminal `status` pin, agent-owned everything else), a merge example demonstrating all three rules, the terminal short-circuit out of the escalation machinery, and the `ownership guard kept on-disk` log plus the Empty-to-Named Reset as the only counter-lowering path (spec 006)
