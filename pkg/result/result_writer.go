@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
+	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
@@ -168,7 +170,16 @@ func (r *resultWriter) buildResultModifyFn(
 			return nil, errors.Wrapf(ctx, err, "unmarshal current frontmatter")
 		}
 
-		merged := mergeFrontmatter(currentOnDisk, req.Frontmatter)
+		merged, decisions := MergeFrontmatter(currentOnDisk, req.Frontmatter)
+		for _, d := range decisions {
+			glog.Infof(
+				"ownership guard kept on-disk: task %s field %s kept %v rejected %v",
+				req.TaskIdentifier,
+				d.Field,
+				d.Kept,
+				d.Rejected,
+			)
+		}
 		body := r.applyRetryCounter(merged, currentOnDisk, string(req.Content))
 
 		marshaledFrontmatter, err := yaml.Marshal(map[string]any(merged))
@@ -186,7 +197,7 @@ func (r *resultWriter) buildResultModifyFn(
 }
 
 func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, body string) string {
-	if string(merged.Status()) == "completed" {
+	if isTerminalStatus(merged.Status()) {
 		return body
 	}
 
@@ -350,9 +361,41 @@ func containsEscalationSection(body, header string) bool {
 	return strings.Contains(body, "\n"+header+"\n")
 }
 
-// mergeFrontmatter returns a new frontmatter map with all keys from existing,
-// overridden by all keys from incoming. Neither input map is modified.
-func mergeFrontmatter(existing, incoming lib.TaskFrontmatter) lib.TaskFrontmatter {
+// GuardDecision records a single ownership-guard discard: the merge kept the
+// on-disk value of a controller-owned field (or the pinned terminal status) and
+// rejected a differing incoming value. Equal values produce no decision.
+type GuardDecision struct {
+	Field    string
+	Kept     any
+	Rejected any
+}
+
+// controllerOwnedFields lists frontmatter keys whose on-disk value always wins:
+// the result writer never lets the agent's incoming value overwrite them, and an
+// incoming value can never introduce a controller-owned key that is absent on disk.
+var controllerOwnedFields = []string{
+	"trigger_count",
+	"retry_count",
+}
+
+// terminalStatuses lists the statuses that end a task's lifecycle. When the on-disk
+// status is terminal, the merge pins it (discarding the incoming status) and the
+// escalation machinery short-circuits. Terminal is decided via the normalizing
+// TaskFrontmatter.Status() accessor compared against these constants.
+var terminalStatuses = []domain.TaskStatus{
+	domain.TaskStatusCompleted,
+	domain.TaskStatusAborted,
+}
+
+// MergeFrontmatter returns a new frontmatter map with all keys from existing,
+// overridden by all keys from incoming, then applies the field-ownership guard:
+// controller-owned counters take the on-disk value when present on disk and are
+// absent from the result when not; a terminal on-disk status is pinned. The
+// returned decisions name every field whose differing incoming value was discarded
+// (equal values produce no decision). Neither input map is modified.
+func MergeFrontmatter(
+	existing, incoming lib.TaskFrontmatter,
+) (lib.TaskFrontmatter, []GuardDecision) {
 	merged := make(lib.TaskFrontmatter, len(existing)+len(incoming))
 	for k, v := range existing {
 		merged[k] = v
@@ -360,7 +403,88 @@ func mergeFrontmatter(existing, incoming lib.TaskFrontmatter) lib.TaskFrontmatte
 	for k, v := range incoming {
 		merged[k] = v
 	}
-	return merged
+	var decisions []GuardDecision
+
+	// Controller-owned counters: the on-disk value always wins when the key exists
+	// on disk (kept verbatim, whatever its type); a key absent on disk stays absent
+	// even if the incoming payload carries it.
+	for _, field := range controllerOwnedFields {
+		diskValue, onDisk := existing[field]
+		incomingValue, inIncoming := incoming[field]
+		if !onDisk {
+			if inIncoming {
+				delete(merged, field)
+			}
+			continue
+		}
+		merged[field] = diskValue
+		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
+			)
+		}
+	}
+
+	// Terminal on-disk status is pinned: the on-disk status value is kept and the
+	// incoming status is discarded. Terminal is decided by the normalizing Status()
+	// accessor compared against terminalStatuses, never by raw string equality on
+	// the unparsed value. The status decision is reported only when the normalized
+	// values differ (an incoming alias such as "done" against on-disk "completed"
+	// is normalized-equal and produces no decision).
+	if diskStatus, onDisk := existing["status"]; onDisk && isTerminalStatus(existing.Status()) {
+		merged["status"] = diskStatus
+		if incomingStatus, ok := incoming["status"]; ok && existing.Status() != incoming.Status() {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: "status", Kept: diskStatus, Rejected: incomingStatus},
+			)
+		}
+	}
+
+	return merged, decisions
+}
+
+func isTerminalStatus(s domain.TaskStatus) bool {
+	for _, t := range terminalStatuses {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+// frontmatterValueEqual reports whether two frontmatter values compare equal,
+// treating numeric int/float64 pairs as equal so a JSON-decoded incoming counter
+// (float64) equals a YAML-decoded on-disk counter (int) at steady state — equal
+// counters must produce no guard log line (DB 6).
+func frontmatterValueEqual(a, b any) bool {
+	// NEVER use `a == b` on two `any` values here. Go panics with
+	// "comparing uncomparable type map[string]interface {}" when both sides hold
+	// the same uncomparable dynamic type, and both sides come from YAML (on disk)
+	// or JSON (incoming payload) decoding, either of which can yield a map or a
+	// slice. A panic here would kill the single result-write chokepoint. The spec's
+	// Failure Modes table requires a non-integer on-disk counter to be kept
+	// verbatim, not to crash. reflect.DeepEqual never panics.
+	af, aOK := numericValue(a)
+	bf, bOK := numericValue(b)
+	if aOK && bOK {
+		return af == bf
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func numericValue(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 // ExtractFrontmatter returns the YAML frontmatter string between the opening and

@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: stop result writes from rolling back controller-owned state — the result writer now keeps the on-disk `trigger_count`/`retry_count` (an incoming payload can never reset them, so the trigger/retry caps compare against real spawn counts) and pins a terminal on-disk `status` (`aborted`/`completed`), so an operator abort survives every publish and a pinned-terminal task no longer accrues escalation sections (spec 006)
+
 ## v0.6.1
 
 - fix: recurring-task instances never reopen a terminal task file — a `create-task` from the `recurring-task-creator` publisher now holds the title path when the existing file's status is `completed`/`aborted` (the title-path file IS the recurring dedup state), so an hourly always-fire tick can no longer overwrite a completed recurring task with a blank `in_progress` instance; non-recurring per-alert commands keep the v0.6.0 reopen behavior

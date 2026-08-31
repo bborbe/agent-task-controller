@@ -222,7 +222,7 @@ var _ = Describe("ResultWriter", func() {
 					TaskIdentifier: identifier,
 					Frontmatter: lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
-						"status":          "done",
+						"status":          "in_progress",
 					},
 					Content: lib.TaskContent("First result\n"),
 				}
@@ -1378,15 +1378,21 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					// line-anchored to skip previous_assignee:
 
 					// Second write: operator re-delegates by setting a non-empty assignee.
-					// mergeFrontmatter preserves disk keys not present in incoming — previous_assignee:
-					// claude from disk is kept because agent payload does not contain previous_assignee.
+					// The scanner's Empty-to-Named Reset (spec 021) writes trigger_count: 0 to
+					// DISK on an empty→named assignee transition — it is NOT carried in the
+					// incoming payload. Rewrite the on-disk file to model that reset, retaining
+					// previous_assignee: claude so the persistence assertion tests persistence
+					// rather than re-creation.
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\ntrigger_count: 0\nmax_triggers: 3\nassignee: backtest-agent\nprevious_assignee: claude\n---\n## Task\nRetrying with backtest-agent.\n",
+					)
 					taskFile = lib.Task{
 						TaskIdentifier: identifier,
 						Frontmatter: lib.TaskFrontmatter{
 							"task_identifier": "test-task-uuid-1234",
 							"status":          "in_progress",
 							"phase":           "planning",
-							"trigger_count":   0, // operator reset
 							"max_triggers":    3,
 							"assignee":        "backtest-agent", // re-delegation
 						},
@@ -1489,6 +1495,224 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
 					Expect(s).To(ContainSubstring("assignee: sentry-collector-agent"))
 					Expect(s).NotTo(ContainSubstring("previous_assignee:"))
+				},
+			)
+
+			It(
+				"escalates on the on-disk trigger_count even when the incoming payload carries a stale lower value",
+				func() {
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "ai_review",
+							"trigger_count":   1, // stale snapshot — on-disk is 3
+							"max_triggers":    3,
+							"assignee":        "claude",
+						},
+						Content: lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).To(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(s).To(ContainSubstring("trigger_count: 3"))
+					Expect(s).NotTo(ContainSubstring("trigger_count: 1"))
+					Expect(s).To(ContainSubstring("assignee: \"\""))
+				},
+			)
+		})
+
+		Context("field ownership guard", func() {
+			DescribeTable(
+				"the on-disk counter always wins and an absent counter stays absent",
+				func(onDiskFM string, incomingFM lib.TaskFrontmatter, present, absent []string) {
+					writeTaskFile("my-task.md", "---\n"+onDiskFM+"---\n## Result\nStatus: failed\n")
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter:    incomingFM,
+						Content:        lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					for _, want := range present {
+						Expect(s).To(ContainSubstring(want))
+					}
+					for _, unwanted := range absent {
+						Expect(s).NotTo(ContainSubstring(unwanted))
+					}
+				},
+				Entry(
+					"keeps on-disk trigger_count over a stale incoming value",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 5\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"trigger_count":   1,
+					},
+					[]string{"trigger_count: 5"},
+					[]string{"trigger_count: 1"},
+				),
+				Entry(
+					"keeps on-disk retry_count over a stale incoming value",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nretry_count: 4\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"retry_count":     0,
+					},
+					[]string{"retry_count: 4"},
+					[]string{"retry_count: 0"},
+				),
+				Entry(
+					"incoming counters absent on disk are never written",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"trigger_count":   1,
+						"retry_count":     0,
+					},
+					[]string{},
+					[]string{"trigger_count", "retry_count"},
+				),
+			)
+
+			DescribeTable(
+				"a terminal on-disk status is pinned and the incoming status is discarded",
+				func(terminalStatus string) {
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: "+terminalStatus+"\nphase: ai_review\n---\n## Result\nStatus: failed\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "ai_review",
+						},
+						Content: lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).To(ContainSubstring("status: " + terminalStatus))
+					Expect(s).NotTo(ContainSubstring("status: in_progress"))
+				},
+				Entry("aborted", "aborted"),
+				Entry("completed", "completed"),
+				Entry("done (alias normalized to completed)", "done"),
+			)
+
+			It("pins only status and still records the agent payload on a terminal task", func() {
+				writeTaskFile(
+					"my-task.md",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: aborted\n---\nOld body\n",
+				)
+				taskFile = lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter: lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "execution",
+					},
+					Content: lib.TaskContent("## Result\nStatus: failed\n"),
+				}
+				Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+				written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+				s := string(written)
+				Expect(s).To(ContainSubstring("status: aborted"))
+				Expect(s).To(ContainSubstring("phase: execution"))
+				Expect(s).To(ContainSubstring("## Result"))
+				Expect(s).NotTo(ContainSubstring("status: in_progress"))
+			})
+
+			It(
+				"short-circuits the escalation machinery when the on-disk status is aborted (DB 4)",
+				func() {
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: aborted\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\nspawn_notification: true\n---\n## Result\nStatus: failed\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "ai_review",
+						},
+						Content: lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(s).To(ContainSubstring("\nassignee: claude"))
+					Expect(s).NotTo(ContainSubstring("previous_assignee"))
+					Expect(s).To(ContainSubstring("spawn_notification: true"))
+				},
+			)
+
+			It(
+				"short-circuits the escalation machinery when the on-disk status is completed (DB 4)",
+				func() {
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: completed\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: claude\nspawn_notification: true\n---\n## Result\nStatus: failed\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "ai_review",
+						},
+						Content: lib.TaskContent("## Result\nStatus: failed\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(s).To(ContainSubstring("\nassignee: claude"))
+					Expect(s).NotTo(ContainSubstring("previous_assignee"))
+					Expect(s).To(ContainSubstring("spawn_notification: true"))
+				},
+			)
+
+			It(
+				"still lets the agent own phase, status, and new keys on a non-terminal task (negative control)",
+				func() {
+					writeTaskFile(
+						"my-task.md",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: next\nphase: ai_review\n---\nOld body\n",
+					)
+					taskFile = lib.Task{
+						TaskIdentifier: identifier,
+						Frontmatter: lib.TaskFrontmatter{
+							"task_identifier": "test-task-uuid-1234",
+							"status":          "in_progress",
+							"phase":           "execution",
+							"custom_field":    "from-agent",
+						},
+						Content: lib.TaskContent("New body\n"),
+					}
+					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+					s := string(written)
+					Expect(s).To(ContainSubstring("status: in_progress"))
+					Expect(s).To(ContainSubstring("phase: execution"))
+					Expect(s).To(ContainSubstring("custom_field: from-agent"))
+					Expect(s).NotTo(ContainSubstring("phase: ai_review"))
 				},
 			)
 		})
