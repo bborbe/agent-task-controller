@@ -6,11 +6,16 @@ package result_test
 
 import (
 	"context"
+	stdtime "time"
 
+	lib "github.com/bborbe/agent"
+	libtime "github.com/bborbe/time"
+	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
@@ -112,5 +117,68 @@ var _ = Describe("FindTaskFilePath", func() {
 
 		_, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "any")
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+// Bounded retry on a not-found task file. The controller lists files over git-rest
+// HTTP rather than a local clone, so a result can arrive before the file it belongs
+// to is visible; without a retry that result is dropped for good. Retrying in-process
+// (rather than returning an error) is deliberate — the consumer runs
+// SkipCorruptBatches:false, so erroring on a permanently-missing file would block the
+// partition.
+var _ = Describe("WriteResult not-found retry", func() {
+	var (
+		ctx      context.Context
+		fakeGit  *mocks.GitClient
+		fakeTime *libtimemocks.CurrentDateTimeGetter
+		fakeWait *libtimemocks.WaiterDuration
+		writer   result.ResultWriter
+		taskDir  string
+		task     lib.Task
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		taskDir = "tasks"
+		fakeGit = &mocks.GitClient{}
+		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
+		fakeTime.NowReturns(libtime.DateTime(stdtime.Date(2026, 8, 31, 12, 0, 0, 0, stdtime.UTC)))
+		fakeWait = &libtimemocks.WaiterDuration{}
+		writer = result.NewResultWriter(fakeGit, taskDir, fakeTime, metrics.New(), fakeWait)
+		task = lib.Task{TaskIdentifier: "late-arrival"}
+	})
+
+	It("retries and resolves when the file appears on a later attempt", func() {
+		// First sweep sees nothing (git-rest has not pulled yet), second sees the file.
+		fakeGit.ListFilesReturnsOnCall(0, []string{}, nil)
+		fakeGit.ListFilesReturnsOnCall(1, []string{"tasks/late.md"}, nil)
+		fakeGit.ReadFileReturns(
+			[]byte("---\ntask_identifier: late-arrival\nstatus: in_progress\n---\nbody\n"),
+			nil,
+		)
+
+		err := writer.WriteResult(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(2))
+		Expect(fakeWait.WaitCallCount()).To(Equal(1))
+	})
+
+	It("gives up after the attempt budget without returning an error", func() {
+		// A permanently missing file must NOT error — that would block the partition.
+		fakeGit.ListFilesReturns([]string{}, nil)
+
+		err := writer.WriteResult(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(3))
+		Expect(fakeWait.WaitCallCount()).To(Equal(2))
+	})
+
+	It("propagates a cancelled context from the wait instead of spinning", func() {
+		fakeGit.ListFilesReturns([]string{}, nil)
+		fakeWait.WaitReturns(context.Canceled)
+
+		err := writer.WriteResult(ctx, task)
+		Expect(err).To(HaveOccurred())
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
 	})
 })

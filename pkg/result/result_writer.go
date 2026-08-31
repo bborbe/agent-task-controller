@@ -37,12 +37,14 @@ func NewResultWriter(
 	taskDir string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
+	waiter libtime.WaiterDuration,
 ) ResultWriter {
 	return &resultWriter{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
 		currentDateTime: currentDateTime,
 		metrics:         m,
+		waiter:          waiter,
 	}
 }
 
@@ -51,7 +53,26 @@ type resultWriter struct {
 	taskDir         string
 	currentDateTime libtime.CurrentDateTimeGetter
 	metrics         metrics.Metrics
+	waiter          libtime.WaiterDuration
 }
+
+// notFoundAttempts is the total number of times WriteResult looks for the task file
+// before giving up, and notFoundBackoff is the pause between those attempts.
+//
+// A miss is not always permanent: the controller lists files over git-rest's HTTP API
+// rather than a local clone, and git-rest pulls on a timer, so a result can arrive
+// before the file it belongs to is visible. Without a retry that result is dropped for
+// good — WriteResult acks the Kafka message either way.
+//
+// Retrying in-process rather than by returning an error is deliberate. The consumer runs
+// SkipCorruptBatches:false on an offset consumer, so a message that keeps failing is
+// never skipped; returning an error for a permanently-missing file (deleted or renamed
+// task) would block the partition and halt the controller. An in-process retry bounds the
+// cost at notFoundBackoff*(notFoundAttempts-1) per miss and always lets the offset advance.
+const (
+	notFoundAttempts = 3
+	notFoundBackoff  = libtime.Duration(time.Second)
+)
 
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
 // the .md file whose frontmatter has task_identifier == id, plus the parsed existing frontmatter.
@@ -125,18 +146,53 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 	glog.V(2).Infof("WriteResult: starting for task %s", req.TaskIdentifier)
 	glog.V(3).Infof("WriteResult: scanning taskDir=%s", r.taskDir)
 
-	matchedRelPath, _, err := FindTaskFilePath(
-		ctx,
-		r.gitClient,
-		r.taskDir,
-		req.TaskIdentifier,
-	)
-	if err != nil {
-		return errors.Wrapf(ctx, err, "find task file path failed")
+	var matchedRelPath string
+	for attempt := 1; attempt <= notFoundAttempts; attempt++ {
+		var err error
+		matchedRelPath, _, err = FindTaskFilePath(
+			ctx,
+			r.gitClient,
+			r.taskDir,
+			req.TaskIdentifier,
+		)
+		if err != nil {
+			return errors.Wrapf(ctx, err, "find task file path failed")
+		}
+		if matchedRelPath != "" {
+			if attempt > 1 {
+				// Unconditional: this is the only signal separating a transient
+				// git-rest lag miss from a permanent one, and the `not_found`
+				// alert threshold is tuned from that split.
+				glog.Infof(
+					"task file for identifier %s resolved on attempt %d of %d",
+					req.TaskIdentifier,
+					attempt,
+					notFoundAttempts,
+				)
+			}
+			break
+		}
+		if attempt == notFoundAttempts {
+			break
+		}
+		glog.V(2).Infof(
+			"task file not found for identifier %s on attempt %d of %d, retrying in %v",
+			req.TaskIdentifier,
+			attempt,
+			notFoundAttempts,
+			notFoundBackoff,
+		)
+		if waitErr := r.waiter.Wait(ctx, notFoundBackoff); waitErr != nil {
+			return errors.Wrapf(ctx, waitErr, "wait before retrying task file lookup")
+		}
 	}
 
 	if matchedRelPath == "" {
-		glog.Warningf("task file not found for identifier %s, skipping", req.TaskIdentifier)
+		glog.Warningf(
+			"task file not found for identifier %s after %d attempts, skipping",
+			req.TaskIdentifier,
+			notFoundAttempts,
+		)
 		r.metrics.ResultsWrittenTotal("not_found").Inc()
 		return nil
 	}
