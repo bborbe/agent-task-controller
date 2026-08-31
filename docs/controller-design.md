@@ -51,13 +51,27 @@ The controller reads a required `VAULT_NAME` env var (CLI flag `--vault-name`) a
 
 ## Frontmatter Merge
 
-When writing a result back, the ResultWriter merges frontmatter from the existing task file with frontmatter provided by the agent. Existing keys are preserved, agent keys override on conflict. This ensures fields like `assignee`, `tags`, and `task_identifier` survive result writeback even though agents don't receive frontmatter.
+When writing a result back, the ResultWriter merges frontmatter from the existing task file with frontmatter provided by the agent. Existing keys are preserved and agent keys override on conflict — but only for agent-owned keys. This ensures fields like `assignee`, `tags`, and `task_identifier` survive result writeback even though agents don't receive frontmatter, while two field classes stay under controller control regardless of what the agent publishes.
+
+The agent's payload is built from the `TASK_CONTENT` snapshot injected at spawn, so it always describes the task as it looked *before* the run. Without an ownership rule a stale snapshot silently rolls back anything the controller changed in the meantime.
+
+| Ownership | Fields | Rule |
+|---|---|---|
+| Controller-owned | `trigger_count`, `retry_count` | The on-disk value always wins. An incoming value can never introduce a controller-owned key that is absent on disk. |
+| Controller-owned (terminal pin) | `status` | A terminal on-disk status (`completed` or `aborted`, decided by the normalizing `Status()` accessor) is pinned and the incoming status is discarded. The write is a pin, not a freeze — `phase`, the agent's result fields, and the body still land. |
+| Agent-owned | everything else | Incoming value wins on conflict (unchanged). |
 
 ```
-Existing file:  {assignee: backtest-agent, tags: [agent-task], task_identifier: xyz}
-Agent provides: {status: completed, phase: done}
-Merged result:  {assignee: backtest-agent, tags: [agent-task], task_identifier: xyz, status: completed, phase: done}
+Existing file:  {status: aborted, trigger_count: 5, phase: ai_review}
+Agent provides: {status: in_progress, trigger_count: 1, phase: execution}
+Merged result:  {status: aborted, trigger_count: 5, phase: execution}
 ```
+
+The terminal `status` is pinned and the controller-owned counter keeps its on-disk value, while the agent-owned `phase` still lands.
+
+**Terminal short-circuit.** A terminal on-disk `status` takes the task out of the escalation machinery uniformly for both terminal statuses: no `## Trigger Cap Escalation` or `## Retry Escalation` section is appended, `assignee` is not cleared, `previous_assignee` is not written, `phase` is not restored by `restoreExistingPhase`, and an inherited `spawn_notification: true` key survives the write. Escalation exists to park a live runaway task, and a task an operator has already ended is not that.
+
+**Guard logging and the one reset path.** When the guard discards an incoming value that differs from the kept on-disk value, the writer emits one unconditional INFO line containing `ownership guard kept on-disk`, naming the task, the field, and both values. Equal values produce no log line, so steady-state publishes stay silent (a JSON-decoded incoming `float64` counter compares equal to a YAML-decoded on-disk `int`, and a status alias that normalizes to the same value is likewise silent). The scanner's Empty-to-Named Reset (see `## Empty-to-Named Reset (spec 021)`, which writes `trigger_count: 0` / `retry_count: 0` to disk) is the only mechanism that may lower a controller-owned counter.
 
 ## Terminal Task Status (create-task dedup)
 
