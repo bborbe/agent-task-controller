@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -50,23 +51,6 @@ type resultWriter struct {
 	taskDir         string
 	currentDateTime libtime.CurrentDateTimeGetter
 	metrics         metrics.Metrics
-}
-
-// controllerOwnedFields lists frontmatter keys whose on-disk value always wins:
-// the result writer never lets the agent's incoming value overwrite them, and an
-// incoming value can never introduce a controller-owned key that is absent on disk.
-var controllerOwnedFields = []string{
-	"trigger_count",
-	"retry_count",
-}
-
-// terminalStatuses lists the statuses that end a task's lifecycle. When the on-disk
-// status is terminal, the merge pins it (discarding the incoming status) and the
-// escalation machinery short-circuits. Terminal is decided via the normalizing
-// TaskFrontmatter.Status() accessor compared against these constants.
-var terminalStatuses = []domain.TaskStatus{
-	domain.TaskStatusCompleted,
-	domain.TaskStatusAborted,
 }
 
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
@@ -386,6 +370,23 @@ type GuardDecision struct {
 	Rejected any
 }
 
+// controllerOwnedFields lists frontmatter keys whose on-disk value always wins:
+// the result writer never lets the agent's incoming value overwrite them, and an
+// incoming value can never introduce a controller-owned key that is absent on disk.
+var controllerOwnedFields = []string{
+	"trigger_count",
+	"retry_count",
+}
+
+// terminalStatuses lists the statuses that end a task's lifecycle. When the on-disk
+// status is terminal, the merge pins it (discarding the incoming status) and the
+// escalation machinery short-circuits. Terminal is decided via the normalizing
+// TaskFrontmatter.Status() accessor compared against these constants.
+var terminalStatuses = []domain.TaskStatus{
+	domain.TaskStatusCompleted,
+	domain.TaskStatusAborted,
+}
+
 // MergeFrontmatter returns a new frontmatter map with all keys from existing,
 // overridden by all keys from incoming, then applies the field-ownership guard:
 // controller-owned counters take the on-disk value when present on disk and are
@@ -458,12 +459,19 @@ func isTerminalStatus(s domain.TaskStatus) bool {
 // (float64) equals a YAML-decoded on-disk counter (int) at steady state — equal
 // counters must produce no guard log line (DB 6).
 func frontmatterValueEqual(a, b any) bool {
-	if a == b {
-		return true
-	}
+	// NEVER use `a == b` on two `any` values here. Go panics with
+	// "comparing uncomparable type map[string]interface {}" when both sides hold
+	// the same uncomparable dynamic type, and both sides come from YAML (on disk)
+	// or JSON (incoming payload) decoding, either of which can yield a map or a
+	// slice. A panic here would kill the single result-write chokepoint. The spec's
+	// Failure Modes table requires a non-integer on-disk counter to be kept
+	// verbatim, not to crash. reflect.DeepEqual never panics.
 	af, aOK := numericValue(a)
 	bf, bOK := numericValue(b)
-	return aOK && bOK && af == bf
+	if aOK && bOK {
+		return af == bf
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func numericValue(v any) (float64, bool) {
