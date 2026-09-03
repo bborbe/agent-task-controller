@@ -59,6 +59,7 @@ The agent's payload is built from the `TASK_CONTENT` snapshot injected at spawn,
 |---|---|---|
 | Controller-owned | `trigger_count`, `retry_count` | The on-disk value always wins. An incoming value can never introduce a controller-owned key that is absent on disk. |
 | Controller-owned (terminal pin) | `status` | A terminal on-disk status (`completed` or `aborted`, decided by the normalizing `Status()` accessor) is pinned and the incoming status is discarded. The write is a pin, not a freeze — `phase`, the agent's result fields, and the body still land. |
+| Operator-owned | `assignee`, `previous_assignee` | The on-disk value always wins when the key exists on disk. An incoming value may introduce a key absent on disk (a spawn/claim names an assignee on a task that never carried one) — unlike controller-owned counters. Exception for `assignee` only: an incoming empty string is always applied, as the deliverer's deliberate Failed/needs_input clear (spec 039) rather than a stale snapshot, and produces no guard decision or log line. |
 | Agent-owned | everything else | Incoming value wins on conflict (unchanged). |
 
 ```
@@ -68,6 +69,8 @@ Merged result:  {status: aborted, trigger_count: 5, phase: execution}
 ```
 
 The terminal `status` is pinned and the controller-owned counter keeps its on-disk value, while the agent-owned `phase` still lands.
+
+**Body merge.** The body is merged by heading rather than replaced wholesale: an on-disk heading absent from the incoming body is preserved in place with its content, so an operator `## Parked` section recording a park reason and resume options survives the write; a heading present in both bodies is replaced in place by the incoming content, so the agent's fresh `## Result` lands; and a heading present only in the incoming body is appended after the last on-disk section. The preamble follows the same rule: text before the first `## ` heading is preserved from the on-disk file only when the incoming body starts with a heading (no preamble); an incoming body that carries its own preamble replaces the on-disk preamble; and a body with no `## ` heading at all is preamble-only on both sides, so an incoming preamble-only body still replaces an on-disk preamble-only body. A bare `---` line is never treated as a heading and is preserved unescaped, and both `\n` and `\r\n` line endings are tolerated. Escalation sections still append exactly once: an on-disk `## Trigger Cap Escalation` or `## Retry Escalation` section survives the merge, so the dedup check still sees it and does not append a duplicate.
 
 **Terminal short-circuit.** A terminal on-disk `status` takes the task out of the escalation machinery uniformly for both terminal statuses: no `## Trigger Cap Escalation` or `## Retry Escalation` section is appended, `assignee` is not cleared, `previous_assignee` is not written, `phase` is not restored by `restoreExistingPhase`, and an inherited `spawn_notification: true` key survives the write. Escalation exists to park a live runaway task, and a task an operator has already ended is not that.
 

@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [007-bug-writeback-clobbers-operator-edits]
+summary: Documented the operator-owned row (assignee/previous_assignee) and the by-heading body merge in docs/controller-design.md Frontmatter Merge section
+execution_id: agent-task-controller-writeback-merge-exec-013-spec-007-docs-frontmatter-merge-operator-owned
+dark-factory-version: dev
 created: "2026-09-03T18:15:22Z"
 queued: "2026-09-03T18:23:07Z"
+started: "2026-09-03T19:16:48Z"
+completed: "2026-09-03T19:18:35Z"
 branch: dark-factory/bug-writeback-clobbers-operator-edits
 ---
 
