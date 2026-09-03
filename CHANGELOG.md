@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- chore: bump golang.org/x/crypto to v0.56.0 (fixes GO-2026-6354 / GO-2026-6355, ssh DoS on deadlocked channels)
+## v0.6.7
+
+- fix: stop permanently losing results when two different `task_identifier`s collide on one title path — when a `create-task` finds its title path occupied by a live task of a DIFFERENT identifier (a filename collision between two distinct tasks, not a re-publish of the same one), the create now disambiguates the path with a short-identifier suffix (`{Title} - {id[:8]}.md`) and materializes the task anyway, instead of returning `ErrTaskAlreadyExists` and orphaning the losing identifier. Previously the loser never got a file, so `WriteResult`'s bounded git-rest-lag retry could never resolve it and every result for that identifier was dropped silently forever (the `not_found` skip) at ~88/hour on prod. Same-identifier re-publishes keep the existing benign `ErrTaskAlreadyExists` outcome (idempotent, nothing lost), terminal-status files keep their reopen / recurring-hold semantics, and unreadable occupiers still fail closed. Also bumps `golang.org/x/crypto` v0.55.0 → v0.56.0 (GO-2026-6354/GO-2026-6355 ssh DoS) to clear the vulncheck gate.
 
 ## v0.6.6
 
