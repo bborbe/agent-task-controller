@@ -200,4 +200,19 @@ var _ = Describe("MergeFrontmatter", func() {
 			Expect(merged["assignee"]).To(Equal("claude"))
 		},
 	)
+
+	It(
+		"does not panic on a non-string incoming assignee and keeps the on-disk value",
+		func() {
+			// A malformed payload can decode assignee as an uncomparable slice; the
+			// empty-clear comparison must type-assert, never == on any (spec 007,
+			// same doctrine as frontmatterValueEqual).
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": []any{"x"}}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
 })

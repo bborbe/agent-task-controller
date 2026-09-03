@@ -672,9 +672,15 @@ func applyOperatorOwnedFields(
 		if !onDisk {
 			continue // incoming may introduce the key (already merged above)
 		}
-		if inIncoming && field == "assignee" && incomingValue == "" {
-			merged[field] = incomingValue
-			continue
+		if inIncoming && field == "assignee" {
+			// The deliverer's empty-assignee clear is the string "". A non-string
+			// incoming value (malformed payload) must not panic the merge — the
+			// type-assert keeps this comparison panic-free, same doctrine as
+			// frontmatterValueEqual (spec 006).
+			if incomingString, ok := incomingValue.(string); ok && incomingString == "" {
+				merged[field] = incomingValue
+				continue
+			}
 		}
 		merged[field] = diskValue
 		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
