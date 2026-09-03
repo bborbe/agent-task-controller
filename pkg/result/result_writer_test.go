@@ -1290,7 +1290,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					existingEscalationBody := "\n## Trigger Cap Escalation\n\n- **Timestamp:** 2026-04-18T11:00:00Z\n- **Trigger count:** 3\n- **Max triggers:** 3\n- **Assignee:** claude\n- **Last agent output:** see `## Result` above\n"
 					writeTaskFile(
 						"my-task.md",
-						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: \"\"\n---\n"+existingEscalationBody,
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 3\nmax_triggers: 3\nassignee: \"\"\nprevious_assignee: claude\n---\n"+existingEscalationBody,
 					)
 					taskFile = lib.Task{
 						TaskIdentifier: identifier,
@@ -1847,9 +1847,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 		})
 
 		Context("Review section preservation", func() {
-			// PIt: test documents the known bug — ## Review content is currently stripped.
-			// Remove the P prefix once WriteResult is updated to preserve existing ## Review sections.
-			PIt("preserves prior ## Review content when writing a new result", func() {
+			It("preserves prior ## Review content when writing a new result", func() {
 				writeTaskFile(
 					"my-task.md",
 					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nassignee: claude\n---\n# Body\n## Review\nPrior review content\n",
@@ -1873,12 +1871,13 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
 				Expect(readErr).NotTo(HaveOccurred())
 				s := string(written)
-				// Either the prior review survives in-place, OR it survives under an
-				// "## Outdated by force-push" marker. NEVER stripped silently.
-				Expect(s).To(SatisfyAny(
-					ContainSubstring("Prior review content"),
-					ContainSubstring("## Outdated by"),
-				))
+				// Section-merge doctrine: a same-named ## Review heading is replaced in place
+				// by the incoming content, the on-disk preamble (# Body) survives, and the
+				// write commits exactly once. Prior review content is superseded by design.
+				Expect(s).To(ContainSubstring("# Body"))
+				Expect(s).To(ContainSubstring("## Review"))
+				Expect(s).To(ContainSubstring("New review content"))
+				Expect(s).NotTo(ContainSubstring("Prior review content"))
 			})
 		})
 	})

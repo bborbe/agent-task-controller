@@ -1,7 +1,14 @@
 ---
-spec: ["007-bug-writeback-clobbers-operator-edits"]
-status: draft
+status: completed
+spec: [007-bug-writeback-clobbers-operator-edits]
+summary: 'Made assignee/previous_assignee operator-owned in MergeFrontmatter (on-disk value wins over stale snapshots, with the empty-assignee deliverer-clear exception) and merged the result body by markdown heading so operator-authored sections like ## Parked survive every write, proven by 16 new unit/guard specs through the full WriteResult path; make precommit exits 0'
+execution_id: agent-task-controller-writeback-merge-exec-012-spec-007-operator-owned-assignee-and-body-merge
+dark-factory-version: dev
 created: "2026-09-03T18:15:22Z"
+queued: "2026-09-03T18:23:07Z"
+started: "2026-09-03T19:03:53Z"
+completed: "2026-09-03T19:16:46Z"
+branch: dark-factory/bug-writeback-clobbers-operator-edits
 ---
 
 # Operator-owned assignee/previous_assignee guard, empty-clear exception, body section-merge, unit specs, carve-outs, PIt rewrite, changelog
@@ -13,7 +20,7 @@ created: "2026-09-03T18:15:22Z"
 - A task that never carried an `assignee` can still be assigned by a spawn/claim: the new operator-owned rule introduces an absent key instead of deleting it (unlike controller-owned counters), so introducibility does not regress.
 - The body write is now a section-level merge instead of full replacement: on-disk-only headings like `## Parked` are preserved in place with their content, same-named headings are replaced by the agent's fresh content, and the on-disk preamble survives when the incoming body starts with a heading.
 - Heading-less bodies keep today's full-replacement behavior; a bare `---` line is never treated as a heading and stays unescaped; CRLF line endings in the on-disk body are tolerated.
-- Escalation sections still append exactly once: an on-disk `## Trigger Cap Escalation` / `## Retry Escalation` section now survives the merge, so the `containsEscalationSection` dedup keeps working and no duplicate is appended.
+- Escalation sections still append exactly once: an on-disk `## Trigger Cap Escalation` / `## Retry Escalation` section now survives the merge, so the duplicate-escalation guard keeps working and no duplicate is appended.
 - Existing tests pass with `Expect(` lines unmodified, with exactly two carve-outs: the already-parked-task fixture gains its realistic `previous_assignee: claude`, and the pending `## Review` spec is un-pended and rewritten to assert the section-merge doctrine.
 - New unit specs prove every row of the operator-owned matrix, every body-merge case, the CRLF tolerance, and the guard decisions — all through the full `WriteResult` file-write path.
 - The changelog records the fix under `## Unreleased` naming both the assignee ownership guard and the body section merge.
@@ -22,7 +29,7 @@ created: "2026-09-03T18:15:22Z"
 
 <objective>
 
-Make the result-write chokepoint (`pkg/result`) stop clobbering operator edits: `assignee` and `previous_assignee` become operator-owned in `MergeFrontmatter` (on-disk value always wins, with the deliverer's empty-`assignee` clear as the only exception), and `buildResultModifyFn` merges the body by heading so operator-authored sections survive every write-back — proven by unit specs in `pkg/result` through the existing mock-git harness.
+Make the result-write chokepoint stop clobbering operator edits: `assignee` and `previous_assignee` become operator-owned (the on-disk value always wins, with the deliverer's empty-`assignee` clear as the only exception), and the body is merged by heading so operator-authored sections survive every write-back — proven by unit specs through the existing mock-git harness.
 
 </objective>
 

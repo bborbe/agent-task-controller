@@ -111,4 +111,93 @@ var _ = Describe("MergeFrontmatter", func() {
 			Expect(merged["retry_count"]).To(Equal([]interface{}{1, 2}))
 		},
 	)
+
+	It(
+		"reports exactly one decision naming assignee with the kept and rejected values when the on-disk assignee differs",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "other"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("claude"))
+			Expect(decisions[0].Rejected).To(Equal("other"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It("reports zero decisions when the on-disk assignee equals the incoming assignee", func() {
+		existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+		incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+		merged, decisions := result.MergeFrontmatter(existing, incoming)
+		Expect(decisions).To(HaveLen(0))
+		Expect(merged["assignee"]).To(Equal("claude"))
+	})
+
+	It(
+		"applies an incoming empty assignee over a non-empty on-disk value without reporting a decision (deliverer clear exception)",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": ""}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal(""))
+		},
+	)
+
+	It("reports zero decisions when an incoming assignee introduces a key absent on disk", func() {
+		existing := lib.TaskFrontmatter{"status": "in_progress"}
+		incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "backtest-agent"}
+		merged, decisions := result.MergeFrontmatter(existing, incoming)
+		Expect(decisions).To(HaveLen(0))
+		Expect(merged["assignee"]).To(Equal("backtest-agent"))
+	})
+
+	It(
+		"keeps the on-disk previous_assignee over a differing incoming value and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "B"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("previous_assignee"))
+			Expect(decisions[0].Kept).To(Equal("A"))
+			Expect(decisions[0].Rejected).To(Equal("B"))
+			Expect(merged["previous_assignee"]).To(Equal("A"))
+		},
+	)
+
+	It(
+		"does not treat an empty incoming previous_assignee as a clear — the on-disk value wins and a decision is reported",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": ""}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("previous_assignee"))
+			Expect(merged["previous_assignee"]).To(Equal("A"))
+		},
+	)
+
+	It(
+		"reports both the counter decision and the operator-owned decision when both differ (additive rule)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": 3,
+				"assignee":      "claude",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": 1,
+				"assignee":      "other",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(2))
+			Expect(decisions[0].Field).To(Equal("trigger_count"))
+			Expect(decisions[1].Field).To(Equal("assignee"))
+			Expect(merged["trigger_count"]).To(Equal(3))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
 })

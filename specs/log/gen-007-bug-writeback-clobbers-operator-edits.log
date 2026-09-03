@@ -747,3 +747,296 @@ Let me verify the files exist first, then launch both auditors in parallel.
 
 
 [20:17:13] $ ls -la prompts/*spec-007* && echo "---" && wc -l prompts/*spec-007*
+[20:17:17] Both files exist. Now running the audit pass — invoking the `prompt-auditor` agent on each prompt in parallel.
+
+
+[20:17:17] [agent:dark-factory:prompt-auditor] Audit prompt 1 (code change)
+    prompt: Audit the dark-factory prompt file `prompts/1-spec-007-operator-owned-assignee-and-body-merge.md` (path relative to the repo root, which is the current working…
+[20:17:17] [system: background_tasks_changed]
+[20:17:17] [system: task_started]
+[20:17:17]   ← agent reply: Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)
+[20:17:17] [agent:dark-factory:prompt-auditor] Audit prompt 2 (docs update)
+    prompt: Audit the dark-factory prompt file `prompts/2-spec-007-docs-frontmatter-merge-operator-owned.md` (path relative to the repo root, which is the current working …
+[20:17:17] [system: background_tasks_changed]
+[20:17:17] [system: task_started]
+[20:17:17]   ← agent reply: Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)
+[20:17:18] 💭 Let me start by reading the prompt file and the spec. Let me also check the project structure.
+[20:17:18] 💭 Let me start by reading the prompt file and the relevant spec and docs. Let me work through this systematically.
+
+First, read the prompt file at `prompts/2-spec-007-docs-frontmatter-merge-operator-owned.md`.
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] [system: thinking_tokens]
+[20:17:18] I'll audit this prompt systematically. Let me start by reading the prompt file and the key referenced files.
+
+
+[20:17:18] [read] /workspace/prompts/2-spec-007-docs-frontmatter-merge-operator-owned.md
+[20:17:18] [system: task_progress]
+[20:17:18] [read] /workspace/specs/in-progress/007-bug-writeback-clobbers-operator-edits.md
+[20:17:18] [system: task_progress]
+[20:17:18] [system: thinking_tokens]
+[20:17:19]   → 91 lines read
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19]   → 207 lines read
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] I'll start by reading the prompt file and the spec it derives from, plus exploring the repo structure.
+
+
+[20:17:19] [read] /workspace/prompts/1-spec-007-operator-owned-assignee-and-body-merge.md
+[20:17:19] [system: task_progress]
+[20:17:19] [read] /workspace/specs/in-progress/007-bug-writeback-clobbers-operator-edits.md
+[20:17:19] [system: task_progress]
+[20:17:19] $ ls -la /workspace/ && echo "---PROMPTS---" && ls -la /workspace/prompts/ && echo "---SPECS---" && ls -la /workspace/specs/ && ls -la /workspace/specs/in-progress/ 2>/dev/null
+[20:17:19] [system: task_progress]
+[20:17:19] [system: thinking_tokens]
+[20:17:19]   → 207 lines read
+[20:17:19]   → 552 lines read
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] 💭 Now let me verify the actual doc file. Let me read `docs/controller-design.md` around the "Frontmatter Merge" section.
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:19] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:20] [system: thinking_tokens]
+[20:17:21] [system: thinking_tokens]
+[20:17:21] 💭 Both audit agents are running in the background. I'll wait for their completion notifications. Since I'm in Mode 1 (DARK_FACTORY_MANAGED=true), I'll skip the mark-prompted step.
+
+I should wait for the notifications. There's nothing else to do right now — the two audit agents are independent and I need their results. Let me just wait. I shouldn't do anything that duplicates their work.
+
+I'll simply pause here and wait for the completion notifications. Since this is an interactive turn, I should r…
+[20:17:21] Now let me verify the actual doc file and the referenced Go source. Let me read the Frontmatter Merge section of the doc and check the section boundaries.
+
+
+[20:17:21] $ grep -n '^## ' /workspace/docs/controller-design.md
+[20:17:21] [system: task_progress]
+[20:17:21] $ grep -n 'operatorOwnedFields\|buildResultModifyFn\|controllerOwnedFields' /workspace/pkg/result/result_writer.go
+[20:17:21] [system: task_progress]
+[20:17:22] Both audit agents are now running in the background — one on `prompts/1-spec-007-operator-owned-assignee-and-body-merge.md`, one on `prompts/2-spec-007-docs-frontmatter-merge-operator-owned.md`. I'll collect their reports when they complete and then assemble the final output.
+
+Status so far:
+- **Creator**: 2 prompt files written to `prompts/` (inbox), following the spec's Suggested Decomposition (code prompt `1-`, docs prompt `2-`), with all cited symbols grep-verified against the repo and git kept out of `<verification>` due to the masked `.git` in this container.
+- **Mode**: `DARK_FACTORY_MANAGED=true` → daemon mode, so the `mark-prompted` transition will be skipped (host-side generator finalizes the spec).
+
+Waiting on the two audit reports.
+[20:17:22] 💭 Let me now read the actual source files. First let me check the dark-factory config, then read the key source files.
+
+The repo root is `/workspace`. Note: `.git` is a character device (crw-rw-rw-), confirming the masked git situation. Let me confirm `.dark-factory.yaml`.
+
+Let me look at:
+- `.dark-factory.yaml` for hideGit / workflow settings
+- `pkg/result/result_writer.go` (22KB)
+- `pkg/result/result_writer_test.go` (1920 lines)
+- `pkg/result/result_writer_guard_test.go` (115 lines)
+- `CHANGELOG…
+[20:17:23] Now let me examine the dark-factory config, the source files, and the mounts.
+
+
+[20:17:23] [read] /workspace/.dark-factory.yaml
+[20:17:23] [system: task_progress]
+[20:17:23] $ ls -la pkg/result/ && echo "---" && wc -l pkg/result/result_writer.go pkg/result/result_writer_test.go pkg/result/result_writer_guard_test.go 2>/dev/null; echo "---GO-MOD---"; head -20 go.mod; echo "…
+[20:17:23] [system: task_progress]
+[20:17:23]   → 7 lines read
+[20:17:23] ⚠ [bash output]
+	github.com/bborbe/boltkv v1.14.9
+	github.com/bborbe/cqrs v0.6.8
+	github.com/bborbe/errors v1.5.20
+	github.com/bborbe/http v1.26.24
+	github.com/bborbe/kafka v1.25.9
+	github.com/bborbe/kv v1.21.11
+	github.com/bborbe/log v1.6.24
+	github.com/bborbe/metrics v0.5.15
+	github.com/bborbe/run v1.9.37
+	github.com/bborbe/sentry v1.9.27
+	github.com/bborbe/service v1.10.9
+	github.com/bborbe/time v1.27.10
+	github.com/bborbe/validation v1.4.22
+---MAKEFILE TARGETS---
+Makefile.precommit:5:precommit: ensure format generate test check addlicense
+Makefile.precommit:8:ensure:
+Makefile.precommit:38:test:
+Makefile.precommit:43:lint:
+Makefile.precommit:49:errcheck:
+Makefile.precommit:82:gosec:
+[20:17:24] 💭 The section boundary: `## Frontmatter Merge` at line 52, `## Terminal Task Status (create-task dedup)` at line 89. The prompt says the section spans from line 52 to line 89. That matches.
+
+However, I notice that `operatorOwnedFields` does NOT appear in `pkg/result/result_writer.go` — grep only found `controllerOwnedFields` and `buildResultModifyFn`. This is important: the prompt's `<context>` says "The behavior this doc must now describe is implemented in `pkg/result/result_writer.go` (prompt 1,…
+[20:17:25] The section boundaries match (lines 52 and 89). However, I notice `operatorOwnedFields` did NOT appear in the grep of `result_writer.go` — only `controllerOwnedFields` and `buildResultModifyFn`. Let me investigate this discrepancy carefully.
+
+
+[20:17:25] $ rg -n 'operatorOwned|operator-owned|previous_assignee' /workspace/pkg/result/ /workspace/docs/controller-design.md 2>/dev/null | head -50
+[20:17:25] [system: task_progress]
+[20:17:25] $ ls /workspace/prompts/ /workspace/prompts/in-progress/ /workspace/prompts/completed/ 2>/dev/null; echo "---"; ls /workspace/specs/in-progress/ 2>/dev/null
+[20:17:25] [system: task_progress]
+[20:17:29] 💭 Interesting. The `.dark-factory.yaml` sets `workflow: direct`, not `worktree`. And there's no `hideGit: true`. Let me check what `workflow: direct` means. Actually, per the rule: "`workflow: worktree` masks `.git` UNCONDITIONALLY regardless of `hideGit`." Here workflow is `direct`, so .git masking is not automatic from workflow.
+
+However, the prompt's constraints note: "The execution container's `.git` is masked (this repo mounts a null device over `.git`)". And indeed, looking at the workspace,…
+[20:17:30] The `.dark-factory.yaml` uses `workflow: direct` (not `worktree`) and no `hideGit: true`, but the `.git` in this workspace is a character device — masked in this container. Let me try running dark-factory config to discover mounts, and read the main source file.
+
+
+[20:17:30] $ (dark-factory config 2>&1 || echo "dark-factory CLI not available in audit container") | head -40
+[20:17:30] [system: task_progress]
+[20:17:30] [read] /workspace/pkg/result/result_writer.go
+[20:17:30] [system: task_progress]
+[20:17:30]   → 603 lines read
+[20:17:53] 💭 Key finding: `operatorOwnedFields` does NOT exist in `pkg/result/result_writer.go` currently. The prompt claims prompt 1 "already shipped before this prompt runs" and that `operatorOwnedFields = []string{"assignee", "previous_assignee"}` is implemented in result_writer.go. Let me check the state:
+
+1. `prompts/` contains `1-spec-007-operator-owned-assignee-and-body-merge.md` (the code prompt, prompt 1) — it's still in the inbox, NOT in `in-progress/` or `completed/`.
+2. `prompts/in-progress/` is …
+[20:17:54] Key finding emerging: `operatorOwnedFields` does not appear anywhere in `pkg/result/` — the code prompt (1) is still in the inbox. Let me verify the current doc section content, run the verification greps as they would execute today, and cross-check prompt 1.
+
+
+[20:17:54] [read] /workspace/docs/controller-design.md (offset=52, limit=48)
+[20:17:54] [system: task_progress]
+[20:17:54] $ sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'Operator-owned' || true; sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller…
+[20:17:54] [system: task_progress]
+[20:17:54]   → 47 lines read
+[20:18:06] 💭 Important findings:
+
+1. The section boundary is confirmed: `## Frontmatter Merge` at line 52, `## Terminal Task Status (create-task dedup)` at line 89.
+
+2. Current grep counts:
+   - `Operator-owned`: 0 (matches prompt's claim "0 today")
+   - `assignee`: 3 (the prompt claims "All three return 0 today" — but `assignee` already returns 3!)
+   - `body`: 1 (the prompt claims "All three return 0 today" — but `body` already returns 1!)
+
+Wait — the prompt says "All three return 0 today." But actually `a…
+[20:18:07] The verification greps today return `Operator-owned`: 0, `assignee`: 3, `body`: 1. The prompt claims "All three return 0 today" — that claim is already false for two of the three greps. Let me now cross-check prompt 1 (the dependency) and the git state, and read the actual code around the referenced symbols.
+
+
+[20:18:07] [read] /workspace/prompts/1-spec-007-operator-owned-assignee-and-body-merge.md
+[20:18:07] [system: task_progress]
+[20:18:07] $ git log --oneline -15 2>/dev/null; echo "---STATUS---"; git status --short 2>/dev/null | head -20
+[20:18:07] [system: task_progress]
+[20:18:07]   → 552 lines read
+[20:18:10] 💭 Interesting. `git log` returned nothing and `git status` returned nothing. Let me check if this is a git repo. The env says "Is directory a git repo: No" for /workspace. Let me check the `.git` situation. The prompt 1's constraints say "The execution container's `.git` is masked (this repo mounts a null device over `.git`)". So /workspace may not have a .git dir accessible in this audit environment, or the repo root is elsewhere. Let me check.
+
+Actually the env said /workspace is not a git repo.…
+[20:18:12] Both prompts are still in the inbox as drafts; `git log`/`git status` returned nothing (not a git repo here). Let me check the dark-factory config, the `.git` situation, and read the actual code around `buildResultModifyFn` to confirm the current state of the file the docs prompt says is "already shipped".
+
+
+
+
+[20:18:12] $ ls -la /workspace/.git 2>/dev/null | head -3; echo "---DFYAML---"; cat /workspace/.dark-factory.yaml 2>/dev/null; echo "---CONFIG---"; dark-factory config 2>/dev/null || echo "dark-factory CLI not av…
+[20:18:12] [system: task_progress]
+[20:18:12] [read] /workspace/pkg/result/result_writer.go (offset=195, limit=120)
+[20:18:12] [system: task_progress]
+[20:18:12]   → 119 lines read
+[20:18:12] 💭 I've read `result_writer.go` fully. Key observations:
+
+1. `controllerOwnedFields` is at lines 449-452. The prompt says "around line 452" — correct.
+2. `MergeFrontmatter` at line 469 — the terminal-status pin block is at lines 508-516, and `return merged, decisions` is at line 518. The prompt says insert the operator-owned block "AFTER the terminal-status pin block (i.e. after the `if diskStatus, onDisk := existing["status"]; ...` block, immediately before `return merged, decisions`)" — correct.
+…
+[20:18:14] The prompt's referenced functions all exist. `controllerOwnedFields` at line 449-452, `MergeFrontmatter` returns at line 518, the discard block `_ = bodyStr` at lines 262-267, `frontmatterValueEqual` at line 534, and the `ownership guard kept on-disk` log at line 249. Let me trace the operator-owned block logic and verify the test file line references.
+
+
+[20:18:14] [read] /workspace/pkg/result/result_writer_test.go (offset=, limit=260)
+[20:18:14] [system: task_progress]
+[20:18:14] [read] /workspace/pkg/result/result_writer_guard_test.go
+[20:18:14] [system: task_progress]
+[20:18:14]   → 114 lines read
+[20:18:14]   → 259 lines read
+[20:18:17] 💭 The guard test file is 114 lines (the `wc` earlier said 114, and `Read` shows the last line 114 closes the Describe). The prompt says "Read `pkg/result/result_writer_guard_test.go` (115 lines)" — close enough (114 actual). Fine.
+
+Now, the guard test file structure: `Describe("MergeFrontmatter", func() { ... })`. The prompt's requirement 8 says "Append these `It`s inside the existing `Describe("MergeFrontmatter", func() { ... })` block, after its last existing `It`". Good — that's structurally co…
+[20:18:18] The guard test file matches (114 lines, `Describe("MergeFrontmatter")` block). Now let me verify the key line references in the big test file: line 344 (bare `---`), line 939 (post-spec-039), line 1288 (carve-out 1), the field ownership guard context (1537-1724), and the Review PIt (1849-1852).
+
+
+[20:18:18] [read] /workspace/pkg/result/result_writer_test.go (offset=330, limit=40)
+[20:18:18] [system: task_progress]
+[20:18:18] [read] /workspace/pkg/result/result_writer_test.go (offset=920, limit=60)
+[20:18:18] [system: task_progress]
+[20:18:18]   → 39 lines read
+[20:18:18]   → 59 lines read
+[20:18:25] 💭 Confirmed:
+- `/workspace/.git` is a character device (`crw-rw-rw- 1 root root 1, 3`) — this is the null-device masking described in prompt 1's constraints. So git IS masked in this workspace (like the container). `workflow: direct` in `.dark-factory.yaml` (not worktree, not hideGit explicitly set). hideGit is not explicitly `true`, but the `.git` being a char device means git commands fail. This matches the prompts' claim.
+
+Wait, the DoD hideGit check: grep for `^hideGit:\s*true` — not present. …
+[20:18:27] The `.git` here is a character device (null-device masking, matching the prompts' claims), and `workflow: direct` in `.dark-factory.yaml`. `buildResultModifyFn` exists with the exact full-replacement shape prompt 1 describes. Now let me verify the coding-plugin docs exist, the exact `assignee`/`body` matches in the section, and the doc file size claim.
+
+
+[20:18:27] $ ls -la /home/node/.claude/plugins/marketplaces/coding/docs/documentation-guide.md /home/node/.claude/plugins/marketplaces/coding/docs/changelog-guide.md 2>&1; echo "---SIZE---"; wc -c /workspace/docs…
+[20:18:27] [system: task_progress]
+[20:18:27] $ echo "=== assignee matches in section ==="; sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -n 'assignee'; echo "=== body matches in section ==="; sed -n…
+[20:18:27] [system: task_progress]
+[20:18:27] ⚠ [Bash] error: Exit code 2\n-rw-r--r-- 1 node node 10292 Aug 23 22:06 /home/node/.claude/plugins/marketplaces/coding/docs/changelog-guide.md\n-rw-r--r-- 1 node node 29198 Aug 23 22:06 /home/node/.claude/plugins/marketplaces/coding/docs/documentation-guide.md\n---SIZE---\n16544 /workspace/docs/controller-design.md\n---CLAUDE---\nls: cannot access '/workspace/CLAUDE.md': No such file or directory
+[20:18:28] 💭 Let me trace through the line-939 test with the new code to make sure it stays green.
+
+Test at line 939: "preserves phase and keeps assignee cleared when deliverer published needs_input (post-spec-039 shape)":
+- On-disk: `status: in_progress, phase: ai_review, assignee: claude`, body `Original body\n`.
+- Incoming frontmatter: `status: in_progress, phase: ai_review, assignee: ""`.
+- Incoming body: `Needs human input.\n`.
+
+WriteResult flow:
+1. ExtractFrontmatter → `task_identifier: test-task-uuid-…
+[20:18:29] Let me read the rest of the bare-`---` test (line 344) to check its assertions against the new merge behavior.
+
+
+[20:18:29] [read] /workspace/pkg/result/result_writer_test.go (offset=367, limit=40)
+[20:18:29] [system: task_progress]
+[20:18:29] [read] /workspace/pkg/result/result_writer_test.go (offset=1270, limit=80)
+[20:18:29] [system: task_progress]
+[20:18:29]   → 39 lines read
+[20:18:29]   → 79 lines read

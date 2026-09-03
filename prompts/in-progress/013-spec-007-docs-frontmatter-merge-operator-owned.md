@@ -1,7 +1,9 @@
 ---
-spec: ["007-bug-writeback-clobbers-operator-edits"]
-status: draft
+status: approved
+spec: [007-bug-writeback-clobbers-operator-edits]
 created: "2026-09-03T18:15:22Z"
+queued: "2026-09-03T18:23:07Z"
+branch: dark-factory/bug-writeback-clobbers-operator-edits
 ---
 
 # Document the operator-owned row and the body section merge in `docs/controller-design.md`
@@ -11,7 +13,7 @@ created: "2026-09-03T18:15:22Z"
 - The `## Frontmatter Merge` section of the controller design doc gains an "Operator-owned" row in its ownership table, covering `assignee` and `previous_assignee`.
 - The row states the on-disk value always wins, that an incoming value may introduce an absent key (unlike controller-owned counters), and that an incoming empty `assignee` is always honored as the deliverer's Failed/needs_input clear with no guard decision or log line.
 - The section gains a body-merge paragraph describing how `WriteResult` now merges the body by heading instead of replacing it wholesale — operator-authored headings survive, same-named headings are replaced, and the preamble follows the stated rule.
-- The doc change satisfies the spec's two machine-decidable grep counts inside the section (both currently 0).
+- The doc change satisfies the spec's two machine-decidable grep counts inside the section — the `Operator-owned` count is 0 today and is the distinguishing check; the `assignee` count is already ≥1 from existing prose.
 - This is a docs-only change with no Go code, so it does not run `make precommit`.
 
 </summary>
@@ -62,7 +64,7 @@ All changes are in `docs/controller-design.md`, inside the `## Frontmatter Merge
    - A bare `---` line is never treated as a heading and is preserved unescaped; both `\n` and `\r\n` line endings are tolerated.
    - Escalation sections still append exactly once: an on-disk `## Trigger Cap Escalation` / `## Retry Escalation` section survives the merge, so the dedup check still sees it and does not append a duplicate.
 
-3. **Self-check before finishing:** re-run the `<verification>` block and confirm both section-scoped grep counts return ≥1 and that the section boundaries are unchanged (`## Frontmatter Merge` still starts the section and `## Terminal Task Status (create-task dedup)` still ends it).
+3. **Self-check before finishing:** re-run the `<verification>` block and confirm all three section-scoped grep counts return ≥1 and that the section boundaries are unchanged (`## Frontmatter Merge` still starts the section and `## Terminal Task Status (create-task dedup)` still ends it).
 
 </requirements>
 
@@ -86,6 +88,6 @@ cd /workspace && sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' do
 cd /workspace && sed -n '/^## Frontmatter Merge/,/^## Terminal Task Status/p' docs/controller-design.md | grep -c 'body' || true
 ```
 
-Expect: first count ≥1 (the new table row), second count ≥1 (the operator-owned row and the body-merge paragraph), third count ≥1 (the body-merge paragraph). All three return 0 today. No `make precommit` for this docs-only change.
+Expect: first count ≥1 (the new table row), second count ≥1 (the operator-owned row and the body-merge paragraph), third count ≥1 (the body-merge paragraph). Only the first count (`Operator-owned`) is 0 today — `assignee` (3) and `body` (1) already match from existing prose, so the first grep is the distinguishing check. No `make precommit` for this docs-only change.
 
 </verification>
