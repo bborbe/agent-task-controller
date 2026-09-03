@@ -1,8 +1,11 @@
 ---
-status: draft
+status: generating
 tags:
-  - dark-factory
-  - spec
+    - dark-factory
+    - spec
+approved: "2026-09-03T18:09:23Z"
+generating: "2026-09-03T18:09:44Z"
+branch: dark-factory/bug-writeback-clobbers-operator-edits
 ---
 
 ## Summary
