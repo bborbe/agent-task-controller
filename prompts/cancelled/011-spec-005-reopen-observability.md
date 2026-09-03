@@ -1,4 +1,15 @@
 ---
+<<<<<<<< HEAD:prompts/completed/011-spec-005-reopen-observability.md
+status: completed
+spec: [005-bug-create-task-dedup-blocks-terminal-reopen]
+summary: 'Verified the complete terminal-reopen observability implementation already present in the working tree (reopen commit-message branch, unconditional create-task: reopening terminal task INFO log, doc comment, positive/negative commit-message unit specs, CHANGELOG fix entry, and design-doc terminal-status section); make test and make precommit both pass with exit 0.'
+execution_id: agent-task-controller-writeback-merge-exec-011-spec-005-reopen-observability
+dark-factory-version: dev
+created: "2026-08-27T20:30:00Z"
+queued: "2026-08-27T18:44:32Z"
+started: "2026-09-03T18:09:45Z"
+completed: "2026-09-03T18:17:14Z"
+========
 status: cancelled
 spec: [005-bug-create-task-dedup-blocks-terminal-reopen]
 execution_id: agent-task-controller-target-vault-echo-exec-011-spec-005-reopen-observability
@@ -6,6 +17,7 @@ dark-factory-version: dev
 created: "2026-08-27T20:30:00Z"
 queued: "2026-08-27T18:44:32Z"
 started: "2026-09-03T17:33:06Z"
+>>>>>>>> origin/master:prompts/cancelled/011-spec-005-reopen-observability.md
 branch: dark-factory/bug-create-task-dedup-blocks-terminal-reopen
 cancelled: "2026-09-03T17:38:11Z"
 ---

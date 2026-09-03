@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-08-27T18:28:45Z"
 generating: "2026-08-27T18:28:45Z"
 prompted: "2026-08-27T18:42:40Z"
+verifying: "2026-09-03T18:17:15Z"
 branch: dark-factory/bug-create-task-dedup-blocks-terminal-reopen
 ---
 

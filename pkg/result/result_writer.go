@@ -261,18 +261,13 @@ func (r *resultWriter) buildResultModifyFn(
 		// permanently stops falling through to both controllers once the owning
 		// controller writes it. Never overrides an existing target_vault.
 		HealTargetVault(merged, r.vaultName)
-		body := r.applyRetryCounter(merged, currentOnDisk, string(req.Content))
+		mergedBody := mergeBody(bodyStr, string(req.Content))
+		body := r.applyRetryCounter(merged, currentOnDisk, mergedBody)
 
 		marshaledFrontmatter, err := yaml.Marshal(map[string]any(merged))
 		if err != nil {
 			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
 		}
-		// Discard the on-disk body — WriteResult fully replaces body with req.Content
-		// (post-applyRetryCounter modifications), matching the prior single-write
-		// semantics. bodyStr is read above only to validate the file has well-formed
-		// delimiters; an extraction error must surface so we do not silently overwrite a
-		// corrupted file.
-		_ = bodyStr
 		return []byte("---\n" + string(marshaledFrontmatter) + "---\n" + body), nil
 	}
 }
@@ -442,6 +437,126 @@ func containsEscalationSection(body, header string) bool {
 	return strings.Contains(body, "\n"+header+"\n")
 }
 
+// bodySection is one markdown heading and the content that follows it.
+type bodySection struct {
+	heading string // the full heading line, e.g. "## Result\n" (line ending included)
+	content string // everything after the heading line up to the next heading line or end of body
+}
+
+// splitBody splits a markdown body into a preamble (text before the first "## "
+// heading line) and an ordered list of sections. A heading line is a line
+// starting with the exact prefix "## " (hash-hash-space). A bare "---" line is
+// never a heading. Both "\n" and "\r\n" line endings are tolerated: a trailing
+// "\r" before "\n" is part of the terminator, so the heading name of the line
+// "## Parked\r\n" is "## Parked". Returns ("", nil) for an empty body.
+func splitBody(body string) (preamble string, sections []bodySection) {
+	if body == "" {
+		return "", nil
+	}
+	var preambleBuilder strings.Builder
+	type sectionAcc struct {
+		heading string
+		content strings.Builder
+	}
+	var accs []sectionAcc
+	current := -1
+	for len(body) > 0 {
+		var line string
+		if idx := strings.IndexByte(body, '\n'); idx >= 0 {
+			line = body[:idx+1]
+			body = body[idx+1:]
+		} else {
+			line = body
+			body = ""
+		}
+		if _, isHeading := headingName(line); isHeading {
+			accs = append(accs, sectionAcc{heading: line})
+			current = len(accs) - 1
+			continue
+		}
+		if current < 0 {
+			preambleBuilder.WriteString(line)
+		} else {
+			accs[current].content.WriteString(line)
+		}
+	}
+	sections = make([]bodySection, 0, len(accs))
+	for _, a := range accs {
+		sections = append(sections, bodySection{heading: a.heading, content: a.content.String()})
+	}
+	return preambleBuilder.String(), sections
+}
+
+// headingName returns the heading name — the heading line with its terminator
+// ("\n", "\r\n", or nothing) removed — and whether the line is a heading, i.e.
+// starts with the exact prefix "## ".
+func headingName(line string) (string, bool) {
+	name := strings.TrimSuffix(line, "\r\n")
+	name = strings.TrimSuffix(name, "\n")
+	if !strings.HasPrefix(name, "## ") {
+		return "", false
+	}
+	return name, true
+}
+
+// mergeBody merges the on-disk body with the incoming body by heading: an
+// on-disk-only heading is preserved in place with its content, a heading
+// present in both is replaced in place by the incoming content, a heading
+// present only in the incoming body is appended after the last on-disk section,
+// and the preamble follows the DB-4 rule (incoming preamble wins when it has
+// text; otherwise the on-disk preamble is preserved). Preserved sections keep
+// their original line endings verbatim.
+func mergeBody(existingBody, incomingBody string) string {
+	existingPreamble, existingSections := splitBody(existingBody)
+	incomingPreamble, incomingSections := splitBody(incomingBody)
+
+	incomingByName := make(map[string]bodySection, len(incomingSections))
+	incomingOrder := make([]string, 0, len(incomingSections))
+	for _, sec := range incomingSections {
+		name, _ := headingName(sec.heading)
+		if _, seen := incomingByName[name]; !seen {
+			incomingOrder = append(incomingOrder, name)
+		}
+		incomingByName[name] = sec
+	}
+
+	// Preamble: incoming wins when it has any non-whitespace text; otherwise the
+	// on-disk preamble is preserved (e.g. when the incoming body starts with a
+	// heading and carries no preamble of its own).
+	resultPreamble := existingPreamble
+	if strings.TrimSpace(incomingPreamble) != "" {
+		resultPreamble = incomingPreamble
+	}
+
+	existingNames := make(map[string]bool, len(existingSections))
+	var out strings.Builder
+	out.WriteString(resultPreamble)
+	for _, sec := range existingSections {
+		name, _ := headingName(sec.heading)
+		existingNames[name] = true
+		if incoming, ok := incomingByName[name]; ok {
+			// Same-named heading: the fresh incoming content lands in place.
+			out.WriteString(incoming.heading)
+			out.WriteString(incoming.content)
+		} else {
+			// On-disk-only heading: preserved verbatim with its content.
+			out.WriteString(sec.heading)
+			out.WriteString(sec.content)
+		}
+	}
+	// Append, in incoming order, every incoming section whose heading name was
+	// not present among the existing sections.
+	for _, name := range incomingOrder {
+		if existingNames[name] {
+			continue
+		}
+		sec := incomingByName[name]
+		out.WriteString(sec.heading)
+		out.WriteString(sec.content)
+	}
+	return out.String()
+}
+
 // GuardDecision records a single ownership-guard discard: the merge kept the
 // on-disk value of a controller-owned field (or the pinned terminal status) and
 // rejected a differing incoming value. Equal values produce no decision.
@@ -459,6 +574,20 @@ var controllerOwnedFields = []string{
 	"retry_count",
 }
 
+// operatorOwnedFields lists frontmatter keys that are the operator's routing
+// surface: the result writer keeps the on-disk value over a differing incoming
+// snapshot (the agent authors these keys from its spawn-time snapshot, not live
+// state), but — unlike controllerOwnedFields — an incoming value may introduce
+// an operator-owned key that is absent on disk (a spawn/claim names an assignee
+// on a task that never carried one). One exception, for "assignee" only: an
+// incoming empty string is always applied — the deliverer's deliberate
+// Failed/needs_input clear (spec 039), never a stale snapshot — and produces no
+// guard decision.
+var operatorOwnedFields = []string{
+	"assignee",
+	"previous_assignee",
+}
+
 // terminalStatuses lists the statuses that end a task's lifecycle. When the on-disk
 // status is terminal, the merge pins it (discarding the incoming status) and the
 // escalation machinery short-circuits. Terminal is decided via the normalizing
@@ -471,9 +600,12 @@ var terminalStatuses = []domain.TaskStatus{
 // MergeFrontmatter returns a new frontmatter map with all keys from existing,
 // overridden by all keys from incoming, then applies the field-ownership guard:
 // controller-owned counters take the on-disk value when present on disk and are
-// absent from the result when not; a terminal on-disk status is pinned. The
-// returned decisions name every field whose differing incoming value was discarded
-// (equal values produce no decision). Neither input map is modified.
+// absent from the result when not; a terminal on-disk status is pinned; and
+// operator-owned routing fields (assignee, previous_assignee) take the on-disk
+// value when present on disk, with an incoming empty assignee always applied as
+// the deliverer's clear exception. The returned decisions name every field whose
+// differing incoming value was discarded (equal values produce no decision).
+// Neither input map is modified.
 func MergeFrontmatter(
 	existing, incoming lib.TaskFrontmatter,
 ) (lib.TaskFrontmatter, []GuardDecision) {
@@ -523,7 +655,50 @@ func MergeFrontmatter(
 		}
 	}
 
+	// Operator-owned routing fields (assignee, previous_assignee): the on-disk
+	// value always wins over a differing incoming snapshot, with an incoming empty
+	// assignee always applied as the deliverer's clear exception.
+	decisions = applyOperatorOwnedFields(existing, incoming, merged, decisions)
 	return merged, decisions
+}
+
+// applyOperatorOwnedFields applies the operator-owned routing-field rule to the
+// merged frontmatter. Assignee and previous_assignee are the operator's routing
+// surface: when the key exists on disk, the on-disk value always wins over a
+// differing incoming snapshot; unlike controller-owned counters, an incoming
+// value may introduce a key that is absent on disk (the base merge already wrote
+// it). Exception for "assignee" only: an incoming empty string is always applied
+// (the deliverer's deliberate Failed/needs_input clear) and produces no
+// decision. Returns the decision list with any discards appended.
+func applyOperatorOwnedFields(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	for _, field := range operatorOwnedFields {
+		diskValue, onDisk := existing[field]
+		incomingValue, inIncoming := incoming[field]
+		if !onDisk {
+			continue // incoming may introduce the key (already merged above)
+		}
+		if inIncoming && field == "assignee" {
+			// The deliverer's empty-assignee clear is the string "". A non-string
+			// incoming value (malformed payload) must not panic the merge — the
+			// type-assert keeps this comparison panic-free, same doctrine as
+			// frontmatterValueEqual (spec 006).
+			if incomingString, ok := incomingValue.(string); ok && incomingString == "" {
+				merged[field] = incomingValue
+				continue
+			}
+		}
+		merged[field] = diskValue
+		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
+			)
+		}
+	}
+	return decisions
 }
 
 // HealTargetVault stamps the controller's vaultName into frontmatter when the

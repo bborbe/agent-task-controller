@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: stop result writes from clobbering operator edits — `assignee`/`previous_assignee` are now operator-owned in the frontmatter merge (the on-disk value always wins over a stale spawn-time snapshot, an incoming value may introduce an absent key, and an incoming empty `assignee` is always honored as the deliverer's Failed/needs_input clear), and the body is merged by section instead of replaced wholesale — an on-disk `## Parked` and other operator-authored headings survive every write, same-named headings are replaced by the fresh incoming content, and the on-disk preamble survives when the incoming body starts with a heading (spec 007)
+
 ## v0.7.0
 
 - feat: route the atomic frontmatter commands (`update-frontmatter`, `increment-frontmatter`, `complete-task`) by target vault — each executor now applies `pkg/routing.ShouldProcessFrontmatterCommand` before the task-file lookup. A non-empty `TargetVault` (lib v0.86.0) differing from `VAULT_NAME` is skipped with one `glog.V(2)` line, no metric increment, no git write, and an error wrapping `cdb.ErrCommandObjectSkipped` (a nil return would publish a spurious Success event on the shared result topic); an empty `TargetVault` falls through so legacy unstamped commands keep working (deliberately not defaulted to `openclaw`, which would route legacy personal-vault tasks to the wrong controller permanently). Eliminates the false `AgentControllerResultNotFound` alerts from cross-vault frontmatter traffic (10 drops observed 2026-09-03 on nuke-prod)
