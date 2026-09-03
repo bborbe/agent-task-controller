@@ -1,12 +1,13 @@
 ---
-status: executing
+status: cancelled
 spec: [005-bug-create-task-dedup-blocks-terminal-reopen]
-execution_id: agent-task-controller-dedup-terminal-exec-011-spec-005-reopen-observability
+execution_id: agent-task-controller-target-vault-echo-exec-011-spec-005-reopen-observability
 dark-factory-version: dev
 created: "2026-08-27T20:30:00Z"
 queued: "2026-08-27T18:44:32Z"
-started: "2026-08-27T18:53:54Z"
+started: "2026-09-03T17:33:06Z"
 branch: dark-factory/bug-create-task-dedup-blocks-terminal-reopen
+cancelled: "2026-09-03T17:38:11Z"
 ---
 
 # Reopen observability for create-task terminal reopen

@@ -31,9 +31,12 @@ const IncrementFrontmatterCommandOperation base.CommandOperation = task.Incremen
 // If trigger_count reaches an explicitly-set max_triggers the assignee is cleared and
 // phase is preserved in the same write. An absent max_triggers means no cap: the routing
 // assignee is never stripped on recurring tasks that accumulate trigger_count.
+// vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
+// differs is cross-vault traffic and is skipped before the task-file lookup.
 func NewIncrementFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	vaultName string,
 	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
@@ -48,6 +51,15 @@ func NewIncrementFrontmatterExecutor(
 					"malformed IncrementFrontmatterCommand: %v",
 					err,
 				)
+			}
+			if err := frontmatterCommandVaultMismatch(
+				ctx,
+				"increment-frontmatter",
+				cmd.TargetVault,
+				vaultName,
+				cmd.TaskIdentifier,
+			); err != nil {
+				return nil, nil, err
 			}
 			matchedRelPath, _, err := result.FindTaskFilePath(
 				ctx,
@@ -71,7 +83,7 @@ func NewIncrementFrontmatterExecutor(
 			if err := gitClient.AtomicReadModifyWriteAndCommitPush(
 				ctx,
 				fullAbsPath,
-				buildIncrementModifyFn(ctx, cmd),
+				buildIncrementModifyFn(ctx, cmd, vaultName),
 				fmt.Sprintf("[agent-task-controller] increment %s for task %s", cmd.Field, cmd.TaskIdentifier),
 			); err != nil {
 				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
@@ -91,6 +103,7 @@ func NewIncrementFrontmatterExecutor(
 func buildIncrementModifyFn(
 	ctx context.Context,
 	cmd task.IncrementFrontmatterCommand,
+	vaultName string,
 ) func([]byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		frontmatterStr, err := result.ExtractFrontmatter(ctx, current)
@@ -119,6 +132,9 @@ func buildIncrementModifyFn(
 				fm["assignee"] = ""
 			}
 		}
+		// Heal-on-write: stamp target_vault on legacy files lacking it so the
+		// non-owning controller permanently stops falling through.
+		result.HealTargetVault(fm, vaultName)
 		return marshalFileContent(ctx, fm, body)
 	}
 }

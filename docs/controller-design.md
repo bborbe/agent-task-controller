@@ -49,6 +49,10 @@ On agent-task-v1-request (operation: "update"):
 
 The controller reads a required `VAULT_NAME` env var (CLI flag `--vault-name`) at startup naming the single Obsidian vault it serves. Every CreateCommand is checked against `VAULT_NAME` via the `pkg/routing.ShouldProcess` predicate: the effective target is `cmd.targetVault` if non-empty, otherwise the legacy fallback `openclaw`; commands whose effective target is not `VAULT_NAME` are skipped without side effects (no git write, no result publish, no error) and emit a single `glog.V(2)` line naming the command's `targetVault`, the effective target, and `VAULT_NAME` so operators can confirm routing decisions. Two controllers (e.g. one per vault) can therefore share the `agent-task-v1-request` topic without duplicating task materializations. The `targetVault` field is added to `task.CreateCommand` with `omitempty`; legacy producers that emit no `targetVault` continue to flow to the `openclaw` controller.
 
+The frontmatter commands (`update-frontmatter`, `increment-frontmatter`, `complete-task`) carry the same `targetVault` (lib v0.86.0) and are guarded by `pkg/routing.ShouldProcessFrontmatterCommand` with the **result semantics, not the create semantics**: an empty `targetVault` falls through to `true` — every controller attempts the command, the owning vault finds the file and heals it, the non-owning vault drops it; a non-empty `targetVault` mismatch is skipped. The routing guard runs **before** the task-file lookup, so a cross-vault command performs no vault scan, increments no metric, writes nothing, and publishes no result event — it returns an error wrapping `cdb.ErrCommandObjectSkipped` (a nil return with `SendResultEnabled` would publish a spurious Success event on the shared result topic). The empty-`targetVault` fall-through is deliberately NOT defaulted to `openclaw`: defaulting would route legacy personal-vault tasks to the wrong controller permanently. The create path's `ShouldProcess` legacy default (`openclaw`) is untouched.
+
+**Heal-on-write.** The heal is the other half of the frontmatter routing rule. Every write path that touches a task file — result write-back (`buildResultModifyFn`), `update-frontmatter`, `increment-frontmatter`, `complete-task`, and both planning-retry-gate writes (`buildRetryModifyFn`, `buildEscalationModifyFn`) — stamps `target_vault` onto the file when the key is absent, recording the writing controller's `VAULT_NAME` in the same write via `result.HealTargetVault`. An existing `target_vault` (any value) is never overridden. A legacy unstamped file therefore falls through to both controllers exactly once: the owner writes and stamps it, after which `ShouldProcessResult` and `ShouldProcessFrontmatterCommand` return `false` for the non-owner forever, permanently stopping the double-scan and the spurious `not_found` counts. The planning-retry-gate writes need the heal inside their own modify functions because the gate runs after the routing predicate in `NewTaskResultExecutor` and returns `handled=true`, so the executor returns before `WriteResult` and the result-path heal never fires for those writes. The supersede prior-file write (`buildSupersedeModifyFn`) intentionally does not heal: prior files are written to terminal `aborted` status and create commands already route through `ShouldProcess` into the owning vault.
+
 ## Frontmatter Merge
 
 When writing a result back, the ResultWriter merges frontmatter from the existing task file with frontmatter provided by the agent. Existing keys are preserved and agent keys override on conflict — but only for agent-owned keys. This ensures fields like `assignee`, `tags`, and `task_identifier` survive result writeback even though agents don't receive frontmatter, while two field classes stay under controller control regardless of what the agent publishes.
@@ -131,16 +135,17 @@ When the vault scanner observes a task file whose `assignee` transitions from em
 
 ## Atomic Frontmatter Commands
 
-In addition to the `"update"` operation (full result write), the controller handles two atomic frontmatter operations on `agent-task-v1-request`:
+In addition to the `"update"` operation (full result write), the controller handles three atomic frontmatter operations on `agent-task-v1-request`. Each is guarded by `pkg/routing.ShouldProcessFrontmatterCommand` — a non-empty `TargetVault` differing from `VAULT_NAME` is skipped before the task-file lookup (one `glog.V(2)` line, no metric increment, no git write, error wrapping `cdb.ErrCommandObjectSkipped`); an empty `TargetVault` falls through (legacy unstamped commands are attempted by every controller, the owner heals, the non-owner drops). Each write path heals `target_vault` when the key is absent (stamping `VAULT_NAME`, never overriding an existing value).
 
 ### `"increment-frontmatter"` (IncrementFrontmatterExecutor)
 
-Payload: `lib.IncrementFrontmatterCommand{TaskIdentifier, Field, Delta}`
+Payload: `lib.IncrementFrontmatterCommand{TaskIdentifier, Field, Delta, TargetVault}`
 
 ```
 On agent-task-v1-request (operation: "increment-frontmatter"):
   │
   ├── deserialize IncrementFrontmatterCommand
+  ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
   ├── find task file by task_identifier (WalkDir)
   ├── if not found → log warning, return nil (no error)
   ├── AtomicReadModifyWriteAndCommitPush:
@@ -150,6 +155,7 @@ On agent-task-v1-request (operation: "increment-frontmatter"):
   │     ├── set Field = newVal
   │     ├── cap escalation: if Field == "trigger_count" AND newVal >= max_triggers
   │     │     └── clear assignee in the same write (phase unchanged; spec-039 supersedes spec-021 for this row)
+  │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
   │     ├── write updated file (under mutex)
   │     └── git commit + push (under mutex)
   └── increment FrontmatterCommandsTotal{operation, outcome}
@@ -159,12 +165,13 @@ Delta may be negative (decrement). Cap escalation only fires for `trigger_count`
 
 ### `"update-frontmatter"` (UpdateFrontmatterExecutor)
 
-Payload: `lib.UpdateFrontmatterCommand{TaskIdentifier, Updates map[string]any}`
+Payload: `lib.UpdateFrontmatterCommand{TaskIdentifier, Updates map[string]any, Body, TargetVault}`
 
 ```
 On agent-task-v1-request (operation: "update-frontmatter"):
   │
   ├── deserialize UpdateFrontmatterCommand
+  ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
   ├── if Updates is empty → return nil (no-op, no write)
   ├── find task file by task_identifier (WalkDir)
   ├── if not found → log warning, return nil
@@ -174,10 +181,35 @@ On agent-task-v1-request (operation: "update-frontmatter"):
   │     ├── merge only the keys in Updates (all other keys unchanged)
   │     ├── if Body section provided → append/replace section in body (spec 016)
   │     ├── if merged phase == "human_review" → result.ClearAssigneeIfHumanReview clears assignee in the same write (spec 042)
+  │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
   │     ├── write updated file (under mutex)
   │     └── git commit + push (under mutex)
   └── increment FrontmatterCommandsTotal{operation, outcome}
 ```
+
+### `"complete-task"` (CompleteTaskExecutor)
+
+Payload: `lib.CompleteCommand{TaskIdentifier, RecoverySHA, TargetVault}`
+
+```
+On agent-task-v1-request (operation: "complete-task"):
+  │
+  ├── deserialize CompleteCommand
+  ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
+  ├── find task file by task_identifier (WalkDir)
+  ├── if not found → log warning, return nil
+  ├── AtomicReadModifyWriteAndCommitPush:
+  │     ├── read current file bytes (under mutex)
+  │     ├── if a # Resolution / ## Resolution section is already present → return nil, nil (idempotent no-op)
+  │     ├── set status: completed, phase: done, completed_date/processed_at: now, recovery_sha (when provided)
+  │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
+  │     ├── append ## Resolution body section (verdict, recovery SHA, closed-at)
+  │     ├── write updated file (under mutex)
+  │     └── git commit + push (under mutex)
+  └── increment FrontmatterCommandsTotal{operation, outcome}
+```
+
+The complete executor has no subsection of its own elsewhere in this document; the routing-guard and heal steps above are the same ones applied by the two frontmatter executors.
 
 ## Vault Writes via git-rest
 

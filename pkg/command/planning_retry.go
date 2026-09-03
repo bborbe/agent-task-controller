@@ -45,10 +45,12 @@ type PlanningRetryGate interface {
 	Handle(ctx context.Context, req lib.Task) (handled bool, err error)
 }
 
-// NewPlanningRetryGate constructs the gate.
+// NewPlanningRetryGate constructs the gate. vaultName is the controller's
+// VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
 func NewPlanningRetryGate(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
@@ -56,6 +58,7 @@ func NewPlanningRetryGate(
 	return &planningRetryGate{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
+		vaultName:       vaultName,
 		currentDateTime: currentDateTime,
 		prCommenter:     prCommenter,
 		metrics:         m,
@@ -65,6 +68,7 @@ func NewPlanningRetryGate(
 type planningRetryGate struct {
 	gitClient       gitclient.GitClient
 	taskDir         string
+	vaultName       string
 	currentDateTime libtime.CurrentDateTimeGetter
 	prCommenter     prcomment.PRCommenter
 	metrics         metrics.Metrics
@@ -237,6 +241,13 @@ func (g *planningRetryGate) buildRetryModifyFn(
 		fm["phase"] = "planning"
 		fm["task_identifier"] = uuid.NewString()
 
+		// Heal-on-write: stamp target_vault on legacy files lacking it so the
+		// non-owning controller permanently stops falling through. The gate runs
+		// after the routing predicate in NewTaskResultExecutor and returns
+		// handled=true, so the executor returns before WriteResult and the
+		// result-path heal never fires for these writes.
+		result.HealTargetVault(fm, g.vaultName)
+
 		newBody := appendProgressLine(body, retryLineBullet)
 
 		marshaled, err := yaml.Marshal(map[string]any(fm))
@@ -324,6 +335,11 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 
 		fm["phase"] = "human_review"
 		result.ClearAssigneeIfHumanReview(fm)
+
+		// Heal-on-write: stamp target_vault on legacy files lacking it (same
+		// rationale as buildRetryModifyFn — the gate's handled=true return
+		// bypasses the result-path heal).
+		result.HealTargetVault(fm, g.vaultName)
 
 		marshaled, err := yaml.Marshal(map[string]any(fm))
 		if err != nil {
