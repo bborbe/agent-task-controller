@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,11 +18,13 @@ import (
 	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var _ = Describe("NewCompleteTaskExecutor", func() {
@@ -85,6 +88,7 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 		executor = command.NewCompleteTaskExecutor(
 			fakeGit,
 			taskDir,
+			"openclaw",
 			libtime.NewCurrentDateTime(),
 			metrics.New(),
 		)
@@ -212,6 +216,103 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 
 				content := readFile(taskFile)
 				Expect(strings.Count(content, "## Resolution")).To(Equal(1))
+			})
+		})
+
+		Context("vault routing", func() {
+			It(
+				"skips a mismatched-vault command with zero git writes and zero not_found increments",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cross-vault-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					before := testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"complete-task",
+							"not_found",
+						),
+					)
+					cmd := buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("cross-vault-uuid"),
+						TargetVault:    "personal",
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+					// guard fires before the task-file lookup and before any write
+					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(
+						testutil.ToFloat64(
+							metrics.FrontmatterCommandsTotal.WithLabelValues(
+								"complete-task",
+								"not_found",
+							),
+						),
+					).To(Equal(before))
+					// file untouched
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["status"]).To(Equal("in_progress"))
+					_, hasTarget := fm["target_vault"]
+					Expect(hasTarget).To(BeFalse())
+				},
+			)
+
+			It("processes an empty-vault command (legacy fall-through)", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: legacy-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.CompleteCommand{
+					TaskIdentifier: lib.TaskIdentifier("legacy-uuid"),
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["status"]).To(Equal("completed"))
+			})
+
+			It(
+				"heals a file lacking target_vault, stamping the controller vault in the same write",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: heal-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["target_vault"]).To(Equal("openclaw"))
+					// the stamped file read back through ShouldProcessResult no longer
+					// falls through to the non-owning controller
+					req := lib.Task{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Frontmatter: lib.TaskFrontmatter{
+							"target_vault": "openclaw",
+						},
+					}
+					Expect(routing.ShouldProcessResult(req, "personal")).To(BeFalse())
+					Expect(routing.ShouldProcessResult(req, "openclaw")).To(BeTrue())
+				},
+			)
+
+			It("never overrides an existing target_vault", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: stamped-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: personal\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.CompleteCommand{
+					TaskIdentifier: lib.TaskIdentifier("stamped-uuid"),
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["target_vault"]).To(Equal("personal"))
+				Expect(fm["status"]).To(Equal("completed"))
 			})
 		})
 	})

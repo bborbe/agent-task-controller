@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,11 +17,13 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var _ = Describe("NewUpdateFrontmatterExecutor", func() {
@@ -76,7 +79,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
-		executor = command.NewUpdateFrontmatterExecutor(fakeGit, taskDir, metrics.New())
+		executor = command.NewUpdateFrontmatterExecutor(fakeGit, taskDir, "openclaw", metrics.New())
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -405,5 +408,110 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				)
 			},
 		)
+
+		Context("vault routing", func() {
+			It(
+				"skips a mismatched-vault command with zero git writes and zero not_found increments",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cross-vault-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					before := testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"not_found",
+						),
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cross-vault-uuid"),
+						TargetVault:    "personal",
+						Updates:        lib.TaskFrontmatter{"phase": "done"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+					// guard fires before the task-file lookup and before any write
+					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(
+						testutil.ToFloat64(
+							metrics.FrontmatterCommandsTotal.WithLabelValues(
+								"update-frontmatter",
+								"not_found",
+							),
+						),
+					).To(Equal(before))
+					// file untouched
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["phase"]).To(Equal("ai_review"))
+					_, hasTarget := fm["target_vault"]
+					Expect(hasTarget).To(BeFalse())
+				},
+			)
+
+			It("processes an empty-vault command (legacy fall-through)", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: legacy-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("legacy-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+
+			It(
+				"heals a file lacking target_vault, stamping the controller vault in the same write",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: heal-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Updates:        lib.TaskFrontmatter{"phase": "done"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["target_vault"]).To(Equal("openclaw"))
+					// the stamped file read back through ShouldProcessResult no longer
+					// falls through to the non-owning controller
+					req := lib.Task{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Frontmatter: lib.TaskFrontmatter{
+							"target_vault": "openclaw",
+						},
+					}
+					Expect(routing.ShouldProcessResult(req, "personal")).To(BeFalse())
+					Expect(routing.ShouldProcessResult(req, "openclaw")).To(BeTrue())
+					// and the frontmatter-command predicate rejects the non-owner too,
+					// so subsequent update/increment commands for this file skip cleanly
+					Expect(routing.ShouldProcessFrontmatterCommand("openclaw", "personal")).To(BeFalse())
+					Expect(routing.ShouldProcessFrontmatterCommand("openclaw", "openclaw")).To(BeTrue())
+				},
+			)
+
+			It("never overrides an existing target_vault", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: stamped-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: personal\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("stamped-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["target_vault"]).To(Equal("personal"))
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+		})
 	})
 })

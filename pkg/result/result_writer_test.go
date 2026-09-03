@@ -22,6 +22,7 @@ import (
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var errTest = errors.New("test error")
@@ -104,6 +105,7 @@ var _ = Describe("ResultWriter", func() {
 		writer = result.NewResultWriter(
 			fakeGit,
 			taskDir,
+			"openclaw",
 			fakeTime,
 			metrics.New(),
 			libtime.NewWaiterDuration(),
@@ -289,6 +291,61 @@ var _ = Describe("ResultWriter", func() {
 				Expect(s).To(ContainSubstring("task_identifier: test-task-uuid-1234"))
 				Expect(s).To(ContainSubstring("assignee: backtest-agent"))
 				Expect(s).To(ContainSubstring("---\nNew content\n"))
+			})
+		})
+
+		Context("heal-on-write (target_vault stamping)", func() {
+			It("stamps target_vault on a result write to a file lacking it", func() {
+				writeTaskFile(
+					"my-task.md",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n---\nOld content\n",
+				)
+				taskFile = lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter: lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "completed",
+						"phase":           "done",
+					},
+					Content: lib.TaskContent("New content\n"),
+				}
+				Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+				written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+				Expect(readErr).NotTo(HaveOccurred())
+				fm, fmErr := extractTestFrontmatter(string(written))
+				Expect(fmErr).NotTo(HaveOccurred())
+				Expect(fm["target_vault"]).To(Equal("openclaw"))
+				// the stamped file read back through ShouldProcessResult no longer
+				// falls through to the non-owning controller
+				stampedReq := lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter:    lib.TaskFrontmatter{"target_vault": "openclaw"},
+				}
+				Expect(routing.ShouldProcessResult(stampedReq, "personal")).To(BeFalse())
+				Expect(routing.ShouldProcessResult(stampedReq, "openclaw")).To(BeTrue())
+			})
+
+			It("never overrides an existing target_vault on a result write", func() {
+				writeTaskFile(
+					"my-task.md",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntarget_vault: personal\n---\nOld content\n",
+				)
+				taskFile = lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter: lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "completed",
+						"phase":           "done",
+					},
+					Content: lib.TaskContent("New content\n"),
+				}
+				Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
+				written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+				Expect(readErr).NotTo(HaveOccurred())
+				fm, fmErr := extractTestFrontmatter(string(written))
+				Expect(fmErr).NotTo(HaveOccurred())
+				Expect(fm["target_vault"]).To(Equal("personal"))
+				Expect(fm["status"]).To(Equal("completed"))
 			})
 		})
 

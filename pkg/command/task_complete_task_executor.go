@@ -35,9 +35,12 @@ const CompleteTaskCommandOperation base.CommandOperation = task.CompleteCommandO
 // Idempotent: a task that already carries a # Resolution block is a no-op (second
 // completion does not append a duplicate block, matching the build-fix-close-obsolete-tasks
 // skill's existing guard).
+// vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
+// differs is cross-vault traffic and is skipped before the task-file lookup.
 func NewCompleteTaskExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
@@ -53,6 +56,15 @@ func NewCompleteTaskExecutor(
 					"malformed CompleteTaskCommand: %v",
 					err,
 				)
+			}
+			if err := frontmatterCommandVaultMismatch(
+				ctx,
+				"complete-task",
+				cmd.TargetVault,
+				vaultName,
+				cmd.TaskIdentifier,
+			); err != nil {
+				return nil, nil, err
 			}
 			if err := cmd.TaskIdentifier.Validate(ctx); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate task_identifier")
@@ -80,7 +92,7 @@ func NewCompleteTaskExecutor(
 			if err := gitClient.AtomicReadModifyWriteAndCommitPush(
 				ctx,
 				fullAbsPath,
-				buildCompleteModifyFn(ctx, cmd, ts),
+				buildCompleteModifyFn(ctx, cmd, ts, vaultName),
 				fmt.Sprintf("[agent-task-controller] complete task %s", cmd.TaskIdentifier),
 			); err != nil {
 				m.FrontmatterCommandsTotal("complete-task", "error").Inc()
@@ -109,6 +121,7 @@ func buildCompleteModifyFn(
 	ctx context.Context,
 	cmd task.CompleteCommand,
 	ts string,
+	vaultName string,
 ) func([]byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		fmStr, err := result.ExtractFrontmatter(ctx, current)
@@ -137,6 +150,9 @@ func buildCompleteModifyFn(
 		if cmd.RecoverySHA != "" {
 			fm["recovery_sha"] = cmd.RecoverySHA
 		}
+		// Heal-on-write: stamp target_vault on legacy files lacking it so the
+		// non-owning controller permanently stops falling through.
+		result.HealTargetVault(fm, vaultName)
 		closedBody := body
 		if strings.TrimSpace(closedBody) != "" && !strings.HasSuffix(closedBody, "\n") {
 			closedBody += "\n"

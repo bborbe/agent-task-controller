@@ -31,10 +31,12 @@ type ResultWriter interface {
 }
 
 // NewResultWriter creates a ResultWriter that locates task files in the vault
-// and writes the result, committing via gitClient.
+// and writes the result, committing via gitClient. vaultName is the controller's
+// VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
 func NewResultWriter(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 	waiter libtime.WaiterDuration,
@@ -42,6 +44,7 @@ func NewResultWriter(
 	return &resultWriter{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
+		vaultName:       vaultName,
 		currentDateTime: currentDateTime,
 		metrics:         m,
 		waiter:          waiter,
@@ -51,6 +54,7 @@ func NewResultWriter(
 type resultWriter struct {
 	gitClient       gitclient.GitClient
 	taskDir         string
+	vaultName       string
 	currentDateTime libtime.CurrentDateTimeGetter
 	metrics         metrics.Metrics
 	waiter          libtime.WaiterDuration
@@ -253,6 +257,10 @@ func (r *resultWriter) buildResultModifyFn(
 				d.Rejected,
 			)
 		}
+		// Heal-on-write: a legacy task file created before target_vault stamping
+		// permanently stops falling through to both controllers once the owning
+		// controller writes it. Never overrides an existing target_vault.
+		HealTargetVault(merged, r.vaultName)
 		body := r.applyRetryCounter(merged, currentOnDisk, string(req.Content))
 
 		marshaledFrontmatter, err := yaml.Marshal(map[string]any(merged))
@@ -516,6 +524,20 @@ func MergeFrontmatter(
 	}
 
 	return merged, decisions
+}
+
+// HealTargetVault stamps the controller's vaultName into frontmatter when the
+// target_vault key is absent. An existing value (any value) is never overridden.
+// This is the heal-on-write half of the frontmatter-command routing guard: a
+// legacy task file created before target_vault stamping is written by whichever
+// controller owns the write, and this stamp ensures the non-owning controller
+// permanently stops falling through to that file (ShouldProcessResult and
+// ShouldProcessFrontmatterCommand both return false for a mismatched stamp).
+// Mutates fm in place; no-op when the key is already present.
+func HealTargetVault(fm lib.TaskFrontmatter, vaultName string) {
+	if _, ok := fm["target_vault"]; !ok {
+		fm["target_vault"] = vaultName
+	}
 }
 
 func isTerminalStatus(s domain.TaskStatus) bool {

@@ -166,6 +166,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	resultWriter := result.NewResultWriter(
 		gitClient,
 		a.TaskDir,
+		a.VaultName,
 		currentDateTime,
 		metrics.New(),
 		libtime.NewWaiterDuration(),
