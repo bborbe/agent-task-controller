@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.7.1
 
 - fix: stop result writes from clobbering operator edits — `assignee`/`previous_assignee` are now operator-owned in the frontmatter merge (the on-disk value always wins over a stale spawn-time snapshot, an incoming value may introduce an absent key, and an incoming empty `assignee` is always honored as the deliverer's Failed/needs_input clear), and the body is merged by section instead of replaced wholesale — an on-disk `## Parked` and other operator-authored headings survive every write, same-named headings are replaced by the fresh incoming content, and the on-disk preamble survives when the incoming body starts with a heading (spec 007)
 
