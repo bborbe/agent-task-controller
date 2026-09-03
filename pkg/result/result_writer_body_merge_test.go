@@ -89,6 +89,7 @@ var _ = Describe("ResultWriter", func() {
 		writer = result.NewResultWriter(
 			fakeGit,
 			taskDir,
+			"openclaw",
 			fakeTime,
 			metrics.New(),
 			libtime.NewWaiterDuration(),
