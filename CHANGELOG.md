@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: bump golang.org/x/crypto to v0.56.0 (fixes GO-2026-6354 / GO-2026-6355, ssh DoS on deadlocked channels)
+
 ## v0.6.6
 
 - fix: recover task results lost to git-rest pull lag — `WriteResult` now retries the task-file lookup up to 3 times with a 1s pause before giving up, instead of dropping the result on the first miss. The controller lists files over git-rest's HTTP API rather than a local clone, and git-rest pulls on a timer, so a result can arrive before the file it belongs to is visible; that result was previously discarded permanently (warning + `results_written{result="not_found"}` + `nil`, so the Kafka offset advanced regardless). The retry is deliberately in-process rather than an error return: the consumer runs `SkipCorruptBatches:false` on an offset consumer, so erroring on a permanently-missing file (deleted or renamed task) would block the partition and halt the controller. Give-up behaviour and the `not_found` label are unchanged, so the `AgentControllerResultNotFound` alert keeps working. A recovery logs `task file for identifier X resolved on attempt N of 3` unconditionally — the only signal separating transient lag from permanent loss, and what the alert's provisional threshold should be tuned from.
