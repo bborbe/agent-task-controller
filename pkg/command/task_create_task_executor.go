@@ -6,6 +6,7 @@ package command
 
 import (
 	"context"
+	stderrors "errors"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,17 @@ import (
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+)
+
+// errTitlePathOccupiedByOtherIdentifier signals that the title path is occupied
+// by a DIFFERENT task_identifier — a filename collision between two distinct
+// tasks, not a re-publish of the same task. checkTitlePathFree returns it
+// instead of task.ErrTaskAlreadyExists so the caller can disambiguate the path
+// (short-identifier suffix) and give the losing identifier its own file; before
+// this fix the losing task was never materialized and every result for it was
+// dropped silently forever (two-identifiers-one-title-path, fixed here).
+var errTitlePathOccupiedByOtherIdentifier = stderrors.New(
+	"title path occupied by a different task identifier",
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
@@ -89,6 +101,20 @@ func NewCreateTaskExecutor(
 				cmd.TaskIdentifier,
 				cmd,
 			)
+			if errors.Is(err, errTitlePathOccupiedByOtherIdentifier) {
+				// Two distinct task_identifiers targeted one title path. The
+				// occupant belongs to a different task, so this is a filename
+				// collision, not a re-publish of this task. Disambiguate the
+				// path with a short-identifier suffix so this task still gets
+				// its own file — the previous behavior dropped the losing
+				// identifier's results forever.
+				relPath, reopened, priorStatus, err = disambiguateCreateTaskRelPath(
+					ctx,
+					gitClient,
+					taskDir,
+					cmd,
+				)
+			}
 			if err != nil {
 				return nil, nil, err
 			}
@@ -104,17 +130,21 @@ func NewCreateTaskExecutor(
 // checkTitlePathFree reports whether the title path is free for a new task.
 // The slot is free when the path is unoccupied (git-rest 404) OR when the
 // existing file's frontmatter status is a terminal status ("completed" or
-// "aborted", compared case-sensitively after whitespace trim) — a terminal
-// task is no longer a live duplicate, so the slot is reusable. On a
-// terminal-status free it returns reopened=true and the prior status so the
-// caller can distinguish a reopen from a first-ever create. Every other
-// occupied state — any non-terminal status, an absent/empty/unknown status,
-// missing frontmatter delimiters, or unparseable YAML — returns
-// ErrTaskAlreadyExists (a benign Failure on the result topic — no overwrite,
-// no git write) wrapped with the "title path %s occupied" message shape. A
-// transient git-rest read error is propagated. The decision consumes the
-// bytes already read by this function; the caller must not issue a second
-// ReadFile.
+// "aborted", compared case-sensitively after whitespace trim) and the command
+// is not a recurring instance — a terminal task is no longer a live duplicate,
+// so the slot is reusable. On a terminal-status free it returns reopened=true
+// and the prior status so the caller can distinguish a reopen from a first-ever
+// create. A live (non-terminal) occupant that is a DIFFERENT task_identifier
+// returns errTitlePathOccupiedByOtherIdentifier so the caller disambiguates the
+// path instead of orphaning the incoming identifier (two-identifiers-one-title-
+// path; previously the loser's results were dropped forever). Every other
+// occupied state — any non-terminal status with the same (or unreadable)
+// identifier, an absent/empty/unknown status, missing frontmatter delimiters,
+// or unparseable YAML — returns ErrTaskAlreadyExists (a benign Failure on the
+// result topic — no overwrite, no git write) wrapped with the "title path %s
+// occupied" message shape. A transient git-rest read error is propagated. The
+// decision consumes the bytes already read by this function; the caller must
+// not issue a second ReadFile.
 //
 // Recurring-task instances are carved out of the reopen path: a command from
 // the recurring-task-creator publisher (created_by: recurring-task-creator)
@@ -174,16 +204,49 @@ func checkTitlePathFree(
 	}
 	status, _ := existingFm.String("status")
 	status = strings.TrimSpace(status)
-	if (status == "completed" || status == "aborted") && !isRecurringTaskCommand(cmd) {
-		return true, status, nil
+	if status == "completed" || status == "aborted" {
+		if !isRecurringTaskCommand(cmd) {
+			return true, status, nil
+		}
+		// Recurring carve-out (unchanged): a terminal recurring instance holds
+		// the slot until the period rolls — the file IS the dedupe state, so no
+		// reopen and no disambiguation for terminal files.
+		return false, "", occupiedErr(ctx, relPath, existing, taskIdentifier)
 	}
+	// Live (non-terminal) occupant with a DIFFERENT identifier = a filename
+	// collision between two tasks, not a re-publish of this one — signal the
+	// caller to disambiguate instead of orphaning this identifier. Same-id (or
+	// unreadable-id) occupancy keeps ErrTaskAlreadyExists: idempotent re-publish,
+	// the task already has a file, nothing is lost.
+	existingID, _ := existingFm.String("task_identifier")
+	if existingID != "" && existingID != string(taskIdentifier) {
+		return false, "", errors.Wrapf(
+			ctx,
+			errTitlePathOccupiedByOtherIdentifier,
+			"title path %s occupied by task %s",
+			relPath,
+			existingID,
+		)
+	}
+	return false, "", occupiedErr(ctx, relPath, existing, taskIdentifier)
+}
+
+// occupiedErr reports the benign already-exists outcome for an occupied title
+// path (V(2) log naming the occupant bytes + wrapped ErrTaskAlreadyExists),
+// shared by the recurring carve-out and the same-identifier occupancy path.
+func occupiedErr(
+	ctx context.Context,
+	relPath string,
+	existing []byte,
+	taskIdentifier lib.TaskIdentifier,
+) error {
 	glog.V(2).Infof(
 		"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
 		relPath,
 		len(existing),
 		taskIdentifier,
 	)
-	return false, "", errors.Wrapf(
+	return errors.Wrapf(
 		ctx,
 		task.ErrTaskAlreadyExists,
 		"title path %s occupied",
@@ -336,6 +399,59 @@ func resolveCreateTaskRelPath(
 	}
 
 	return filepath.Join(taskDir, cmd.Title+".md")
+}
+
+// disambiguateCreateTaskRelPath resolves an alternate title path for a create
+// whose original title path is occupied by a DIFFERENT task_identifier. Two
+// distinct tasks collided on one filename; this gives the losing task its own
+// file by appending a short-identifier suffix ("{Title} - {id[:8]}.md",
+// matching the sha[:8]/retry-token short-segment convention used across task
+// filenames), so its results can never be lost to the occupant's path. The
+// candidate path is re-checked via checkTitlePathFree so the same
+// same-identifier-republish and terminal-reopen semantics apply; if the
+// suffixed path is itself occupied, the propagated error keeps the existing
+// benign ErrTaskAlreadyExists-style outcome (a rare race — skipped create, no
+// data loss). The caller (NewCreateTaskExecutor) is the only consumer, and it
+// reaches this only when the identifier-derived UUID fallback path (already
+// unique per identifier) is not in play.
+func disambiguateCreateTaskRelPath(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	cmd task.CreateCommand,
+) (relPath string, reopened bool, priorStatus string, err error) {
+	// Defense-in-depth: a title that fails validation here means the original
+	// path was the identifier-derived fallback, which is already unique per
+	// identifier — a collision there cannot be a different-identifier clash.
+	if err := cmd.Validate(ctx); err != nil {
+		return "", false, "", errors.Wrapf(
+			ctx,
+			task.ErrTaskAlreadyExists,
+			"title path %s occupied",
+			cmd.Title,
+		)
+	}
+	short := string(cmd.TaskIdentifier)
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	candidate := filepath.Join(taskDir, cmd.Title+" - "+short+".md")
+	reopened, priorStatus, err = checkTitlePathFree(
+		ctx,
+		gitClient,
+		candidate,
+		cmd.TaskIdentifier,
+		cmd,
+	)
+	if err != nil {
+		return "", false, "", err
+	}
+	glog.V(2).Infof(
+		"create-task: title path occupied by a different identifier, disambiguating for %s to %s",
+		cmd.TaskIdentifier,
+		candidate,
+	)
+	return candidate, reopened, priorStatus, nil
 }
 
 // isNotFoundReadError reports whether a gitClient.ReadFile error means the file
