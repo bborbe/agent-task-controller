@@ -75,8 +75,9 @@ func ShouldProcessResult(req lib.Task, vaultName string) bool {
 // attempted by every controller: the owning vault finds the file and heals it
 // (stamping target_vault in the same write), the non-owning vault drops it. A
 // non-empty targetVault is compared verbatim to vaultName (no case-folding).
-// Deliberately NOT defaulting to LegacyDefaultVault: that would route legacy
-// personal-vault tasks to the openclaw controller permanently.
+// Deliberately NOT defaulting to LegacyDefaultVault (unlike ShouldProcess):
+// routing legacy personal-vault tasks to the openclaw controller would
+// permanently orphan them.
 func ShouldProcessFrontmatterCommand(targetVault, vaultName string) bool {
 	if targetVault == "" {
 		return true

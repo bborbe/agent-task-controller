@@ -531,7 +531,7 @@ func MergeFrontmatter(
 // This is the heal-on-write half of the frontmatter-command routing guard: a
 // legacy task file created before target_vault stamping is written by whichever
 // controller owns the write, and this stamp ensures the non-owning controller
-// permanently stops falling through to it (ShouldProcessResult and
+// permanently stops falling through to that file (ShouldProcessResult and
 // ShouldProcessFrontmatterCommand both return false for a mismatched stamp).
 // Mutates fm in place; no-op when the key is already present.
 func HealTargetVault(fm lib.TaskFrontmatter, vaultName string) {
