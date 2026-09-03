@@ -5,3 +5,5 @@
 /.dark-factory.log
 /.dark-factory.lock
 /vendor/
+/prompts/log
+/specs/log

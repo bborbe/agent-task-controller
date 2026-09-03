@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var _ = Describe("PlanningRetryGate", func() {
@@ -47,7 +48,14 @@ var _ = Describe("PlanningRetryGate", func() {
 		clock = clockVal
 		taskDir = "tasks"
 		fakeGit.PathReturns("/repo")
-		gate = command.NewPlanningRetryGate(fakeGit, taskDir, clock, fakeCommenter, metrics.New())
+		gate = command.NewPlanningRetryGate(
+			fakeGit,
+			taskDir,
+			"openclaw",
+			clock,
+			fakeCommenter,
+			metrics.New(),
+		)
 	})
 
 	buildPRReviewTask := func(taskID string, phaseVal string, content string) lib.Task {
@@ -723,5 +731,145 @@ var _ = Describe("PlanningRetryGate", func() {
 				}
 			})
 		})
+	})
+
+	Describe("heal-on-write (target_vault stamping)", func() {
+		It(
+			"stamps target_vault on the retry write for a file lacking it",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("openclaw"))
+
+				// the stamped file read back through ShouldProcessResult no longer
+				// falls through to the non-owning controller
+				stampedReq := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter:    lib.TaskFrontmatter{"target_vault": "openclaw"},
+				}
+				Expect(routing.ShouldProcessResult(stampedReq, "personal")).To(BeFalse())
+				Expect(routing.ShouldProcessResult(stampedReq, "openclaw")).To(BeTrue())
+			},
+		)
+
+		It(
+			"stamps target_vault on the escalation write for a file lacking it",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("openclaw"))
+
+				phase, _ := fm.String("phase")
+				Expect(phase).To(Equal("human_review"))
+
+				stampedReq := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter:    lib.TaskFrontmatter{"target_vault": "openclaw"},
+				}
+				Expect(routing.ShouldProcessResult(stampedReq, "personal")).To(BeFalse())
+				Expect(routing.ShouldProcessResult(stampedReq, "openclaw")).To(BeTrue())
+			},
+		)
+
+		It(
+			"never overrides an existing target_vault on retry or escalation writes",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				// rewrite disk content with a pre-existing target_vault
+				stamped := strings.Replace(
+					string(diskContent),
+					"status: in_progress",
+					"status: in_progress\ntarget_vault: personal",
+					1,
+				)
+				diskContent = []byte(stamped)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("personal"))
+			},
+		)
 	})
 })

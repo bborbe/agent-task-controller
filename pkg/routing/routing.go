@@ -67,3 +67,20 @@ func ShouldProcessResult(req lib.Task, vaultName string) bool {
 	}
 	return true
 }
+
+// ShouldProcessFrontmatterCommand returns true iff the controller's vaultName
+// owns this frontmatter command (update-frontmatter, increment-frontmatter,
+// complete). An empty targetVault falls through to true — matching
+// ShouldProcessResult's legacy semantics — so legacy unstamped commands are
+// attempted by every controller: the owning vault finds the file and heals it
+// (stamping target_vault in the same write), the non-owning vault drops it. A
+// non-empty targetVault is compared verbatim to vaultName (no case-folding).
+// Deliberately NOT defaulting to LegacyDefaultVault (unlike ShouldProcess):
+// routing legacy personal-vault tasks to the openclaw controller would
+// permanently orphan them.
+func ShouldProcessFrontmatterCommand(targetVault, vaultName string) bool {
+	if targetVault == "" {
+		return true
+	}
+	return targetVault == vaultName
+}

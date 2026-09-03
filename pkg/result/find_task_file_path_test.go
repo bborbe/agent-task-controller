@@ -144,7 +144,14 @@ var _ = Describe("WriteResult not-found retry", func() {
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(stdtime.Date(2026, 8, 31, 12, 0, 0, 0, stdtime.UTC)))
 		fakeWait = &libtimemocks.WaiterDuration{}
-		writer = result.NewResultWriter(fakeGit, taskDir, fakeTime, metrics.New(), fakeWait)
+		writer = result.NewResultWriter(
+			fakeGit,
+			taskDir,
+			"openclaw",
+			fakeTime,
+			metrics.New(),
+			fakeWait,
+		)
 		task = lib.Task{TaskIdentifier: "late-arrival"}
 	})
 
