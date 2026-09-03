@@ -219,14 +219,22 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		})
 
 		Context("collision with a different task_identifier", func() {
-			It("returns ErrTaskAlreadyExists and does not write (AC4)", func() {
-				// Existing file at the title path belongs to a DIFFERENT task and its status
-				// "todo" is non-terminal — filename owns the slot, no overwrite.
-				fakeGit.ReadFileReturns(
+			It("disambiguates the path with a short-identifier suffix and writes (AC4)", func() {
+				// Existing file at the title path belongs to a DIFFERENT task and its
+				// status "todo" is non-terminal — a two-identifiers-one-title-path
+				// filename collision. The losing identifier must still get its own
+				// file, never be orphaned.
+				fakeGit.ReadFileReturnsOnCall(
+					0,
 					[]byte(
 						"---\ntask_identifier: someone-else\nassignee: alice\nstatus: todo\n---\n",
 					),
 					nil,
+				)
+				fakeGit.ReadFileReturnsOnCall(
+					1,
+					nil,
+					errors.New("GET file returned 404: not found"),
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("new-task-id"),
@@ -234,10 +242,74 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				_, statErr := os.Stat(filepath.Join(
+					tmpDir, "tasks", "My Colliding Task - new-task.md",
+				))
+				Expect(statErr).NotTo(HaveOccurred())
 			})
+		})
+
+		Context("two identifiers targeting one title path (regression)", func() {
+			It(
+				"materializes both tasks — the loser at a disambiguated path, never dropped",
+				func() {
+					// Reproduces the prod incident (2026-09-02): the watcher's canonical
+					// identifier claims the title path, then 27ms later a second,
+					// different identifier claims the SAME title. The loser must get
+					// its own file so its results resolve — the pre-fix behavior
+					// orphaned it and dropped every result forever.
+					fakeGit.ReadFileReturnsOnCall(
+						0,
+						nil,
+						errors.New("GET file returned 404: not found"),
+					)
+					fakeGit.ReadFileReturnsOnCall(
+						1,
+						[]byte(
+							"---\ntask_identifier: 3aa3f6ba-e9bb-5276-b2bf-274624c90d93\nassignee: claude\nstatus: next\n---\n",
+						),
+						nil,
+					)
+					fakeGit.ReadFileReturnsOnCall(
+						2,
+						nil,
+						errors.New("GET file returned 404: not found"),
+					)
+
+					title := "PR Review github - bborbe-run - 20 - a52b3fa4 - update-go-module-dependencies"
+					first := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("3aa3f6ba-e9bb-5276-b2bf-274624c90d93"),
+						Title:          title,
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, first)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+
+					second := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("1dfcfe48-e957-f2a8-c7a2-e9b8bc083a25"),
+						Title:          title,
+						Frontmatter: lib.TaskFrontmatter{
+							"assignee": "pr-reviewer-agent",
+							"status":   "next",
+						},
+					})
+					_, _, err = executor.HandleCommand(ctx, nil, second)
+					Expect(err).NotTo(HaveOccurred())
+
+					// Both identifiers resolve to real files: the canonical title path
+					// and the disambiguated short-id path.
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(2))
+					_, statErr := os.Stat(filepath.Join(tmpDir, "tasks", title+".md"))
+					Expect(statErr).NotTo(HaveOccurred())
+					_, statErr = os.Stat(filepath.Join(
+						tmpDir, "tasks", title+" - 1dfcfe48.md",
+					))
+					Expect(statErr).NotTo(HaveOccurred())
+				},
+			)
 		})
 
 		Context("transient git-rest read error", func() {
@@ -422,11 +494,15 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 		Context("non-terminal status holds the title path (no reopen)", func() {
 			DescribeTable(
-				"returns ErrTaskAlreadyExists without writing",
+				"returns ErrTaskAlreadyExists without writing for a SAME-identifier occupant",
 				func(existingStatus string) {
+					// Same task_identifier re-publish: the task already has its
+					// file, so the idempotent duplicate keeps failing benignly
+					// (no disambiguation — that path is for different-identifier
+					// collisions, covered by the two-identifiers regression test).
 					fakeGit.ReadFileReturns(
 						[]byte(
-							"---\ntask_identifier: x\nassignee: alice\nstatus: "+existingStatus+"\n---\nbody\n",
+							"---\ntask_identifier: non-terminal\nassignee: alice\nstatus: "+existingStatus+"\n---\nbody\n",
 						),
 						nil,
 					)
@@ -440,6 +516,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
 					Expect(alreadyExists).To(BeTrue())
 					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
 				},
 				Entry("next", "next"),
 				Entry("in_progress", "in_progress"),
@@ -468,7 +545,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Entry("syntactically invalid YAML", []byte("---\nstatus: [\n---\n")),
 				Entry(
 					"valid frontmatter with no status key",
-					[]byte("---\ntask_identifier: x\nassignee: alice\n---\n"),
+					[]byte("---\nassignee: alice\n---\n"),
 				),
 				Entry("empty status", []byte("---\nstatus: \"\"\n---\n")),
 				Entry("unknown status value", []byte("---\nstatus: some-unknown-value\n---\n")),
