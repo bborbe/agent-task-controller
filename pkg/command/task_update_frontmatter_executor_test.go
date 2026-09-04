@@ -492,8 +492,12 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					Expect(routing.ShouldProcessResult(req, "openclaw")).To(BeTrue())
 					// and the frontmatter-command predicate rejects the non-owner too,
 					// so subsequent update/increment commands for this file skip cleanly
-					Expect(routing.ShouldProcessFrontmatterCommand("openclaw", "personal")).To(BeFalse())
-					Expect(routing.ShouldProcessFrontmatterCommand("openclaw", "openclaw")).To(BeTrue())
+					Expect(
+						routing.ShouldProcessFrontmatterCommand("openclaw", "personal"),
+					).To(BeFalse())
+					Expect(
+						routing.ShouldProcessFrontmatterCommand("openclaw", "openclaw"),
+					).To(BeTrue())
 				},
 			)
 
