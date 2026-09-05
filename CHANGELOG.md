@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.0
 
 - feat: refuse any `task_identifier` repair write that would not clear its own trigger — before persisting, the vault scanner re-evaluates the candidate bytes through the exact read-path pipeline the next cycle uses (frontmatter extraction, last-wins deduplication, YAML unmarshal) and requires the resolved `task_identifier` to be a string equal to the freshly minted UUID. A repair failing this convergence check writes nothing, commits nothing, logs one ERROR line `task_identifier repair did not converge, halting repair for: <path>`, and increments `agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}`; candidate bytes that cannot be parsed are treated as non-converging (fail-closed). The halt is keyed on the file's on-disk content hash, so it re-arms exactly once per distinct file state and clears itself as soon as any writer changes the file, and halt bookkeeping never leaks an empty task identifier into the deleted-tasks stream. The guard is unconditional and root-cause-agnostic: it bounds any non-converging repair — including causes nobody has enumerated — to one log line and one counter increment instead of an unbounded rewrite loop against the shared vault repository (spec 009)
 
