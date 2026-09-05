@@ -27,10 +27,12 @@ import (
 // captureGlogWarnings runs fn with glog WARNING output captured and returns the
 // captured bytes. glog's -logtostderr defaults to false, so warnings otherwise
 // go to files; setting the flag routes them to stderr, which we redirect to a
-// pipe. A drain goroutine reads the pipe concurrently, so fn can never block on
-// a full 64 KB kernel pipe buffer. Ginkgo runs specs serially, so the global
-// os.Stderr redirect is safe.
+// pipe. The previous flag value is restored alongside os.Stderr so later specs
+// do not inherit glog-on-stderr. A drain goroutine reads the pipe concurrently,
+// so fn can never block on a full 64 KB kernel pipe buffer. Ginkgo runs specs
+// serially, so the global os.Stderr redirect is safe.
 func captureGlogWarnings(fn func()) string {
+	oldLogToStderr := flag.Lookup("logtostderr").Value.String()
 	Expect(flag.Set("logtostderr", "true")).To(Succeed())
 	oldStderr := os.Stderr
 	r, w, err := os.Pipe()
@@ -58,6 +60,7 @@ func captureGlogWarnings(fn func()) string {
 	// close the writer so the drain goroutine sees EOF.
 	glog.Flush()
 	os.Stderr = oldStderr
+	Expect(flag.Set("logtostderr", oldLogToStderr)).To(Succeed())
 	_ = w.Close()
 
 	res := <-done
@@ -425,6 +428,80 @@ body
 		unterminated := "---\ntask_identifier: 501\nstatus: in_progress\n"
 		Expect(string(removeTaskIdentifier([]byte(unterminated)))).To(Equal(unterminated))
 	})
+
+	// parseFrontmatterMap asserts the frontmatter of content is still valid
+	// YAML after removal and returns it as a map. A span that terminates early
+	// leaves an orphaned value fragment behind, which fails here.
+	parseFrontmatterMap := func(content []byte) map[string]interface{} {
+		fm, err := extractFrontmatter(context.Background(), content)
+		Expect(err).NotTo(HaveOccurred())
+		var fmMap map[string]interface{}
+		Expect(yaml.Unmarshal([]byte(fm), &fmMap)).To(Succeed())
+		return fmMap
+	}
+
+	// expectKeyGone asserts the frontmatter parses and no longer carries a
+	// task_identifier key, while the following top-level key survived.
+	expectKeyGone := func(content []byte) {
+		fmMap := parseFrontmatterMap(content)
+		_, hasKey := fmMap["task_identifier"]
+		Expect(hasKey).To(BeFalse())
+		status, isString := fmMap["status"].(string)
+		Expect(isString).To(BeTrue())
+		Expect(status).To(Equal("in_progress"))
+	}
+
+	It("removes a block scalar value containing a genuinely empty line", func() {
+		// yaml.v3 emits genuinely empty lines (length 0, not whitespace-only)
+		// for blanks inside | and > scalars. A length-based indentation test
+		// terminates the span there and orphans "  third line".
+		in := "---\ntask_identifier: |\n  first line\n\n  third line\n" +
+			"status: in_progress\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\nstatus: in_progress\n---\nbody\n"))
+		expectKeyGone(out)
+	})
+
+	It("removes a folded scalar value containing a genuinely empty line", func() {
+		in := "---\ntask_identifier: >\n  first line\n\n  third line\n" +
+			"status: in_progress\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\nstatus: in_progress\n---\nbody\n"))
+		expectKeyGone(out)
+	})
+
+	It("removes a block sequence whose items are separated by a blank line", func() {
+		in := "---\ntask_identifier:\n  - a\n\n  - b\nstatus: in_progress\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\nstatus: in_progress\n---\nbody\n"))
+		expectKeyGone(out)
+	})
+
+	It("preserves a blank line separating the span from the next key", func() {
+		// Trailing blanks are trimmed back out of the removal set, so a
+		// separator blank line before the next top-level key survives instead
+		// of being swallowed (the over-deletion this must not regress into).
+		in := "---\ntask_identifier: |\n  abc\n\nstatus: in_progress\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\n\nstatus: in_progress\n---\nbody\n"))
+		expectKeyGone(out)
+	})
+
+	It("preserves a blank separator after a block sequence value span", func() {
+		in := "---\ntask_identifier:\n  - a\n\n  - b\n\nstatus: in_progress\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\n\nstatus: in_progress\n---\nbody\n"))
+		expectKeyGone(out)
+	})
+
+	It("keeps a trailing blank line before the closing delimiter", func() {
+		// Pending blanks left over when the closing --- is reached are trimmed
+		// back out too, so the frontmatter keeps its trailing blank line.
+		in := "---\nstatus: in_progress\ntask_identifier: |\n  abc\n\n---\nbody\n"
+		out := removeTaskIdentifier([]byte(in))
+		Expect(string(out)).To(Equal("---\nstatus: in_progress\n\n---\nbody\n"))
+		expectKeyGone(out)
+	})
 })
 
 var _ = Describe("task_identifier backfill repair (spec 008)", func() {
@@ -638,6 +715,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		Expect(string(lastWritten)).To(Equal(expected),
 			"injection must receive the unmodified original read bytes")
 		Expect(strings.Contains(captured, "replacing invalid task_identifier")).To(BeFalse())
+		Expect(strings.Contains(captured, "replacing non-UUID task_identifier")).To(BeFalse())
 	})
 
 	It("AC4: healthy files are never written", func() {
@@ -684,6 +762,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			nonNilTasks,
 		).To(Equal(1), "healthy file must publish exactly once across five cycles")
 		Expect(strings.Count(captured, "replacing invalid task_identifier")).To(Equal(0))
+		Expect(strings.Count(captured, "replacing non-UUID task_identifier")).To(Equal(0))
 	})
 
 	It("AC5: content outside the frontmatter region is preserved byte-for-byte", func() {
@@ -802,14 +881,31 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { Expect(os.RemoveAll(tmpDir)).To(Succeed()) }()
 
+		// Each row carries the exact log line it must emit. The non-string
+		// class keeps the frozen `replacing invalid task_identifier` substring
+		// (Go type only, so a big sequence cannot blow up a log line); the
+		// string-but-not-a-UUID class emits `replacing non-UUID
+		// task_identifier` with the offending value, which %T would have lost.
 		rows := []struct {
-			relPath string
-			fm      string
-			goType  string
+			relPath  string
+			fm       string
+			expected string
 		}{
-			{"ac6-int.md", "task_identifier: 501", "int"},
-			{"ac6-empty.md", `task_identifier: ""`, "string"},
-			{"ac6-quoted.md", `task_identifier: "501"`, "string"},
+			{
+				"ac6-int.md",
+				"task_identifier: 501",
+				"replacing invalid task_identifier of type int in ac6-int.md",
+			},
+			{
+				"ac6-empty.md",
+				`task_identifier: ""`,
+				`replacing non-UUID task_identifier "" in ac6-empty.md`,
+			},
+			{
+				"ac6-quoted.md",
+				`task_identifier: "501"`,
+				`replacing non-UUID task_identifier "501" in ac6-quoted.md`,
+			},
 		}
 		for _, row := range rows {
 			Expect(
@@ -841,15 +937,14 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		})
 
 		Expect(writeCount).To(Equal(3))
-		Expect(strings.Count(captured, "replacing invalid task_identifier")).To(Equal(3),
-			"one repair log per repaired file")
+		// Both substrings stay greppable, and together they still account for
+		// exactly one repair log per repaired file.
+		Expect(strings.Count(captured, "replacing invalid task_identifier")).To(Equal(1),
+			"one repair log for the non-string row")
+		Expect(strings.Count(captured, "replacing non-UUID task_identifier")).To(Equal(2),
+			"one repair log per string-but-invalid row")
 		for _, row := range rows {
-			Expect(
-				strings.Contains(
-					captured,
-					"replacing invalid task_identifier of type "+row.goType+" in "+row.relPath,
-				),
-			).To(BeTrue(), row.relPath)
+			Expect(strings.Contains(captured, row.expected)).To(BeTrue(), row.relPath)
 		}
 	})
 
@@ -904,5 +999,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			),
 		).To(BeTrue())
 		Expect(strings.Contains(captured, "replacing invalid task_identifier")).To(BeFalse())
+		Expect(strings.Contains(captured, "replacing non-UUID task_identifier")).To(BeFalse())
 	})
 })

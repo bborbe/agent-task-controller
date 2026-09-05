@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- fix: stop the vault scanner's task_identifier backfill from rewriting a file every scan cycle — a present-but-invalid `task_identifier` (unquoted integer, empty or whitespace string, sequence, mapping, block scalar, or any non-UUID spelling) is now stripped from the frontmatter before a fresh UUID is injected, converging in exactly one write instead of appending a UUID and keeping the bad key forever (2026-09-05: one file grew to 3007 keys / 163 KB over 50 hours); removal is frontmatter-region-scoped, key-aware (quoted/spaced key spellings), and span-aware (block-style values), and the repair log is greppable as `replacing invalid task_identifier` naming the value's Go type (spec 008)
+- fix: stop the vault scanner's task_identifier backfill from rewriting a file every scan cycle — a present-but-invalid `task_identifier` (unquoted integer, empty or whitespace string, sequence, mapping, block scalar, or any non-UUID spelling) is now stripped from the frontmatter before a fresh UUID is injected, converging in exactly one write instead of appending a UUID and keeping the bad key forever (2026-09-05: one file grew to 3007 keys / 163 KB over 50 hours); removal is frontmatter-region-scoped, key-aware (quoted/spaced key spellings), and span-aware (block-style values), and the repair is greppable from logs alone via two substrings — `replacing non-UUID task_identifier` quoting the offending value for string-shaped values, and `replacing invalid task_identifier of type` naming the Go type for every other shape, so a large sequence or mapping cannot blow up a log line (spec 008)
 
 ## v0.7.3
 

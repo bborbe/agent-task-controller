@@ -284,7 +284,16 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
+		if isString {
+			// %T would print just "string" and lose the offending value, which
+			// is the only thing that tells an operator which file content to
+			// look for. Quoted so an empty or whitespace-only value is visible.
+			glog.Warningf("replacing non-UUID task_identifier %q in %s", taskID, relPath)
+		} else {
+			// Non-string values (sequences, mappings, ints) are logged by type
+			// only: a large sequence or mapping must not blow up a log line.
+			glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
+		}
 		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
