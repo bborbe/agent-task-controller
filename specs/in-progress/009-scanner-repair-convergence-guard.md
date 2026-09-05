@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-09-05T17:24:58Z"
 generating: "2026-09-05T18:30:58Z"
 prompted: "2026-09-05T18:30:58Z"
+verifying: "2026-09-05T18:43:34Z"
 branch: dark-factory/scanner-repair-convergence-guard
 ---
 
