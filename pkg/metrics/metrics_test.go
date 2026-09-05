@@ -106,7 +106,23 @@ var _ = Describe("Metrics", func() {
 			"empty_status",
 			"inject_task_identifier_failed",
 			"read_failed",
+			"auto_inject_disabled",
+			"repair_not_converging",
 		))
+	})
+
+	It("pre-initializes repair_not_converging at zero before any skip (spec 009 AC1)", func() {
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		value, found := gatherCounterValue(
+			mfs,
+			"agent_controller_vault_scanner_skipped_files_total",
+			"reason",
+			"repair_not_converging",
+		)
+		Expect(found).To(BeTrue(), "repair_not_converging series must exist after init()")
+		Expect(value).To(BeNumerically("==", 0))
 	})
 })
 
@@ -126,4 +142,27 @@ func gatherLabels(mfs []*dto.MetricFamily, metricName string, labelName string) 
 		return values
 	}
 	return nil
+}
+
+// gatherCounterValue returns the counter value of the sample of metricName whose
+// label labelName equals labelValue, and whether such a sample exists at all.
+func gatherCounterValue(
+	mfs []*dto.MetricFamily,
+	metricName string,
+	labelName string,
+	labelValue string,
+) (float64, bool) {
+	for _, mf := range mfs {
+		if mf.GetName() != metricName {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == labelName && lp.GetValue() == labelValue {
+					return m.GetCounter().GetValue(), true
+				}
+			}
+		}
+	}
+	return 0, false
 }

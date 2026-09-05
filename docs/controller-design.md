@@ -25,7 +25,7 @@ Poll loop:
   ├── changed file → parse frontmatter + body → publish agent-task-v1-event
   └── deleted file → publish agent-task-v1-event (deleted)
 
-> The scanner increments `agent_controller_vault_scanner_skipped_files_total{reason=<closed enum>}` at every skip site (broken frontmatter, unreadable file, empty status, injection failure, unresolvable duplicate frontmatter). The counter is pre-initialised at zero for every reason label so dashboards see all five before the first skip. Operators alert on `rate(agent_controller_vault_scanner_skipped_files_total[5m]) > 0`; a positive rate means a broken file is currently in the vault and is not being scanned.
+> The scanner increments `agent_controller_vault_scanner_skipped_files_total{reason=<closed enum>}` at every skip site (broken frontmatter, unreadable file, empty status, injection failure, unresolvable duplicate frontmatter, auto-inject disabled, repair did not converge). The counter is pre-initialised at zero for every reason label so dashboards see the whole closed set before the first skip. Operators alert on `rate(agent_controller_vault_scanner_skipped_files_total{reason!="repair_not_converging"}[5m]) > 0`; a positive rate means a broken file is currently in the vault and is not being scanned. The `repair_not_converging` label is an edge rather than a level — the scanner's content-hash short-circuit means it fires once per distinct file content — so it is alerted on separately with `increase(agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}[6h]) > 0`.
 
 ### 2. Command Processing (Kafka → git)
 

@@ -224,7 +224,7 @@ func (v *vaultScanner) scanFiles(
 // processFile handles a single .md file during a scan cycle.
 // Returns (task, writtenRelPath, writeError).
 //
-//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.; +4 lines from spec-008 present-but-invalid task_identifier branch (key-absent and present-invalid auto-inject gates kept separate; parity-check awk count stays at 9).
+//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.; +4 lines from spec-008 present-but-invalid task_identifier branch (key-absent and present-invalid auto-inject gates kept separate; parity-check awk count was 9 at spec-008).; spec-009 adds no statements to processFile (the convergence guard lives in injectAndStore), but raises the parity-check awk count from 9 to 10 via the convergence-halt log+counter site.
 func (v *vaultScanner) processFile(
 	ctx context.Context,
 	relPath string,
@@ -273,7 +273,7 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		return v.injectAndStore(ctx, content, relPath, currentFMAssignee)
+		return v.injectAndStore(ctx, content, relPath, currentFMAssignee, hash)
 	}
 	if !isString || !isValidUUID(taskID) {
 		if !v.autoInject {
@@ -294,7 +294,13 @@ func (v *vaultScanner) processFile(
 			// only: a large sequence or mapping must not blow up a log line.
 			glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
 		}
-		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
+		return v.injectAndStore(
+			ctx,
+			removeTaskIdentifier(content),
+			relPath,
+			currentFMAssignee,
+			hash,
+		)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
 		if !v.autoInject {
@@ -306,7 +312,13 @@ func (v *vaultScanner) processFile(
 			return nil, "", false
 		}
 		glog.Warningf("replacing duplicate task_identifier %q in %s", taskID, relPath)
-		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
+		return v.injectAndStore(
+			ctx,
+			removeTaskIdentifier(content),
+			relPath,
+			currentFMAssignee,
+			hash,
+		)
 	}
 	prevEntry := v.hashes[relPath]
 
@@ -352,18 +364,46 @@ func (v *vaultScanner) processFile(
 
 // injectAndStore generates a UUID, writes it into the file via ops.writeFile,
 // and records a sentinel hash entry with the file's current assignee.
+//
+// Before persisting, the candidate bytes are re-evaluated through the exact parse
+// pipeline processFile uses on the next cycle (repairConverges). A repair that
+// would not clear its own trigger is refused entirely — nothing written, nothing
+// committed, zero footprint in the vault — and the file is remembered by its
+// on-disk hash so processFile's content-hash short-circuit suppresses every
+// further attempt until the file's bytes change on disk.
+//
+// onDiskHash is the sha256 of the bytes processFile READ this cycle, not of the
+// candidate bytes. Storing the real on-disk hash is exactly what makes a halt ride
+// the existing short-circuit and re-arm on content change, and is what makes the
+// halt path behave differently from the zero-hash sentinel a successful write
+// stores.
+//
 // Returns (nil task, writtenRelPath, writeError).
 func (v *vaultScanner) injectAndStore(
 	ctx context.Context,
 	content []byte,
 	relPath string,
 	currentAssignee lib.TaskAssignee,
+	onDiskHash [32]byte,
 ) (*lib.Task, string, bool) {
 	id := uuid.New().String()
 	newContent, injectErr := InjectTaskIdentifier(ctx, content, id)
 	if injectErr != nil {
 		glog.Warningf("skipping %s: failed to inject task_identifier: %v", relPath, injectErr)
 		v.metrics.SkippedFilesTotal(metrics.ReasonInjectTaskIdentifierFailed).Inc()
+		return nil, "", false
+	}
+	if !repairConverges(ctx, newContent, id) {
+		// The offending value is deliberately NOT interpolated: a large sequence or
+		// mapping under task_identifier must not be usable to flood the log. The path
+		// is the only thing an operator needs to find the file.
+		glog.Errorf("task_identifier repair did not converge, halting repair for: %s", relPath)
+		v.metrics.SkippedFilesTotal(metrics.ReasonRepairNotConverging).Inc()
+		v.hashes[relPath] = fileEntry{
+			hash:           onDiskHash,
+			taskIdentifier: "",
+			assignee:       currentAssignee,
+		}
 		return nil, "", false
 	}
 	if writeErr := v.ops.writeFile(ctx, relPath, newContent); writeErr != nil {
@@ -376,6 +416,47 @@ func (v *vaultScanner) injectAndStore(
 		assignee:       currentAssignee,
 	}
 	return nil, relPath, false
+}
+
+// repairConverges reports whether candidate — the exact bytes injectAndStore is
+// about to persist — clears the repair trigger. It re-evaluates the candidate
+// through the same pipeline processFile runs on the next cycle: frontmatter
+// extraction, duplicate-key deduplication (last-wins), and YAML unmarshal.
+// Reusing that exact pipeline, rather than inspecting the injected line, is what
+// catches the accumulator shape: post-injection the deduped view can resolve
+// task_identifier back to the stale value instead of the minted UUID.
+//
+// It returns true only when the re-evaluated task_identifier is present, is a
+// string, and equals id. Every failure inside the pipeline is non-convergence,
+// never an error to swallow: bytes that cannot be parsed cannot be proven to have
+// cleared the trigger, so they are refused (fail-closed). The V(3) diagnostics
+// carry the parse error only — never file content — so a crafted value cannot be
+// used to flood the log.
+func repairConverges(ctx context.Context, candidate []byte, id string) bool {
+	fmYAML, extractErr := extractFrontmatter(ctx, candidate)
+	if extractErr != nil {
+		glog.V(3).Infof("convergence guard: extract frontmatter failed: %v", extractErr)
+		return false
+	}
+	dedupedYAML, _, dedupErr := DeduplicateFrontmatter(ctx, fmYAML)
+	if dedupErr != nil {
+		glog.V(3).Infof("convergence guard: deduplicate frontmatter failed: %v", dedupErr)
+		return false
+	}
+	var fmMap map[string]interface{}
+	if unmarshalErr := yaml.Unmarshal([]byte(dedupedYAML), &fmMap); unmarshalErr != nil {
+		glog.V(3).Infof("convergence guard: unmarshal frontmatter failed: %v", unmarshalErr)
+		return false
+	}
+	raw, present := fmMap["task_identifier"]
+	if !present {
+		return false
+	}
+	resolved, isString := raw.(string)
+	if !isString {
+		return false
+	}
+	return resolved == id
 }
 
 // writeCounterReset rewrites the task file with trigger_count: 0 and retry_count: 0.
@@ -423,8 +504,15 @@ func (v *vaultScanner) collectDeleted(
 		default:
 		}
 		if _, ok := seen[relPath]; !ok {
-			deleted = append(deleted, entry.taskIdentifier)
 			delete(v.hashes, relPath)
+			// A halted repair has no identifier to record, so its entry carries an
+			// empty lib.TaskIdentifier. Dropping the bookkeeping is correct; emitting
+			// the empty identifier downstream is not — an empty identifier is not a
+			// task, and it must never reach the deleted-tasks stream.
+			if entry.taskIdentifier == "" {
+				continue
+			}
+			deleted = append(deleted, entry.taskIdentifier)
 		}
 	}
 	return deleted, nil
