@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-09-05T10:42:56Z"
 generating: "2026-09-05T10:42:57Z"
 prompted: "2026-09-05T10:56:09Z"
+verifying: "2026-09-05T11:22:28Z"
 branch: dark-factory/bug-task-identifier-non-uuid-loop
 ---
 

@@ -1,7 +1,13 @@
 ---
-status: draft
+status: completed
 spec: [008-bug-task-identifier-non-uuid-loop]
+summary: 'Added spec-008 fix: bullet under a new ## Unreleased section in CHANGELOG.md (above ## v0.7.3), verified placement and frozen substring, make precommit exits 0'
+execution_id: agent-task-controller-identifier-convergence-exec-015-spec-008-changelog-and-gate
+dark-factory-version: dev
 created: "2026-09-05T10:48:59Z"
+queued: "2026-09-05T11:23:57Z"
+started: "2026-09-05T11:23:59Z"
+completed: "2026-09-05T11:28:23Z"
 branch: dark-factory/bug-task-identifier-non-uuid-loop
 ---
 
