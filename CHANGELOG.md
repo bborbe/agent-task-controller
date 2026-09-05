@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: stop the vault scanner's task_identifier backfill from rewriting a file every scan cycle — a present-but-invalid `task_identifier` (unquoted integer, empty or whitespace string, sequence, mapping, block scalar, or any non-UUID spelling) is now stripped from the frontmatter before a fresh UUID is injected, converging in exactly one write instead of appending a UUID and keeping the bad key forever (2026-09-05: one file grew to 3007 keys / 163 KB over 50 hours); removal is frontmatter-region-scoped, key-aware (quoted/spaced key spellings), and span-aware (block-style values), and the repair is greppable from logs alone via two substrings — `replacing non-UUID task_identifier` quoting the offending value for string-shaped values, and `replacing invalid task_identifier of type` naming the Go type for every other shape, so a large sequence or mapping cannot blow up a log line (spec 008)
+
 ## v0.7.3
 
 - fix: `Dockerfile` `ARG DOCKER_REGISTRY` default now points at `docker.prod.nuke.benjamin-borbe.de:443` instead of the decommissioned `docker.quant.benjamin-borbe.de:443`. The default is inert in CI (the build passes `DOCKER_REGISTRY` explicitly), but a local `docker build` with no override silently targets a dead host. Matches the convention already applied in `agent-task-executor` and `github-update-go-agent`.
