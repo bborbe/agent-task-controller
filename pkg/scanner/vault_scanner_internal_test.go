@@ -104,6 +104,7 @@ var _ = Describe("injectAndStore", func() {
 		func() {
 			v := &vaultScanner{
 				metrics: metrics.New(),
+				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
 					readFile: func(_ context.Context, _ string) ([]byte, error) {
 						return nil, nil
@@ -127,6 +128,7 @@ var _ = Describe("injectAndStore", func() {
 				[]byte("no frontmatter at all"),
 				"rel.md",
 				"",
+				[32]byte{},
 			)
 			Expect(task).To(BeNil())
 			Expect(written).To(Equal(""))

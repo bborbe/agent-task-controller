@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [009-scanner-repair-convergence-guard]
+summary: 'Implemented the vault scanner''s task_identifier repair convergence guard: injectAndStore now re-evaluates candidate bytes through the read-path pipeline (repairConverges) before persisting, refuses non-converging repairs (zero writes/commits, one frozen ERROR log, one repair_not_converging counter increment), stores the on-disk hash so halts ride the existing content-hash short-circuit and self-clear on content change, and halt bookkeeping never leaks an empty identifier into the deleted-tasks stream; parity spec raised to 10, new AC2-AC6 test file with real non-converging fixtures, and CHANGELOG ## Unreleased entry added.'
+execution_id: agent-task-controller-identifier-convergence-exec-017-spec-009-scanner-convergence-guard
+dark-factory-version: dev
 created: "2026-09-05T18:05:00Z"
 queued: "2026-09-05T18:30:53Z"
+started: "2026-09-05T18:36:11Z"
+completed: "2026-09-05T18:43:33Z"
 ---
 
 # Convergence guard on the vault scanner's task_identifier repair write
