@@ -6,6 +6,7 @@ package scanner
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/bborbe/errors"
@@ -28,20 +29,62 @@ func (v *vaultScanner) isIdentifierUnique(id string, relPath string) bool {
 	return true
 }
 
-// removeTaskIdentifier removes any existing task_identifier line(s) from the
-// frontmatter so that injectAndStore can safely prepend a fresh value.
+// taskIdentifierKeyLine matches any frontmatter line whose key resolves to
+// task_identifier under the spellings YAML accepts: bare, double-quoted,
+// single-quoted, or with whitespace before the colon.
+var taskIdentifierKeyLine = regexp.MustCompile(`^\s*['"]?task_identifier['"]?\s*:`)
+
+// removeTaskIdentifier removes every task_identifier key line from the
+// frontmatter region of content, together with the full indentation span of
+// each key's value (block sequences, block mappings, and block scalars), so
+// injectAndStore can safely prepend a fresh value. Lines outside the frontmatter
+// region — including a body line beginning task_identifier: — are preserved
+// byte-for-byte.
 func removeTaskIdentifier(content []byte) []byte {
 	s := string(content)
-	const prefix = "task_identifier:"
-	var out []string
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimRight(line, "\r")
-		if strings.HasPrefix(trimmed, prefix) {
+	lines := strings.Split(s, "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return content
+	}
+	closing := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			closing = i
+			break
+		}
+	}
+	if closing == -1 {
+		return content
+	}
+	remove := make([]bool, len(lines))
+	for i := 1; i < closing; i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		if !taskIdentifierKeyLine.MatchString(line) {
+			continue
+		}
+		remove[i] = true
+		indent := leadingWhitespaceLen(line)
+		for j := i + 1; j < closing && leadingWhitespaceLen(strings.TrimRight(lines[j], "\r")) > indent; j++ {
+			remove[j] = true
+		}
+	}
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if remove[i] {
 			continue
 		}
 		out = append(out, line)
 	}
 	return []byte(strings.Join(out, "\n"))
+}
+
+// leadingWhitespaceLen returns the number of leading spaces/tabs in line.
+func leadingWhitespaceLen(line string) int {
+	n := 0
+	for n < len(line) && (line[n] == ' ' || line[n] == '\t') {
+		n++
+	}
+	return n
 }
 
 // InjectTaskIdentifier injects a task_identifier into the frontmatter of content.

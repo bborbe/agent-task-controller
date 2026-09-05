@@ -224,7 +224,7 @@ func (v *vaultScanner) scanFiles(
 // processFile handles a single .md file during a scan cycle.
 // Returns (task, writtenRelPath, writeError).
 //
-//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.
+//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.; +4 lines from spec-008 present-but-invalid task_identifier branch (key-absent and present-invalid auto-inject gates kept separate; parity-check awk count stays at 9).
 func (v *vaultScanner) processFile(
 	ctx context.Context,
 	relPath string,
@@ -261,9 +261,10 @@ func (v *vaultScanner) processFile(
 		return nil, "", false
 	}
 	frontmatter := lib.TaskFrontmatter(fmMap)
-	taskID, _ := fmMap["task_identifier"].(string)
+	rawTaskID, present := fmMap["task_identifier"]
+	taskID, isString := rawTaskID.(string)
 	currentFMAssignee := frontmatter.Assignee()
-	if taskID == "" {
+	if !present {
 		if !v.autoInject {
 			glog.Warningf(
 				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
@@ -274,7 +275,7 @@ func (v *vaultScanner) processFile(
 		}
 		return v.injectAndStore(ctx, content, relPath, currentFMAssignee)
 	}
-	if !isValidUUID(taskID) {
+	if !isString || !isValidUUID(taskID) {
 		if !v.autoInject {
 			glog.Warningf(
 				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
@@ -283,7 +284,7 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		glog.Warningf("replacing non-UUID task_identifier %q in %s", taskID, relPath)
+		glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
 		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
