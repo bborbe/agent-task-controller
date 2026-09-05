@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-09-03T18:09:23Z"
 generating: "2026-09-03T18:09:44Z"
 prompted: "2026-09-03T18:18:35Z"
+verifying: "2026-09-05T18:31:13Z"
 branch: dark-factory/bug-writeback-clobbers-operator-edits
 ---
 

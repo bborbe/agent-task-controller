@@ -174,6 +174,7 @@ const (
 	ReasonInjectTaskIdentifierFailed  SkipReason = "inject_task_identifier_failed"
 	ReasonReadFailed                  SkipReason = "read_failed"
 	ReasonAutoInjectDisabled          SkipReason = "auto_inject_disabled"
+	ReasonRepairNotConverging         SkipReason = "repair_not_converging"
 )
 
 // AvailableSkipReasons is the full closed set of skip reasons, used for counter
@@ -185,18 +186,33 @@ var AvailableSkipReasons = []SkipReason{
 	ReasonInjectTaskIdentifierFailed,
 	ReasonReadFailed,
 	ReasonAutoInjectDisabled,
+	ReasonRepairNotConverging,
 }
 
 // SkippedFilesTotal counts vault task files the scanner skipped during a scan cycle,
 // labelled by the structured reason for the skip. A non-zero value on any label
 // indicates operator-actionable vault health issues (broken frontmatter, empty status,
-// unreadable files, injection failures); a stuck broken file will keep the relevant
-// label rate-positive until repaired. The closed set of reason values is declared
-// as constants above and pre-initialised in init().
+// unreadable files, injection failures). For every label EXCEPT repair_not_converging,
+// a stuck broken file is re-read every cycle and keeps its label rate-positive until
+// repaired, so rate(agent_controller_vault_scanner_skipped_files_total[5m]) > 0 is the
+// detection query.
+//
+// repair_not_converging is the documented exception: it is an edge, not a level. The
+// scanner short-circuits on the file's content hash, so a file whose repair was halted is
+// not re-processed while its bytes are unchanged, and the counter increments exactly once
+// per distinct file content. Detect it with:
+//
+//	increase(agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}[6h]) > 0
+//
+// A short-window rate is wrong for this label (it goes flat while the file stays broken),
+// and a bare level check is wrong too (it survives forever after the file is repaired and
+// resets on pod restart).
+//
+// The closed set of reason values is declared as constants above and pre-initialised in init().
 var SkippedFilesTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_vault_scanner_skipped_files_total",
-		Help: "Total number of vault task files the scanner skipped during a scan cycle, by reason. Increments exactly once per skipped file per cycle — re-scans of an unrepaired broken file keep the rate positive.",
+		Help: "Total number of vault task files the scanner skipped during a scan cycle, by reason. Increments once per skipped file per cycle for every reason except repair_not_converging, which is an edge that fires once per distinct file content and then goes flat while the file stays broken; see the doc comment for its increase(...[6h]) detection query.",
 	},
 	[]string{"reason"},
 )
