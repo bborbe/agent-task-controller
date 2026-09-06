@@ -5,6 +5,8 @@
 package factory
 
 import (
+	"time"
+
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
@@ -19,6 +21,16 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
+
+// commandExpireDuration is the maximum age of a queued agent-task-v1-request
+// command before it is dropped as expired. Sized at 60 minutes to absorb the
+// worst-case queue residency of a 100+ task enqueue against a cap of 1
+// concurrent job (measured job runtimes 11-15 min): a burst of agent
+// completions, a slow git-rest round-trip, or a controller restart must not
+// push tail commands past the window and silently drop their frontmatter
+// writes. Stale-command protection is unchanged — a command older than 60
+// minutes still expires rather than clobbering newer state.
+const commandExpireDuration = 60 * time.Minute
 
 // CreateCommandConsumer wires a CQRS command consumer for agent-task-v1-request.
 func CreateCommandConsumer(
@@ -50,13 +62,16 @@ func CreateCommandConsumer(
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
 		command.NewCompleteTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, m),
 	}
-	return cdb.RunCommandConsumerTxDefault(
+	return cdb.RunCommandConsumerTx(
 		saramaClientProvider,
 		syncProducer,
 		db,
 		lib.TaskV1SchemaID,
+		libkafka.BatchSize(1),
 		topicPrefix,
 		true, // ignoreUnsupported: skip commands with unknown operations
+		commandExpireDuration,
+		run.NewTrigger(),
 		executors,
 	)
 }

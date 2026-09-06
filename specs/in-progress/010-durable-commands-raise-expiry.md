@@ -1,5 +1,9 @@
 ---
-status: draft
+status: prompted
+approved: "2026-09-06T11:26:18Z"
+generating: "2026-09-06T11:28:40Z"
+prompted: "2026-09-06T11:37:46Z"
+branch: dark-factory/durable-commands-raise-expiry
 ---
 
 ## Summary
