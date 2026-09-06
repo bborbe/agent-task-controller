@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.1
 
 - chore: update Go to 1.27.1 and github.com/bborbe/agent to v0.87.1, github.com/bborbe/boltkv to v1.15.3, github.com/bborbe/kafka to v1.25.13, github.com/bborbe/metrics to v0.6.2, github.com/bborbe/service to v1.10.12, github.com/bborbe/time to v1.27.13, github.com/bborbe/validation to v1.5.0, github.com/bborbe/vault-cli to v0.122.2
 
