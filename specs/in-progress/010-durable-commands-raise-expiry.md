@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-09-06T11:26:18Z"
 generating: "2026-09-06T11:28:40Z"
 prompted: "2026-09-06T11:37:46Z"
+verifying: "2026-09-06T13:28:15Z"
 branch: dark-factory/durable-commands-raise-expiry
 ---
 
