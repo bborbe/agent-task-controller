@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.3
 
 - fix: raise the agent-task-v1-request command consumer expiry from the cqrs 5-minute default to 60 minutes — `pkg/factory/factory.go` now wires the explicit command consumer with a named `commandExpireDuration` constant (same batch size, trigger, and unsupported-command handling as the Default, only the window changes), so a burst of agent results, a slow git-rest round-trip, or a controller restart can no longer push queued commands past the window and silently drop their frontmatter writes; commands older than 60 minutes still expire (stale-command protection unchanged) and stay visible via the `command expired` warning log and the request-topic kafka `failure_counter` (spec 010)
 
