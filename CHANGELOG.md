@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.5
 
 - fix: a task-result miss on a result carrying no `target_vault` now counts as `agent_controller_results_written_total{result="unowned"}` instead of `{result="not_found"}`. An unstamped result reaches every controller by design (`routing.ShouldProcessResult` falls through to true so the owning vault can still find and heal the file), so the non-owning controllers miss by construction — counting that as `not_found` reported routine fan-out as data loss and made `AgentControllerResultNotFound` fire on normal fleet traffic. `not_found` now means a miss on a result this controller was actually routed. `unowned` is pre-initialised alongside the other label values.
 
