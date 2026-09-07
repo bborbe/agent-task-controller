@@ -54,7 +54,7 @@ var _ = Describe("Metrics", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		labels := gatherLabels(mfs, "agent_controller_results_written_total", "result")
-		Expect(labels).To(ContainElements("success", "not_found", "error"))
+		Expect(labels).To(ContainElements("success", "not_found", "unowned", "error"))
 	})
 
 	It("pre-initializes all git_push_total label combinations", func() {

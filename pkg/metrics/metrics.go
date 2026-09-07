@@ -107,7 +107,11 @@ var PlanningRetryTotal = promauto.NewCounterVec(
 	[]string{"result"},
 )
 
-// ResultsWrittenTotal counts result write attempts by outcome.
+// ResultsWrittenTotal counts result write attempts by outcome
+// ("success" | "not_found" | "unowned" | "error"). `unowned` is a miss on a
+// result carrying no target_vault, which every controller consumes by design —
+// routine fan-out, not data loss. `not_found` is a miss on a result this
+// controller was routed, and is the series AgentControllerResultNotFound alerts on.
 var ResultsWrittenTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_results_written_total",
@@ -227,6 +231,7 @@ func init() {
 
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)
+	ResultsWrittenTotal.WithLabelValues("unowned").Add(0)
 	ResultsWrittenTotal.WithLabelValues("error").Add(0)
 
 	PlanningRetryTotal.WithLabelValues("retry").Add(0)

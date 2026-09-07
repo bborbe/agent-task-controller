@@ -192,6 +192,23 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 	}
 
 	if matchedRelPath == "" {
+		// A result whose frontmatter carries no target_vault reached every controller:
+		// routing.ShouldProcessResult falls through to true precisely so the owning
+		// vault gets a chance to find and heal the file. The non-owning controllers
+		// then miss by construction, and counting that as `not_found` reports routine
+		// fan-out as data loss — it is what made AgentControllerResultNotFound fire on
+		// normal fleet traffic. Count it as `unowned` instead and keep `not_found` for
+		// a miss on a result this controller was actually routed.
+		if _, stamped := req.Frontmatter.String("target_vault"); !stamped {
+			glog.V(2).Infof(
+				"task file not found for unstamped identifier %s after %d attempts, "+
+					"skipping (no target_vault: another vault likely owns it)",
+				req.TaskIdentifier,
+				notFoundAttempts,
+			)
+			r.metrics.ResultsWrittenTotal("unowned").Inc()
+			return nil
+		}
 		glog.Warningf(
 			"task file not found for identifier %s after %d attempts, skipping",
 			req.TaskIdentifier,
