@@ -6,11 +6,11 @@ package scanner
 
 import (
 	"context"
-	"regexp"
 	"strings"
 
 	"github.com/bborbe/errors"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 // isValidUUID returns true if s can be parsed as a valid UUID.
@@ -29,10 +29,47 @@ func (v *vaultScanner) isIdentifierUnique(id string, relPath string) bool {
 	return true
 }
 
-// taskIdentifierKeyLine matches any frontmatter line whose key resolves to
-// task_identifier under the spellings YAML accepts: bare, double-quoted,
-// single-quoted, or with whitespace before the colon.
-var taskIdentifierKeyLine = regexp.MustCompile(`^\s*['"]?task_identifier['"]?\s*:`)
+// taskIdentifierKeyLines parses the frontmatter region (content lines
+// 1..closing-1) with yaml.v3 into a node tree and returns the content line index
+// of every top-level key whose parsed Value is task_identifier.
+//
+// The boolean result is false — and the caller must leave content unchanged —
+// when the region cannot be parsed, when the top-level node is not a mapping, or
+// when the top-level mapping is in flow style: a flow mapping carries sibling
+// keys on the same line, so removing that line would over-delete, and the
+// spec-009 convergence guard bounds that shape instead.
+//
+// The region is parsed with trailing CR stripped per line so CRLF files resolve
+// the same as LF files; stripping never removes a line, so a key node's 1-based
+// yaml.v3 Line still equals its content line index (body line 1 == content index
+// 1). Decoding into a yaml.Node keeps duplicate keys in the node's Content, so
+// every spelling of a repeated key is reported.
+func taskIdentifierKeyLines(lines []string, closing int) ([]int, bool) {
+	body := make([]string, 0, closing-1)
+	for i := 1; i < closing; i++ {
+		body = append(body, strings.TrimRight(lines[i], "\r"))
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(strings.Join(body, "\n")), &doc); err != nil {
+		return nil, false
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil, false
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode || root.Style&yaml.FlowStyle != 0 {
+		return nil, false
+	}
+	var out []int
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		key := root.Content[i]
+		if key.Value != "task_identifier" {
+			continue
+		}
+		out = append(out, key.Line)
+	}
+	return out, true
+}
 
 // removeTaskIdentifier removes every task_identifier key line from the
 // frontmatter region of content, together with the full indentation span of
@@ -40,20 +77,26 @@ var taskIdentifierKeyLine = regexp.MustCompile(`^\s*['"]?task_identifier['"]?\s*
 // injectAndStore can safely prepend a fresh value. Lines outside the frontmatter
 // region — including a body line beginning task_identifier: — are preserved
 // byte-for-byte.
+//
+// Keys are resolved by parsing the frontmatter region with yaml.v3, the same
+// way the read path resolves them, rather than by matching literal key text:
+// every spelling YAML accepts — bare, double-quoted, single-quoted,
+// whitespace-before-colon, and escaped characters inside a quoted key, e.g.
+// "task_identifier" — resolves to the same parsed key and is removed.
 func removeTaskIdentifier(content []byte) []byte {
 	lines := strings.Split(string(content), "\n")
 	closing := frontmatterClosingIndex(lines)
 	if closing == -1 {
 		return content
 	}
+	keyLines, ok := taskIdentifierKeyLines(lines, closing)
+	if !ok {
+		return content
+	}
 	remove := make([]bool, len(lines))
-	for i := 1; i < closing; i++ {
-		line := strings.TrimRight(lines[i], "\r")
-		if !taskIdentifierKeyLine.MatchString(line) {
-			continue
-		}
+	for _, i := range keyLines {
 		remove[i] = true
-		markValueSpan(lines, i+1, closing, leadingWhitespaceLen(line), remove)
+		markValueSpan(lines, i+1, closing, leadingWhitespaceLen(lines[i]), remove)
 	}
 	out := make([]string, 0, len(lines))
 	for i, line := range lines {
