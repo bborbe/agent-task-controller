@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-09-10T19:47:28Z"
 generating: "2026-09-10T19:47:28Z"
 prompted: "2026-09-10T19:59:09Z"
 verifying: "2026-09-10T20:09:48Z"
+completed: "2026-09-10T22:19:10Z"
 branch: dark-factory/bug-escaped-key-task-identifier-resolution
 ---
 
