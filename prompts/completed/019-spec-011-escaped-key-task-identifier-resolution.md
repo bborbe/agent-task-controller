@@ -1,7 +1,13 @@
 ---
-status: draft
+status: completed
 spec: [011-bug-escaped-key-task-identifier-resolution]
+summary: 'Replaced the scanner''s regex-based task_identifier key-line removal with yaml.v3 parsed-key resolution (new taskIdentifierKeyLines helper), added the spec-011 escaped-underscore row and fail-closed defensive cases, re-based the spec-009 halt-path specs onto Fixture B with a new spec-011 convergence spec, and added the ## Unreleased CHANGELOG bullet'
+execution_id: agent-task-controller-escaped-key-exec-019-spec-011-escaped-key-task-identifier-resolution
+dark-factory-version: dev
 created: "2026-09-10T22:00:00Z"
+queued: "2026-09-10T20:01:51Z"
+started: "2026-09-10T20:01:52Z"
+completed: "2026-09-10T20:09:47Z"
 branch: dark-factory/bug-escaped-key-task-identifier-resolution
 ---
 

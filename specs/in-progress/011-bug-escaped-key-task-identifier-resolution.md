@@ -1,10 +1,12 @@
 ---
-status: draft
-kind: bug
-created: "2026-09-10"
+status: prompted
 tags:
     - dark-factory
     - spec
+approved: "2026-09-10T19:47:28Z"
+generating: "2026-09-10T19:47:28Z"
+prompted: "2026-09-10T19:59:09Z"
+branch: dark-factory/bug-escaped-key-task-identifier-resolution
 ---
 
 ## Summary

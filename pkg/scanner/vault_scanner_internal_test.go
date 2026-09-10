@@ -356,6 +356,19 @@ status: in_progress
 ---
 body
 `))
+		// Escaped-underscore key spelling (spec 011): yaml.v3 resolves the
+		// double-quoted escape to the parsed key task_identifier, so the line is
+		// removed like any other spelling.
+		Expect(string(removeTaskIdentifier([]byte(`---
+"task_identifier": 501
+status: in_progress
+---
+body
+`)))).To(Equal(`---
+status: in_progress
+---
+body
+`))
 		// Whitespace before the colon.
 		Expect(string(removeTaskIdentifier([]byte(`---
 task_identifier : 501
@@ -429,6 +442,21 @@ body
 		// Unterminated frontmatter is a safety no-op.
 		unterminated := "---\ntask_identifier: 501\nstatus: in_progress\n"
 		Expect(string(removeTaskIdentifier([]byte(unterminated)))).To(Equal(unterminated))
+	})
+
+	It("leaves unparseable or flow-style frontmatter untouched (fail-closed)", func() {
+		// Desired Behavior 3: a frontmatter yaml.v3 cannot parse is a no-op.
+		unparseable := "---\nfoo: [1, 2\nstatus: in_progress\n---\nbody\n"
+		Expect(string(removeTaskIdentifier([]byte(unparseable)))).To(Equal(unparseable))
+		// Desired Behavior 4: a top-level that is a sequence, not a mapping.
+		sequence := "---\n- a\n- b\n---\nbody\n"
+		Expect(string(removeTaskIdentifier([]byte(sequence)))).To(Equal(sequence))
+		// Desired Behavior 4: the flow-style top-level mapping (spec-009 AC2 Fixture B).
+		flowMap := "---\n{task_identifier: 501, status: in_progress}\n---\nbody\n"
+		Expect(string(removeTaskIdentifier([]byte(flowMap)))).To(Equal(flowMap))
+		// Desired Behavior 3: an empty frontmatter region is a no-op.
+		empty := "---\n---\nbody\n"
+		Expect(string(removeTaskIdentifier([]byte(empty)))).To(Equal(empty))
 	})
 
 	// parseFrontmatterMap asserts the frontmatter of content is still valid

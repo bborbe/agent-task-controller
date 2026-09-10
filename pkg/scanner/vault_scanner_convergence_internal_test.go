@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	lib "github.com/bborbe/agent"
 	"github.com/google/uuid"
@@ -185,14 +186,11 @@ func haltLogFor(relPath string) *regexp.Regexp {
 	)
 }
 
-// convergenceFixtureA — escaped-underscore key spelling. yaml.v3 resolves the
-// double-quoted escape to the key task_identifier, so processFile routes the file
-// into the present-but-invalid repair branch, but taskIdentifierKeyLine matches only
-// the literal spellings, so removeTaskIdentifier is a no-op. Injection then prepends
-// a fresh UUID and DeduplicateFrontmatter's last-wins resolves task_identifier back
-// to the integer 501 — the original accumulator loop, at flat file size, reachable in
-// v0.7.4. Widening the removal regex to chase this spelling is explicitly NOT this
-// spec's job (spec Constraints); the guard bounds it instead.
+// convergenceFixtureA — escaped-underscore key spelling. Spec 011 resolves keys
+// by parsing the frontmatter region with yaml.v3, so the double-quoted escape
+// resolves to the parsed key task_identifier, is removed by the repair, and the
+// file converges in exactly one write. The fixture is the input for the spec-011
+// escaped-key repair spec.
 const convergenceFixtureA = "---\n\"task\\u005fidentifier\": 501\nstatus: in_progress\n---\nbody\n"
 
 // convergenceFixtureB — flow-mapping frontmatter. removeTaskIdentifier does not match
@@ -205,7 +203,6 @@ var convergenceAC2Fixtures = []struct {
 	relPath string
 	content string
 }{
-	{"ac2-a-escaped-key.md", convergenceFixtureA},
 	{"ac2-b-flow-map.md", convergenceFixtureB},
 }
 
@@ -269,7 +266,7 @@ var _ = Describe("task_identifier repair convergence guard (spec 009)", func() {
 		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
 		relPath := "ac3.md"
 		Expect(
-			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureA), 0600),
+			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureB), 0600),
 		).To(Succeed())
 		h := newConvergenceHarness(dir, true)
 
@@ -315,7 +312,7 @@ var _ = Describe("task_identifier repair convergence guard (spec 009)", func() {
 		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
 		relPath := "ac4.md"
 		Expect(
-			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureA), 0600),
+			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureB), 0600),
 		).To(Succeed())
 		h := newConvergenceHarness(dir, true)
 
@@ -359,7 +356,7 @@ var _ = Describe("task_identifier repair convergence guard (spec 009)", func() {
 		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
 		relPath := "ac5-disabled.md"
 		Expect(
-			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureA), 0600),
+			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureB), 0600),
 		).To(Succeed())
 		h := newConvergenceHarness(dir, false)
 
@@ -494,5 +491,49 @@ var _ = Describe("task_identifier repair convergence guard (spec 009)", func() {
 				"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 			),
 		).To(BeFalse())
+	})
+})
+
+var _ = Describe("task_identifier escaped-key repair (spec 011)", func() {
+	ctx := context.Background()
+
+	It("AC2+AC3: repairs the escaped-underscore key in exactly one write, guard silent", func() {
+		dir, err := os.MkdirTemp("", "scanner-spec011-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
+		relPath := "011-escaped-key.md"
+		Expect(
+			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureA), 0600),
+		).To(Succeed())
+		h := newConvergenceHarness(dir, true)
+
+		before := skipCounterValue(metrics.ReasonRepairNotConverging)
+		captured := captureGlogWarnings(func() {
+			h.runCycles(ctx, 5)
+		})
+
+		// AC2: the escaped-underscore key is removed by parsed-key resolution, so
+		// the repair converges in exactly one write.
+		Expect(h.writeCount).To(Equal(1))
+		finalBytes, err := os.ReadFile(
+			filepath.Join(dir, relPath),
+		) // #nosec G304 -- test-only path
+		Expect(err).NotTo(HaveOccurred())
+		Expect(countLinesMatching(finalBytes, convergenceKeyLineRe)).To(Equal(1))
+		Expect(strings.Contains(string(finalBytes), "status: in_progress\n")).To(BeTrue())
+		fm, err := extractFrontmatter(ctx, finalBytes)
+		Expect(err).NotTo(HaveOccurred())
+		var fmMap map[string]interface{}
+		Expect(yaml.Unmarshal([]byte(fm), &fmMap)).To(Succeed())
+		idStr, isString := fmMap["task_identifier"].(string)
+		Expect(isString).To(BeTrue())
+		_, parseErr := uuid.Parse(idStr)
+		Expect(parseErr).NotTo(HaveOccurred())
+
+		// AC3: the guard stays silent across those same five cycles.
+		Expect(
+			skipCounterValue(metrics.ReasonRepairNotConverging) - before,
+		).To(Equal(0.0))
+		Expect(countLinesMatching([]byte(captured), haltLogAnywhereRe)).To(Equal(0))
 	})
 })
