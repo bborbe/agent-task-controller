@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.7
 
 - fix: the vault scanner's task_identifier repair now resolves keys by parsing the frontmatter region with yaml.v3 into a node tree and removing every top-level key whose parsed value is `task_identifier`, instead of matching literal key text with a regex — so every spelling YAML accepts, including the escaped-underscore form `"task_identifier"`, is stripped and the file converges in exactly one write; a frontmatter yaml.v3 cannot parse, a non-mapping top level, or a flow-style mapping is left byte-for-byte untouched (fail-closed), and the spec-009 convergence guard stays silent on the previously non-converging escaped-key shape (spec 011)
 
