@@ -9,8 +9,8 @@ tags:
 
 ## Summary
 
-- The vault scanner's `task_identifier` repair removal in `pkg/scanner/task_identifier.go` matches literal key text via the `taskIdentifierKeyLine` regex (`^\s*['"]?task_identifier['"]?\s*:`). An escaped-underscore spelling — `"task_identifier": 501` — resolves via yaml.v3 to the real key `task_identifier` but is missed by the regex, so removal no-ops.
-- The miss is not theoretical: the reproduction below, verified by execution, drives the file into the present-but-invalid repair branch, where removal no-ops, injection prepends a fresh UUID, and `DeduplicateFrontmatter`'s last-wins resolves `task_identifier` back to the integer — the original accumulator loop, at flat file size.
+- The vault scanner's `task_identifier` repair removes a malformed key only when its literal text matches a fixed set of spellings. YAML accepts other spellings that resolve to the same parsed key — escaped characters inside a quoted key, e.g. the escaped-underscore spelling — so removal silently no-ops.
+- The miss is not theoretical: the reproduction below, verified by execution, drives the file into the present-but-invalid repair branch, where removal no-ops, injection prepends a fresh UUID, and last-wins deduplication resolves `task_identifier` back to the integer — the original accumulator loop, at flat file size.
 - The v0.8.0 convergence guard (spec 009, live on dev+prod) bounds the damage to one ERROR log + one counter increment per cycle. It does not close the door: the file is never repaired, and the operator must notice and fix it by hand.
 - This spec fixes the resolution at source: keys are resolved by parsing frontmatter with yaml.v3, and lines whose *parsed key* is `task_identifier` are removed — not lines whose literal text matches.
 - The fix is deliberately separate from spec 009's guard (per its Constraints): the guard bounds any non-converging repair; this spec makes the escaped-key repair converge again.
@@ -77,17 +77,27 @@ The scanner's repair removal resolves keys the same way the parse layer does: by
 - [ ] **AC3 — The guard stays silent on the escaped-underscore shape.** Across those five cycles, `agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}` delta is exactly `0` and the captured log contains zero `task_identifier repair did not converge` lines. — evidence: `skipCounterValue(metrics.ReasonRepairNotConverging)` before/after delta `0`; `countLinesMatching(captured, haltLogAnywhereRe)` = `0`.
 - [ ] **AC4 — Flow-style frontmatter behavior unchanged.** Spec-009 AC2 Fixture B (`{task_identifier: 501, status: in_progress}`) still refuses the repair: zero writes, one halt log, one counter increment across five cycles. — evidence: the existing AC2 row for Fixture B passes unmodified.
 - [ ] **AC5 — Existing removal cases keep their byte-exact behavior.** All current spec-008 `removeTaskIdentifier` cases (double-quoted key, spaced key, block sequence/mapping/scalar spans, multiple key lines, fenced-body survival, CRLF, unterminated) pass unchanged. — evidence: `go test ./pkg/scanner/...` exits 0 with no skipped or pending specs.
-- [ ] **AC6 — Spec-009 halt-path tests re-based onto Fixture B.** AC3 (halt self-clears on content change), AC4 (halted file never emits empty identifier on delete), and AC5-disabled (auto-inject off) of the convergence suite, which previously used the escaped-underscore fixture as their halted input, now use Fixture B (or another still-refused input) so the guard's refusal path stays exercised. — evidence: the convergence suite passes with the escaped-underscore fixture moved out of the refused set; `go test ./pkg/scanner/...` exits 0.
+- [ ] **AC6 — Production removal is parse-based, not regex-based.** The production removal code contains no literal-key-text matcher for `task_identifier`: `grep -n 'taskIdentifierKeyLine' pkg/scanner/*.go` returns no production (non-test) match, and `git diff origin/master -- pkg/scanner/task_identifier.go` shows the regex match replaced by a yaml.v3 parse-based key-line resolution. — evidence: both greps; `go test ./pkg/scanner/...` exits 0.
+- [ ] **AC7 — Spec-009 halt-path tests re-based onto Fixture B.** AC3 (halt self-clears on content change), AC4 (halted file never emits empty identifier on delete), and AC5-disabled (auto-inject off) of the convergence suite, which previously used the escaped-underscore fixture as their halted input, now use Fixture B so the guard's refusal path stays exercised. — evidence: the convergence suite passes with the escaped-underscore fixture moved out of the refused set; `go test ./pkg/scanner/...` exits 0.
 
 ## Verification
 
+### Container-executable
+
 ```bash
-cd /Users/bborbe/Documents/workspaces/agent-task-controller-escaped-key
 make precommit   # exits 0
 go test ./pkg/scanner/...   # exits 0, no skipped/pending
+grep -n 'taskIdentifierKeyLine' pkg/scanner/task_identifier.go   # returns nothing (production code)
+git diff origin/master -- pkg/scanner/task_identifier.go   # regex match replaced by yaml.v3 parse-based resolution
 ```
 
-Plus: `git diff origin/master -- pkg/scanner/task_identifier.go` shows the regex match replaced by a yaml.v3 parse-based key-line resolution; `grep -n 'taskIdentifierKeyLine' pkg/scanner/*.go` returns no production (non-test) match.
+### Operator-executable (host, after container commits land)
+
+```bash
+# in the feature worktree: confirm the diff is the parse-based change only
+git log origin/master..HEAD --oneline
+git diff origin/master -- pkg/scanner/task_identifier.go
+```
 
 ## Desired Behavior
 
@@ -109,4 +119,6 @@ Plus: `git diff origin/master -- pkg/scanner/task_identifier.go` shows the regex
 
 ## Suggested Decomposition
 
-Single prompt. Scope: `pkg/scanner/task_identifier.go` (replace `taskIdentifierKeyLine` regex with yaml.v3 parsed-key line resolution), plus test updates in `pkg/scanner/vault_scanner_internal_test.go` (new escaped-underscore row in the spec-008 block) and `pkg/scanner/vault_scanner_convergence_internal_test.go` (move the escaped-underscore fixture from the refused set to the converging set; re-base the halt-path tests onto Fixture B), plus a `## Unreleased` CHANGELOG bullet.
+| # | Prompt focus | Covers DBs | Covers ACs | Depends on |
+|---|---|---|---|---|
+| 1 | Replace regex key-line matching with yaml.v3 parsed-key line resolution in `pkg/scanner/task_identifier.go`; add escaped-underscore row to spec-008 block; re-base convergence halt-path tests onto Fixture B; CHANGELOG bullet | 1-6 | 1-7 | — |
