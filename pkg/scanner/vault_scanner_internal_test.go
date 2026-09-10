@@ -358,9 +358,11 @@ body
 `))
 		// Escaped-underscore key spelling (spec 011): yaml.v3 resolves the
 		// double-quoted escape to the parsed key task_identifier, so the line is
-		// removed like any other spelling.
+		// removed like any other spelling. The backslash-u-005f escape is
+		// LOAD-BEARING: the literal text does not match task_identifier, so the
+		// old regex-based removal could not strip it (regression protection).
 		Expect(string(removeTaskIdentifier([]byte(`---
-"task_identifier": 501
+"task\u005fidentifier": 501
 status: in_progress
 ---
 body

@@ -80,7 +80,7 @@ The scanner's repair removal resolves keys the same way the parse layer does: by
 - [ ] **AC3 — The guard stays silent on the escaped-underscore shape.** Across those five cycles, `agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}` delta is exactly `0` and the captured log contains zero `task_identifier repair did not converge` lines. — evidence: `skipCounterValue(metrics.ReasonRepairNotConverging)` before/after delta `0`; `countLinesMatching(captured, haltLogAnywhereRe)` = `0`.
 - [ ] **AC4 — Flow-style frontmatter behavior unchanged.** Spec-009 AC2 Fixture B (`{task_identifier: 501, status: in_progress}`) still refuses the repair: zero writes, one halt log, one counter increment across five cycles. — evidence: the existing AC2 row for Fixture B passes unmodified.
 - [ ] **AC5 — Existing removal cases keep their byte-exact behavior.** All current spec-008 `removeTaskIdentifier` cases (double-quoted key, spaced key, block sequence/mapping/scalar spans, multiple key lines, fenced-body survival, CRLF, unterminated) pass unchanged. — evidence: `go test ./pkg/scanner/...` exits 0 with no skipped or pending specs.
-- [ ] **AC6 — Production removal is parse-based, not regex-based.** The production removal code contains no literal-key-text matcher for `task_identifier`: `grep -n 'taskIdentifierKeyLine' pkg/scanner/*.go` returns no production (non-test) match, and `git diff origin/master -- pkg/scanner/task_identifier.go` shows the regex match replaced by a yaml.v3 parse-based key-line resolution. — evidence: both greps; `go test ./pkg/scanner/...` exits 0.
+- [ ] **AC6 — Production removal is parse-based, not regex-based.** The production removal code contains no regex-based key matcher: `grep -n 'regexp.MustCompile' pkg/scanner/task_identifier.go` returns nothing (the `regexp` import and the literal-key matcher are both gone), and `git diff origin/master -- pkg/scanner/task_identifier.go` shows the regex match replaced by a yaml.v3 parse-based key-line resolution. — evidence: both greps; `go test ./pkg/scanner/...` exits 0.
 - [ ] **AC7 — Spec-009 halt-path tests re-based onto Fixture B.** AC3 (halt self-clears on content change), AC4 (halted file never emits empty identifier on delete), and AC5-disabled (auto-inject off) of the convergence suite, which previously used the escaped-underscore fixture as their halted input, now use Fixture B so the guard's refusal path stays exercised. — evidence: the convergence suite passes with the escaped-underscore fixture moved out of the refused set; `go test ./pkg/scanner/...` exits 0.
 
 ## Verification
@@ -90,7 +90,7 @@ The scanner's repair removal resolves keys the same way the parse layer does: by
 ```bash
 make precommit   # exits 0
 go test ./pkg/scanner/...   # exits 0, no skipped/pending
-grep -n 'taskIdentifierKeyLine' pkg/scanner/task_identifier.go   # returns nothing (production code)
+grep -n 'regexp.MustCompile' pkg/scanner/task_identifier.go   # returns nothing (regexp import + literal matcher gone)
 git diff origin/master -- pkg/scanner/task_identifier.go   # regex match replaced by yaml.v3 parse-based resolution
 ```
 
