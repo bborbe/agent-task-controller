@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-09-10T19:47:28Z"
 generating: "2026-09-10T19:47:28Z"
 prompted: "2026-09-10T19:59:09Z"
 verifying: "2026-09-10T20:09:48Z"
+completed: "2026-09-10T22:19:10Z"
 branch: dark-factory/bug-escaped-key-task-identifier-resolution
 ---
 
@@ -125,3 +126,16 @@ git diff origin/master -- pkg/scanner/task_identifier.go
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
 | 1 | Replace regex key-line matching with yaml.v3 parsed-key line resolution in `pkg/scanner/task_identifier.go`; add escaped-underscore row to spec-008 block; re-base convergence halt-path tests onto Fixture B; CHANGELOG bullet | 1-6 | 1-7 | — |
+
+## Verification Result
+
+**Verified:** 2026-09-10T22:12:56Z (HEAD 1dc30e3)
+**Binary:** agent-task-controller:v0.8.7 on all 4 sts (dev+prod openclaw/personal) — contains fix ea53b46; tests run from worktree HEAD 1dc30e3
+**Scenario:** structural walk, no scenario file — AC1-AC7 matched to fresh test/code artifacts
+**Evidence:**
+- AC1: fixture `"task\u005fidentifier": 501` at vault_scanner_internal_test.go:365 (literal escape bytes verified); old-regex swap → 68 passed / 2 failed (AC1 row + spec-011 test); fixed code → 70 passed / 0 failed / 0 pending / 0 skipped
+- AC2+AC3: convergence test vault_scanner_convergence_internal_test.go:500-538 — writeCount 1, one key, string UUID, status survives; repair_not_converging delta 0, halt-log count 0
+- AC4: Fixture B row unchanged (0 writes, 1 halt log, 1 increment); AC7: halt-path AC3/AC4/AC5-disabled re-based onto Fixture B
+- AC6: `grep -n 'regexp.MustCompile' pkg/scanner/task_identifier.go` → nothing, exit 1; diff ea53b46~1..ea53b46 removes regexp matcher, adds yaml.v3 taskIdentifierKeyLines
+- `make precommit` exit 0; `go test -count=1 ./pkg/scanner/...` → 70 passed, 0 failed, 0 pending, 0 skipped
+**Verdict:** PASS
