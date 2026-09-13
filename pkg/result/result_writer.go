@@ -137,7 +137,10 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 		)
 		return
 	}
-	glog.Infof(
+	// V(1): a per-publish audit trail, not a default-operator signal — the push
+	// itself is what reaches the operator. Both deployed controllers run -v=2, so
+	// this stays visible in the pod logs the proof reads.
+	glog.V(1).Infof(
 		"assignee cleared → notification published for task %s (%s) escalated by %s",
 		e.taskName,
 		e.taskIdentifier,
