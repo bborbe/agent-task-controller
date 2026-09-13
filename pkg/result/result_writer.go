@@ -7,6 +7,7 @@ package result
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/errors"
+	notifcore "github.com/bborbe/notification"
+	notifcmd "github.com/bborbe/notification/command/notification"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
@@ -40,24 +43,109 @@ func NewResultWriter(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 	waiter libtime.WaiterDuration,
+	notificationSender notifcmd.NotificationPublishCommandSender,
 ) ResultWriter {
 	return &resultWriter{
-		gitClient:       gitClient,
-		taskDir:         taskDir,
-		vaultName:       vaultName,
-		currentDateTime: currentDateTime,
-		metrics:         m,
-		waiter:          waiter,
+		gitClient:          gitClient,
+		taskDir:            taskDir,
+		vaultName:          vaultName,
+		currentDateTime:    currentDateTime,
+		metrics:            m,
+		waiter:             waiter,
+		notificationSender: notificationSender,
 	}
 }
 
 type resultWriter struct {
-	gitClient       gitclient.GitClient
-	taskDir         string
-	vaultName       string
-	currentDateTime libtime.CurrentDateTimeGetter
-	metrics         metrics.Metrics
-	waiter          libtime.WaiterDuration
+	gitClient          gitclient.GitClient
+	taskDir            string
+	vaultName          string
+	currentDateTime    libtime.CurrentDateTimeGetter
+	metrics            metrics.Metrics
+	waiter             libtime.WaiterDuration
+	notificationSender notifcmd.NotificationPublishCommandSender
+}
+
+// escalation records one assignee-clear observed while building a write.
+//
+// It is *recorded* inside the modify closure, which AtomicReadModifyWriteAndCommitPush
+// re-runs on every git retry, but *published* only after the commit succeeds — so a
+// retry re-records the same escalation without ever double-publishing. The recorder is
+// set-only: a later attempt that re-reads the now-empty on-disk assignee must not erase
+// the escalation an earlier attempt genuinely performed.
+type escalation struct {
+	taskIdentifier   string
+	taskName         string
+	previousAssignee string
+	status           string
+	phase            string
+}
+
+// taskNameFromRelPath derives the operator-facing task name from the task file's
+// vault-relative path. Personal-vault tasks carry no title in frontmatter — the
+// filename IS the title — so the basename minus the extension is the name.
+func taskNameFromRelPath(relPath string) string {
+	return strings.TrimSuffix(filepath.Base(relPath), ".md")
+}
+
+// vaultDeeplink renders an Obsidian URI for the task file, so the escalation
+// message is one click from the notification into the parked task.
+func vaultDeeplink(vaultName, relPath string) string {
+	return fmt.Sprintf(
+		"obsidian://open?vault=%s&file=%s",
+		url.QueryEscape(vaultName),
+		url.QueryEscape(strings.TrimSuffix(relPath, ".md")),
+	)
+}
+
+// publishEscalation emits one agent-escalation notification through the shared
+// core. It deliberately sets no Target: the deployed routing table owns the
+// channel decision (Discord + Telegram today, additive handlers later), which is
+// the point of publishing into the core rather than calling a channel directly.
+//
+// A publish failure never fails the write. The result is already committed, and
+// losing the ping is strictly better than rolling back a task write because a
+// notification broker was briefly unavailable.
+func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
+	if r.notificationSender == nil {
+		return
+	}
+	relPath := filepath.Join(r.taskDir, e.taskName+".md")
+	message := fmt.Sprintf(
+		"escalation: %s cleared its assignee — status %s, phase %s\n%s",
+		e.previousAssignee,
+		e.status,
+		e.phase,
+		vaultDeeplink(r.vaultName, relPath),
+	)
+	command := notifcmd.NotificationPublishCommand{
+		Type:    notifcore.AgentEscalationNotificationType,
+		Message: notifcore.NotificationMessage(message),
+		Metadata: map[string]string{
+			"taskIdentifier":   e.taskIdentifier,
+			"taskName":         e.taskName,
+			"previousAssignee": e.previousAssignee,
+		},
+	}
+	if err := r.notificationSender.SendPublishNotificationCommand(ctx, command); err != nil {
+		glog.Warningf(
+			"publish agent-escalation notification for task %s (%s) escalated by %s failed: %v",
+			e.taskIdentifier,
+			e.taskName,
+			e.previousAssignee,
+			err,
+		)
+		return
+	}
+	// V(1): a per-publish audit trail, not a default-operator signal — the push
+	// itself is what reaches the operator. Both deployed controllers run -v=2, so
+	// this stays visible in the pod logs the proof reads.
+	glog.V(1).Infof(
+		"assignee cleared → notification published for task %s (%s) escalated by %s",
+		e.taskName,
+		e.taskIdentifier,
+		e.previousAssignee,
+	)
 }
 
 // notFoundAttempts is the total number of times WriteResult looks for the task file
@@ -224,18 +312,45 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		req.TaskIdentifier,
 	)
 	glog.V(2).Infof("WriteResult: writing and pushing for task %s", req.TaskIdentifier)
-	if err := r.gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx,
-		absPath,
-		r.buildResultModifyFn(ctx, req),
-		commitMessage,
-	); err != nil {
+	if err := r.writeAndPublish(ctx, absPath, req, matchedRelPath, commitMessage); err != nil {
 		r.metrics.ResultsWrittenTotal("error").Inc()
 		return errors.Wrapf(ctx, err, "atomic read-modify-write and push failed")
 	}
 
 	glog.V(2).Infof("WriteResult: completed successfully for task %s", req.TaskIdentifier)
 	r.metrics.ResultsWrittenTotal("success").Inc()
+	return nil
+}
+
+// writeAndPublish commits the merged result and, when that write escalated the task,
+// publishes one agent-escalation notification through the shared core.
+//
+// The publish lives here — after the commit — rather than inside the modify closure
+// because that closure re-runs on every git retry: a publish hooked into the
+// clearAssignee chokepoint would ping once per attempt, not once per escalation.
+// The recorder is set-only for the same reason: a later attempt that re-reads the
+// now-empty on-disk assignee must not erase an escalation an earlier attempt
+// genuinely performed.
+func (r *resultWriter) writeAndPublish(
+	ctx context.Context,
+	absPath string,
+	req lib.Task,
+	matchedRelPath string,
+	commitMessage string,
+) error {
+	var escalated *escalation
+	if err := r.gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx,
+		absPath,
+		r.buildResultModifyFn(ctx, req, func(e escalation) { escalated = &e }),
+		commitMessage,
+	); err != nil {
+		return err
+	}
+	if escalated != nil {
+		escalated.taskName = taskNameFromRelPath(matchedRelPath)
+		r.publishEscalation(ctx, *escalated)
+	}
 	return nil
 }
 
@@ -247,6 +362,7 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 func (r *resultWriter) buildResultModifyFn(
 	ctx context.Context,
 	req lib.Task,
+	recordEscalation func(escalation),
 ) func(current []byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		frontmatterStr, err := ExtractFrontmatter(ctx, current)
@@ -280,6 +396,26 @@ func (r *resultWriter) buildResultModifyFn(
 		HealTargetVault(merged, r.vaultName)
 		mergedBody := mergeBody(bodyStr, string(req.Content))
 		body := r.applyRetryCounter(merged, currentOnDisk, mergedBody)
+
+		// Detect the escalation here rather than hooking the chokepoint: all four
+		// escalation rows funnel through applyRetryCounter (-> applyTriggerCap /
+		// ClearAssigneeIfHumanReview / applyRetryCap), so one comparison covers every
+		// row without a publish call per row. This closure re-runs on each git retry,
+		// which is exactly why the publish itself lives in WriteResult, after the
+		// commit — see the escalation type's doc comment.
+		if priorAssignee := string(currentOnDisk.Assignee()); priorAssignee != "" &&
+			string(merged.Assignee()) == "" {
+			escalatedPhase := ""
+			if p := merged.Phase(); p != nil {
+				escalatedPhase = string(*p)
+			}
+			recordEscalation(escalation{
+				taskIdentifier:   string(req.TaskIdentifier),
+				previousAssignee: priorAssignee,
+				status:           string(merged.Status()),
+				phase:            escalatedPhase,
+			})
+		}
 
 		marshaledFrontmatter, err := yaml.Marshal(map[string]any(merged))
 		if err != nil {

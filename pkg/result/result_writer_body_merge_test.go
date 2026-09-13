@@ -93,6 +93,7 @@ var _ = Describe("ResultWriter", func() {
 			fakeTime,
 			metrics.New(),
 			libtime.NewWaiterDuration(),
+			nil,
 		)
 	})
 
