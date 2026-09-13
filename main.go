@@ -15,11 +15,13 @@ import (
 	boltkv "github.com/bborbe/boltkv"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	cqrsiam "github.com/bborbe/cqrs/iam"
 	"github.com/bborbe/errors"
 	libhttp "github.com/bborbe/http"
 	libkafka "github.com/bborbe/kafka"
 	"github.com/bborbe/log"
 	libmetrics "github.com/bborbe/metrics"
+	notifcmd "github.com/bborbe/notification/command/notification"
 	"github.com/bborbe/run"
 	libsentry "github.com/bborbe/sentry"
 	"github.com/bborbe/service"
@@ -163,6 +165,20 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	}
 	defer saramaClientProvider.Close()
 
+	// Publishes agent escalations into the shared notification core. No permission
+	// gates this path — the core's IAM covers domain operations and channel sends,
+	// not notification publishing — so the initiator name is for traceability only.
+	// No Target is ever set: the deployed routing table owns the channel decision.
+	notificationSender := notifcmd.NewNotificationPublishCommandSender(
+		base.NewCommandCreator(base.RequestIDChannel(ctx)),
+		cdb.NewCommandObjectSender(
+			syncProducer,
+			a.TopicPrefix,
+			log.DefaultSamplerFactory,
+		),
+		cqrsiam.Initiator("agent-task-controller"),
+	)
+
 	resultWriter := result.NewResultWriter(
 		gitClient,
 		a.TaskDir,
@@ -170,6 +186,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		currentDateTime,
 		metrics.New(),
 		libtime.NewWaiterDuration(),
+		notificationSender,
 	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,

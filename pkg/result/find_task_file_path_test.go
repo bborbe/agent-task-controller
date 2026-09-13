@@ -151,6 +151,7 @@ var _ = Describe("WriteResult not-found retry", func() {
 			fakeTime,
 			metrics.New(),
 			fakeWait,
+			nil,
 		)
 		task = lib.Task{TaskIdentifier: "late-arrival"}
 	})
