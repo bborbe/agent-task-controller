@@ -1,8 +1,11 @@
 ---
-status: draft
+status: rejected
+originalStatus: draft
 spec: [006-bug-frontmatter-field-ownership]
 created: "2026-08-31T11:56:38Z"
 branch: dark-factory/bug-frontmatter-field-ownership
+rejected: "2026-09-14T20:53:03Z"
+rejectedReason: 'superseded: spec 006 completed; the same docs/controller-design.md Frontmatter Merge section was done later by spec 007 prompt 013-spec-007-docs-frontmatter-merge-operator-owned; this prompt carries stale pre-state (lines 52-60, 3-row table)'
 ---
 
 # Document frontmatter field-ownership contract in controller-design.md
