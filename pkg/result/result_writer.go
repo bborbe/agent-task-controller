@@ -741,6 +741,19 @@ var operatorOwnedFields = []string{
 	"previous_assignee",
 }
 
+// accumulatedCounters lists frontmatter keys that are cumulative in the result
+// write-back merge: when both the on-disk frontmatter and the incoming payload
+// carry a numeric value for one of them, the written value is their sum. These
+// keys are neither controller-owned (that guard would discard the emitted value,
+// so the counter would never move) nor agent-owned (incoming-wins would reset a
+// lifetime total to one run's value) — accumulation is the third ownership
+// behaviour. The spellings are a frozen cross-repo contract with the agent-side
+// emitter (spec 012): a renamed emitter key silently stops accumulating.
+var accumulatedCounters = []string{
+	"metrics_agent_turns",
+	"metrics_interaction_count",
+}
+
 // terminalStatuses lists the statuses that end a task's lifecycle. When the on-disk
 // status is terminal, the merge pins it (discarding the incoming status) and the
 // escalation machinery short-circuits. Terminal is decided via the normalizing
@@ -756,8 +769,13 @@ var terminalStatuses = []domain.TaskStatus{
 // absent from the result when not; a terminal on-disk status is pinned; and
 // operator-owned routing fields (assignee, previous_assignee) take the on-disk
 // value when present on disk, with an incoming empty assignee always applied as
-// the deliverer's clear exception. The returned decisions name every field whose
-// differing incoming value was discarded (equal values produce no decision).
+// the deliverer's clear exception. The accumulated counters (metrics_agent_turns,
+// metrics_interaction_count) are summed when both sides carry a numeric value,
+// keep the on-disk value when the incoming key is absent, and take the incoming
+// value when the key is absent on disk; a non-numeric value on either side keeps
+// the on-disk value verbatim and is reported as a decision when the two values
+// differ. The returned decisions name every field whose differing incoming value
+// was discarded (equal values produce no decision).
 // Neither input map is modified.
 func MergeFrontmatter(
 	existing, incoming lib.TaskFrontmatter,
@@ -812,6 +830,7 @@ func MergeFrontmatter(
 	// value always wins over a differing incoming snapshot, with an incoming empty
 	// assignee always applied as the deliverer's clear exception.
 	decisions = applyOperatorOwnedFields(existing, incoming, merged, decisions)
+	decisions = applyAccumulatedCounters(existing, incoming, merged, decisions)
 	return merged, decisions
 }
 
@@ -845,6 +864,47 @@ func applyOperatorOwnedFields(
 		}
 		merged[field] = diskValue
 		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
+			)
+		}
+	}
+	return decisions
+}
+
+// applyAccumulatedCounters applies the cumulative-counter rule to the merged
+// frontmatter. When both sides carry a numeric value for one of the accumulated
+// counters, the written value is their sum — compared and added by numeric value,
+// so a JSON-decoded incoming float64 adds correctly to a YAML-decoded on-disk int —
+// and NO guard decision is produced: accumulation is a transform, not a discard.
+// When either side is non-numeric the on-disk value is kept verbatim and the
+// incoming value is discarded, producing one decision naming the field when the two
+// values differ and none when they are equal. A key absent on either side keeps the
+// base merge's outcome: an absent incoming key leaves the on-disk value untouched,
+// and an absent on-disk key takes the incoming value. Returns the decision list with
+// any discards appended.
+func applyAccumulatedCounters(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	for _, field := range accumulatedCounters {
+		diskValue, onDisk := existing[field]
+		incomingValue, inIncoming := incoming[field]
+		if !onDisk || !inIncoming {
+			// The base merge already produced the right value: an absent incoming
+			// key leaves the on-disk value untouched, and an absent on-disk key
+			// takes the incoming value as the starting total.
+			continue
+		}
+		diskNumber, diskIsNumber := numericValue(diskValue)
+		incomingNumber, incomingIsNumber := numericValue(incomingValue)
+		if diskIsNumber && incomingIsNumber {
+			merged[field] = diskNumber + incomingNumber
+			continue
+		}
+		merged[field] = diskValue
+		if !frontmatterValueEqual(diskValue, incomingValue) {
 			decisions = append(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},

@@ -215,4 +215,139 @@ var _ = Describe("MergeFrontmatter", func() {
 			Expect(merged["assignee"]).To(Equal("claude"))
 		},
 	)
+
+	DescribeTable(
+		"an accumulated counter adds the incoming value to the on-disk total with no decision",
+		func(existing, incoming lib.TaskFrontmatter, field string, want float64) {
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged[field]).To(BeNumerically("==", want))
+		},
+		Entry(
+			"on-disk int 7 plus incoming float64 3 accumulates to 10",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 7},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": float64(3)},
+			"metrics_agent_turns",
+			float64(10),
+		),
+		Entry(
+			"on-disk int64 3 plus incoming int 4 accumulates to 7",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": int64(3)},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 4},
+			"metrics_agent_turns",
+			float64(7),
+		),
+		Entry(
+			"on-disk int 116 plus incoming float64 41 accumulates to 157",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": 116},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": float64(41)},
+			"metrics_interaction_count",
+			float64(157),
+		),
+		Entry(
+			"an evidenced unattended run (incoming 0) leaves the on-disk total unchanged",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": 116},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": float64(0)},
+			"metrics_interaction_count",
+			float64(116),
+		),
+	)
+
+	It(
+		"leaves both on-disk counters untouched with no decision when the incoming payload carries neither key",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":                    "in_progress",
+				"metrics_agent_turns":       7,
+				"metrics_interaction_count": 116,
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal(7))
+			Expect(merged["metrics_interaction_count"]).To(Equal(116))
+		},
+	)
+
+	It(
+		"takes the incoming value with no decision when the on-disk frontmatter carries no counter key (first run)",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress"}
+			incoming := lib.TaskFrontmatter{
+				"status":                    "in_progress",
+				"metrics_agent_turns":       3,
+				"metrics_interaction_count": 0,
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal(3))
+			Expect(merged["metrics_interaction_count"]).To(Equal(0))
+		},
+	)
+
+	It(
+		"keeps a non-numeric counter verbatim and reports exactly one decision naming the field",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(decisions[0].Kept).To(Equal("unparseable"))
+			Expect(decisions[0].Rejected).To(Equal(3))
+			Expect(merged["metrics_agent_turns"]).To(Equal("unparseable"))
+		},
+	)
+
+	It(
+		"keeps a numeric on-disk counter when the incoming value is non-numeric and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			incoming := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(decisions[0].Kept).To(Equal(3))
+			Expect(decisions[0].Rejected).To(Equal("unparseable"))
+			Expect(merged["metrics_agent_turns"]).To(Equal(3))
+		},
+	)
+
+	It(
+		"keeps the on-disk value verbatim with zero decisions when both sides hold the same non-numeric value",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal("unparseable"))
+		},
+	)
+
+	It(
+		"keeps a non-numeric slice counter verbatim without panicking (spec Security)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": []any{"x"},
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(merged["metrics_agent_turns"]).To(Equal([]any{"x"}))
+		},
+	)
 })
