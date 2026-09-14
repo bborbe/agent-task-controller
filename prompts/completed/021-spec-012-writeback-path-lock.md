@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [012-accumulate-agent-counters-on-write-back]
+summary: Locked the accumulated-counter sum invariant across two sequential WriteResult calls through the real write-back path and the terminal-status pin not suppressing accumulation, with zero production code change and zero assertions deleted
+execution_id: agent-task-controller-accumulate-exec-021-spec-012-writeback-path-lock
+dark-factory-version: v0.193.0
 created: "2026-09-14T20:40:02Z"
 queued: "2026-09-14T20:57:47Z"
+started: "2026-09-14T21:05:18Z"
+completed: "2026-09-14T21:12:11Z"
 branch: dark-factory/accumulate-agent-counters-on-write-back
 ---
 

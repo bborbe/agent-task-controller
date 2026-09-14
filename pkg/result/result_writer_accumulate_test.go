@@ -225,4 +225,76 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 			Expect(s).To(ContainSubstring("metrics_interaction_count: 116"))
 		},
 	)
+
+	Context("accumulation across runs (spec 012)", func() {
+		It("accumulates the second run's emission onto the first run's total", func() {
+			writeTaskFile(
+				"my-task.md",
+				"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n---\n## Result\nStatus: failed\n",
+			)
+
+			// First run: the payload emits 3 turns onto a task that never carried the key.
+			Expect(writer.WriteResult(ctx, lib.Task{
+				TaskIdentifier: identifier,
+				Frontmatter: lib.TaskFrontmatter{
+					"task_identifier":     "test-task-uuid-1234",
+					"status":              "in_progress",
+					"phase":               "ai_review",
+					"metrics_agent_turns": float64(3),
+				},
+				Content: lib.TaskContent("## Result\nfirst run\n"),
+			})).To(Succeed())
+
+			afterFirst, err := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(afterFirst)).To(ContainSubstring("metrics_agent_turns: 3"))
+
+			// Second run: the payload emits 4 turns; the write-back reads the file the
+			// first call wrote and accumulates onto it.
+			Expect(writer.WriteResult(ctx, lib.Task{
+				TaskIdentifier: identifier,
+				Frontmatter: lib.TaskFrontmatter{
+					"task_identifier":     "test-task-uuid-1234",
+					"status":              "in_progress",
+					"phase":               "ai_review",
+					"metrics_agent_turns": float64(4),
+				},
+				Content: lib.TaskContent("## Result\nsecond run\n"),
+			})).To(Succeed())
+
+			afterSecond, err := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(afterSecond)).To(ContainSubstring("metrics_agent_turns: 7"))
+			Expect(string(afterSecond)).NotTo(ContainSubstring("metrics_agent_turns: 4"))
+			Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+		})
+
+		It(
+			"accumulates the counter on a terminal task while the on-disk status stays pinned",
+			func() {
+				writeTaskFile(
+					"my-task.md",
+					"---\ntask_identifier: test-task-uuid-1234\nstatus: completed\nphase: done\nmetrics_agent_turns: 7\n---\n## Result\nStatus: failed\n",
+				)
+				Expect(writer.WriteResult(ctx, lib.Task{
+					TaskIdentifier: identifier,
+					Frontmatter: lib.TaskFrontmatter{
+						"task_identifier":     "test-task-uuid-1234",
+						"status":              "in_progress",
+						"phase":               "ai_review",
+						"metrics_agent_turns": float64(3),
+					},
+					Content: lib.TaskContent("## Result\nlate result\n"),
+				})).To(Succeed())
+
+				written, err := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+				Expect(err).NotTo(HaveOccurred())
+				s := string(written)
+				Expect(s).To(ContainSubstring("metrics_agent_turns: 10"))
+				Expect(s).NotTo(ContainSubstring("metrics_agent_turns: 7"))
+				Expect(s).To(ContainSubstring("status: completed"))
+				Expect(s).NotTo(ContainSubstring("status: in_progress"))
+			},
+		)
+	})
 })
