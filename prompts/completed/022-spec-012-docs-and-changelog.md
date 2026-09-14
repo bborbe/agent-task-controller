@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [012-accumulate-agent-counters-on-write-back]
+summary: Added the accumulated-counter ownership row and rule paragraph to docs/controller-design.md § Frontmatter Merge and recorded the doctrine row in CHANGELOG.md's Unreleased section, with make precommit exiting 0
+execution_id: agent-task-controller-accumulate-exec-022-spec-012-docs-and-changelog
+dark-factory-version: v0.193.0
 created: "2026-09-14T20:40:02Z"
 queued: "2026-09-14T20:57:47Z"
+started: "2026-09-14T21:12:12Z"
+completed: "2026-09-14T21:17:37Z"
 branch: dark-factory/accumulate-agent-counters-on-write-back
 ---
 
