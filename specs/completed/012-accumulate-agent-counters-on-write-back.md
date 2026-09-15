@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-09-14T20:32:26Z"
 generating: "2026-09-14T20:35:37Z"
 prompted: "2026-09-14T20:53:13Z"
 verifying: "2026-09-14T21:17:37Z"
+completed: "2026-09-15T11:28:10Z"
 branch: dark-factory/accumulate-agent-counters-on-write-back
 ---
 
