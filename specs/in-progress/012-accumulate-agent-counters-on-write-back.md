@@ -155,3 +155,16 @@ Rationale: prompt 1 establishes the behaviour everything else asserts; prompt 2 
 ## Do-Nothing Option
 
 The current approach is acceptable only while nothing emits these keys — and the emitter is no longer hypothetical: it is merged (`bborbe/agent` PR #69, 2026-09-14) and released (`v0.89.0`), with only its fleet rollout pending. The moment that rollout lands before this fix does, the first agent run on any task carrying an existing `metrics_interaction_count` overwrites a lifetime total with a single run's value, and the merge reports success. The vault's numbers then drift downward silently, task by task, and the rollup built on them measures the drift as a drop in work. Doing nothing here does not leave the system as it is; it arms the corruption for the other half's rollout, which is already queued.
+
+## Verification Result
+
+**Verified:** 2026-09-15T11:27:25Z (HEAD 986dbc8)
+**Binary:** agent-task-controller:v0.10.0 on dev+prod openclaw controllers (tag dd86395 contains fix 1eb98e0..986dbc8; dev pod up since 2026-09-14T22:13:47Z, prod since 2026-09-15T06:13:04Z)
+**Scenario:** structural walk, no scenario file — AC1-14 matched to fresh test/code artifacts; AC15/16 walked against real dev/prod runs of task 71de2696-41b2-4351-a2cf-c70c4858986b on the deployed fix
+**Evidence:**
+- AC15 (dev): run A commit a66384890e `-metrics_agent_turns: 5` / `+metrics_agent_turns: 8`; run B commit 48fd0cfc79 `-metrics_agent_turns: 8` / `+metrics_agent_turns: 11` (X=8 read from run A's commit); both runs' agent pods log the emitted `AgentTurns: 3` — 5+3=8 and 8+3=11, so the written total is the sum, not the incoming value (incoming-wins would write 3); dev controller witness line ×2 at 11:11:23.258Z / 11:14:21.512Z
+- AC16 (prod): commit 6e06dacb92 `-metrics_agent_turns: 2` / `+metrics_agent_turns: 5` from the pre-run on-disk 2; prod controller witness line at 06:17:59.135Z, captured with `--since=6h` (the AC's `--since=2h` window no longer covered the 06:17Z run at walk time; prod code unchanged since — same pod, 0 restarts)
+- AC1-7, AC11: fixtures in pkg/result/result_writer_accumulate_test.go (split from result_writer_test.go at the repo's 2000-line file-length gate) and result_writer_guard_test.go; `go test -count=1 ./pkg/result/...` → 122 of 122 specs passed; `make precommit` exit 0
+- AC8/9/10: guard-list grep 0; diff v0.9.0..986dbc8 adds no glog/log/fmt.Print lines and deletes no Expect( lines
+- AC13/14: docs/controller-design.md § Frontmatter Merge third row; CHANGELOG `## Unreleased` bullet
+**Verdict:** PASS
