@@ -1,5 +1,4 @@
 ---
-<<<<<<<< HEAD:prompts/completed/011-spec-005-reopen-observability.md
 status: completed
 spec: [005-bug-create-task-dedup-blocks-terminal-reopen]
 summary: 'Verified the complete terminal-reopen observability implementation already present in the working tree (reopen commit-message branch, unconditional create-task: reopening terminal task INFO log, doc comment, positive/negative commit-message unit specs, CHANGELOG fix entry, and design-doc terminal-status section); make test and make precommit both pass with exit 0.'
@@ -9,17 +8,7 @@ created: "2026-08-27T20:30:00Z"
 queued: "2026-08-27T18:44:32Z"
 started: "2026-09-03T18:09:45Z"
 completed: "2026-09-03T18:17:14Z"
-========
-status: cancelled
-spec: [005-bug-create-task-dedup-blocks-terminal-reopen]
-execution_id: agent-task-controller-target-vault-echo-exec-011-spec-005-reopen-observability
-dark-factory-version: dev
-created: "2026-08-27T20:30:00Z"
-queued: "2026-08-27T18:44:32Z"
-started: "2026-09-03T17:33:06Z"
->>>>>>>> origin/master:prompts/cancelled/011-spec-005-reopen-observability.md
-branch: dark-factory/bug-create-task-dedup-blocks-terminal-reopen
-cancelled: "2026-09-03T17:38:11Z"
+resolved: 'Frontmatter rebuilt from the two runs merged as conflict markers in 2306ff1 ("Route frontmatter commands by target vault and heal legacy files" -- a bulk heal that committed markers unresolved, not a human merge conflict). Two runs of this prompt collided: 17:33 started / 17:38 cancelled (execution agent-task-controller-target-vault-echo-exec-...), and 18:09 started / 18:17 completed (execution agent-task-controller-writeback-merge-exec-...). Completed wins because its summary is verifiably true -- the reopen code shipped a week earlier in 06cd01a (2026-08-27) and CHANGELOG records it -- and the cancelled run produced nothing. Resolved 2026-09-15.'
 ---
 
 # Reopen observability for create-task terminal reopen
