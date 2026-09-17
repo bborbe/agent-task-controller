@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [013-coalesce-escalation-notifications]
+summary: 'Documented the shipped escalation-coalescing rule in docs/controller-design.md § Assignee-Clear on Escalation and added the `## Unreleased` fix: bullet to CHANGELOG.md, then ran the full build gate green'
+execution_id: agent-task-controller-escalation-dedup-exec-024-spec-013-docs-and-changelog
+dark-factory-version: v0.193.0
 created: "2026-09-16T22:08:04Z"
 queued: "2026-09-17T05:23:40Z"
+started: "2026-09-17T05:31:42Z"
+completed: "2026-09-17T05:37:23Z"
 branch: dark-factory/coalesce-escalation-notifications
 ---
 
