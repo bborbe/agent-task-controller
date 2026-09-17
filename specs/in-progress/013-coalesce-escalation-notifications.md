@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-09-16T22:05:04Z"
 generating: "2026-09-16T22:05:05Z"
 prompted: "2026-09-16T22:25:52Z"
+verifying: "2026-09-17T05:37:23Z"
 branch: dark-factory/coalesce-escalation-notifications
 ---
 
