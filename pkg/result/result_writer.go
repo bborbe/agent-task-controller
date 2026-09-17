@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -53,6 +55,8 @@ func NewResultWriter(
 		metrics:            m,
 		waiter:             waiter,
 		notificationSender: notificationSender,
+
+		escalationPublishedAt: make(map[string]libtime.DateTime),
 	}
 }
 
@@ -64,6 +68,17 @@ type resultWriter struct {
 	metrics            metrics.Metrics
 	waiter             libtime.WaiterDuration
 	notificationSender notifcmd.NotificationPublishCommandSender
+
+	// escalationCoalescingMutex guards escalationPublishedAt. The check and the record in
+	// claimEscalationCoalescingSlot are one atomic step under it, so two concurrent
+	// escalations of one key cannot both publish. In-process only, never serialized: a
+	// restart clears the window.
+	escalationCoalescingMutex sync.Mutex
+	// escalationPublishedAt records the time of the last *published* ping per coalescing
+	// key — never the time of the last escalation, so a suppressed escalation does not
+	// extend the window. Pruned on every claim, so its size is bounded by the distinct
+	// keys seen in the last escalationCoalescingWindow.
+	escalationPublishedAt map[string]libtime.DateTime
 }
 
 // escalation records one assignee-clear observed while building a write.
@@ -110,6 +125,24 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 	if r.notificationSender == nil {
 		return
 	}
+	// Fail-open: a task name the frozen pattern does not match publishes exactly as it
+	// does today and creates no window state, so a format change degrades to one ping per
+	// file and never to silence.
+	coalescingKey, coalescable := escalationCoalescingKey(e.taskName)
+	claimed := false
+	if coalescable {
+		if !r.claimEscalationCoalescingSlot(coalescingKey, r.currentDateTime.Now()) {
+			// V(1): the only signal separating a coalesced repeat from a delivered ping.
+			// Both deployed controllers run -v=2, so this stays visible in the pod logs.
+			glog.V(1).Infof(
+				"escalation notification coalesced for key %s, task %s",
+				coalescingKey,
+				e.taskName,
+			)
+			return
+		}
+		claimed = true
+	}
 	relPath := filepath.Join(r.taskDir, e.taskName+".md")
 	message := fmt.Sprintf(
 		"escalation: %s cleared its assignee — status %s, phase %s\n%s",
@@ -128,6 +161,9 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 		},
 	}
 	if err := r.notificationSender.SendPublishNotificationCommand(ctx, command); err != nil {
+		if claimed {
+			r.releaseEscalationCoalescingSlot(coalescingKey)
+		}
 		glog.Warningf(
 			"publish agent-escalation notification for task %s (%s) escalated by %s failed: %v",
 			e.taskIdentifier,
@@ -148,6 +184,37 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 	)
 }
 
+// claimEscalationCoalescingSlot reports whether an escalation of key may publish, and
+// records now as that key's last published ping when it may. The check and the record are
+// one atomic step under the mutex. The window is pruned here, so the map holds only keys
+// seen inside the last escalationCoalescingWindow. Expiry is read from the injected clock,
+// never time.Now(), so the boundary is testable without sleeping.
+func (r *resultWriter) claimEscalationCoalescingSlot(key string, now libtime.DateTime) bool {
+	r.escalationCoalescingMutex.Lock()
+	defer r.escalationCoalescingMutex.Unlock()
+	for existingKey, publishedAt := range r.escalationPublishedAt {
+		if now.Sub(publishedAt) >= escalationCoalescingWindow {
+			delete(r.escalationPublishedAt, existingKey)
+		}
+	}
+	if _, published := r.escalationPublishedAt[key]; published {
+		return false
+	}
+	r.escalationPublishedAt[key] = now
+	return true
+}
+
+// releaseEscalationCoalescingSlot releases a claim taken by claimEscalationCoalescingSlot
+// when the sender rejected the command, so a broker outage is followed by the next
+// escalation for that key publishing normally. The entry it deletes was outside the window
+// it replaced (the claim overwrote it only because its window had elapsed), so deleting it
+// leaves the map in the same state as no record at all.
+func (r *resultWriter) releaseEscalationCoalescingSlot(key string) {
+	r.escalationCoalescingMutex.Lock()
+	defer r.escalationCoalescingMutex.Unlock()
+	delete(r.escalationPublishedAt, key)
+}
+
 // notFoundAttempts is the total number of times WriteResult looks for the task file
 // before giving up, and notFoundBackoff is the pause between those attempts.
 //
@@ -165,6 +232,40 @@ const (
 	notFoundAttempts = 3
 	notFoundBackoff  = libtime.Duration(time.Second)
 )
+
+// escalationCoalescingWindow is the fixed window inside which a repeat escalation of one
+// PR publishes nothing. Frozen at 30 minutes: derived from the measured same-key gap
+// distribution (median 18.2 minutes; 534 of 877 consecutive same-key creations inside 30
+// minutes) and matching the operator's reported 8-11 duplicate pings a day. There is no
+// config surface — a tunable window has no named consumer, and a switch that disables the
+// coalescing re-opens the flood this closes.
+const escalationCoalescingWindow = 30 * libtime.Minute
+
+// escalationTaskNamePattern is the frozen, anchored parse that derives the coalescing key
+// from a task name. The format is owned by github-pr-watcher (computeTaskTitle, built in
+// pkg/filename.go, with appendRetryToken folding " - retry-<taskid[:8]>" into the suffix):
+// "PR <kind> <provider> - <owner>-<repo> - <number> - <shortSHA>[- <slug>][- <suffix>]".
+// Only the owner-qualified repo token and the PR number are captured, because everything
+// after the short SHA — the title slug, the retry suffix, the task kind word and the
+// provider word — varies between retries of one PR while those two do not. Anchored at the
+// start with every captured group a space-delimited token, so neither " - " nor a newline
+// in a crafted PR title can reach a captured value.
+var escalationTaskNamePattern = regexp.MustCompile(`^PR \S+ \S+ - (\S+) - ([0-9]+) - \S+`)
+
+// escalationCoalescingKey derives the coalescing key for a task name: the owner-qualified
+// repo token and the PR number, joined as "<owner>-<repo>#<number>". Reports false for a
+// task name the frozen pattern does not match, and the caller then publishes uncoalesced —
+// fail-open, so a format change degrades to one ping per file and never to silence. A
+// matched name always yields a non-empty token and a numeric number: \S+ requires at least
+// one non-space byte and [0-9]+ at least one digit, and the match is anchored at the start,
+// so a flood of arbitrary names cannot grow the window map.
+func escalationCoalescingKey(taskName string) (string, bool) {
+	match := escalationTaskNamePattern.FindStringSubmatch(taskName)
+	if match == nil {
+		return "", false
+	}
+	return match[1] + "#" + match[2], true
+}
 
 // FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
 // the .md file whose frontmatter has task_identifier == id, plus the parsed existing frontmatter.
