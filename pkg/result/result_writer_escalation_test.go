@@ -9,11 +9,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	lib "github.com/bborbe/agent"
 	notifcore "github.com/bborbe/notification"
 	notifcmd "github.com/bborbe/notification/command/notification"
+	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
@@ -87,10 +89,11 @@ var _ = Describe("resultWriter escalation notification", func() {
 				return readErr
 			}
 			var updated []byte
+			var modifyErr error
 			for i := 0; i < modifyRuns; i++ {
-				updated, err = modify(current)
-				if err != nil {
-					return err
+				updated, modifyErr = modify(current)
+				if modifyErr != nil {
+					return modifyErr
 				}
 			}
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
@@ -136,6 +139,31 @@ var _ = Describe("resultWriter escalation notification", func() {
 				"retry_count":     3,
 				"max_retries":     3,
 				"assignee":        assignee,
+			},
+			Content: lib.TaskContent("## Result\nStatus: failed\n"),
+		}
+	}
+
+	// prTaskFile builds a retry-cap task file whose *name* is the coalescing input and
+	// returns the lib.Task that targets it. Distinct task files for one PR carry distinct
+	// task_identifier values and distinct short SHAs — exactly the shape the retry path
+	// mints in production, where --force appends " - retry-<taskid[:8]>" and a new head SHA
+	// produces its own file.
+	prTaskFile := func(taskName string, id lib.TaskIdentifier) lib.Task {
+		writeTaskFile(
+			taskName+".md",
+			"---\ntask_identifier: "+string(id)+"\nstatus: in_progress\nphase: execution\n"+
+				"retry_count: 3\nmax_retries: 3\nassignee: claude\n---\n## Result\nStatus: failed\n",
+		)
+		return lib.Task{
+			TaskIdentifier: id,
+			Frontmatter: lib.TaskFrontmatter{
+				"task_identifier": string(id),
+				"status":          "in_progress",
+				"phase":           "execution",
+				"retry_count":     3,
+				"max_retries":     3,
+				"assignee":        "claude",
 			},
 			Content: lib.TaskContent("## Result\nStatus: failed\n"),
 		}
@@ -219,6 +247,215 @@ var _ = Describe("resultWriter escalation notification", func() {
 			Expect(readErr).NotTo(HaveOccurred())
 			Expect(string(written)).To(ContainSubstring("previous_assignee: claude"))
 			Expect(string(written)).NotTo(ContainSubstring("\nassignee: claude"))
+		})
+	})
+
+	Context("escalation notification coalescing (spec 013)", func() {
+		base := libtime.DateTime(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
+
+		It("coalesces a repeat escalation of one PR and still parks both files", func() {
+			firstName := "PR Review github - bborbe-go-version-watcher - 15 - 28915b31 - " +
+				"feat-publish-go-release-notification"
+			secondName := "PR Review github - bborbe-go-version-watcher - 15 - 2d12d9f5 - " +
+				"feat-publish-go-release-notification"
+			first := prTaskFile(
+				firstName,
+				lib.TaskIdentifier("11111111-1111-5111-8111-111111111111"),
+			)
+			second := prTaskFile(
+				secondName,
+				lib.TaskIdentifier("22222222-2222-5222-8222-222222222222"),
+			)
+
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+
+			Expect(published).To(HaveLen(1),
+				"the second task file for the same PR must not re-ping")
+
+			for _, name := range []string{firstName, secondName} {
+				written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, name+".md"))
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(written)).To(ContainSubstring("previous_assignee: claude"))
+				Expect(string(written)).NotTo(ContainSubstring("\nassignee: claude"))
+			}
+			Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2),
+				"coalescing drops the ping, never the write")
+		})
+
+		It("does not coalesce the same PR number in a different repository", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-alpha - 10 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("33333333-3333-5333-8333-333333333331"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-beta - 10 - bbbb2222 - fix-thing",
+				lib.TaskIdentifier("33333333-3333-5333-8333-333333333332"),
+			)
+
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+
+			Expect(published).To(HaveLen(2))
+		})
+
+		It("does not coalesce a different PR number in the same repository", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-alpha - 10 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("44444444-4444-5444-8444-444444444441"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-alpha - 11 - bbbb2222 - fix-thing",
+				lib.TaskIdentifier("44444444-4444-5444-8444-444444444442"),
+			)
+
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+
+			Expect(published).To(HaveLen(2))
+		})
+
+		It("does not coalesce two repositories carrying the same short SHA", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-alpha - 10 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("55555555-5555-5555-8555-555555555551"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-beta - 11 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("55555555-5555-5555-8555-555555555552"),
+			)
+
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+
+			Expect(published).To(HaveLen(2))
+		})
+
+		It("suppresses inside the window and publishes at the boundary", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-go-version-watcher - 15 - 28915b31 - feat-release",
+				lib.TaskIdentifier("66666666-6666-5666-8666-666666666661"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-go-version-watcher - 15 - 2d12d9f5 - feat-release",
+				lib.TaskIdentifier("66666666-6666-5666-8666-666666666662"),
+			)
+			third := prTaskFile(
+				"PR Review github - bborbe-go-version-watcher - 15 - 5e33e5ff - feat-release",
+				lib.TaskIdentifier("66666666-6666-5666-8666-666666666663"),
+			)
+
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(published).To(HaveLen(1))
+
+			fakeTime.NowReturns(base.Add(libtime.Duration(29 * time.Minute)))
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+			Expect(published).To(HaveLen(1), "the same key at T+29min must be suppressed")
+
+			fakeTime.NowReturns(base.Add(libtime.Duration(30 * time.Minute)))
+			Expect(writer.WriteResult(ctx, third)).To(Succeed())
+			Expect(published).To(HaveLen(2), "three escalations, two publishes")
+		})
+
+		It("publishes uncoalesced for a task name the parse does not recognise", func() {
+			first := prTaskFile(
+				"Build Failure github - bborbe-agent - deadbeef",
+				lib.TaskIdentifier("77777777-7777-5777-8777-777777777771"),
+			)
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+			Expect(published).To(HaveLen(1))
+
+			second := prTaskFile(
+				"Update Go bborbe-vault-cli f9b19bd",
+				lib.TaskIdentifier("77777777-7777-5777-8777-777777777772"),
+			)
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+			Expect(published).To(HaveLen(2))
+
+			third := prTaskFile(
+				"PR Review github - bborbe-other - 99 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("77777777-7777-5777-8777-777777777773"),
+			)
+			Expect(writer.WriteResult(ctx, third)).To(Succeed())
+			Expect(published).To(HaveLen(3))
+
+			fourth := prTaskFile(
+				"Dark Factory Implement github - bborbe-agent - "+
+					"PR Review github - bborbe-other - 99 - aaaa1111",
+				lib.TaskIdentifier("77777777-7777-5777-8777-777777777774"),
+			)
+			Expect(writer.WriteResult(ctx, fourth)).To(Succeed())
+			Expect(published).To(HaveLen(4),
+				"the parse is anchored: a PR-shaped fragment later in the name must not move the key")
+
+			fifth := prTaskFile(
+				"Build Failure github - bborbe-agent - deadbeef",
+				lib.TaskIdentifier("77777777-7777-5777-8777-777777777775"),
+			)
+			Expect(writer.WriteResult(ctx, fifth)).To(Succeed())
+			Expect(published).To(HaveLen(5), "an unmatched name creates no window state")
+		})
+
+		It("does not consume the window when the send fails", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-go-version-watcher - 15 - 28915b31 - feat-release",
+				lib.TaskIdentifier("88888888-8888-5888-8888-888888888881"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-go-version-watcher - 15 - 2d12d9f5 - feat-release",
+				lib.TaskIdentifier("88888888-8888-5888-8888-888888888882"),
+			)
+
+			sendErr = errors.New("broker unavailable")
+			Expect(writer.WriteResult(ctx, first)).To(Succeed())
+
+			sendErr = nil
+			Expect(writer.WriteResult(ctx, second)).To(Succeed())
+
+			Expect(published).To(HaveLen(2),
+				"a rejected send must not record the key")
+		})
+
+		It("publishes once for two concurrent escalations of one key", func() {
+			first := prTaskFile(
+				"PR Review github - bborbe-agent - 9 - aaaa1111 - fix-thing",
+				lib.TaskIdentifier("99999999-9999-5999-8999-999999999991"),
+			)
+			second := prTaskFile(
+				"PR Review github - bborbe-agent - 9 - bbbb2222 - fix-thing",
+				lib.TaskIdentifier("99999999-9999-5999-8999-999999999992"),
+			)
+
+			var publishMutex sync.Mutex
+			var concurrentPublished []notifcmd.NotificationPublishCommand
+			concurrentWriter := result.NewResultWriter(
+				fakeGit,
+				taskDir,
+				"openclaw",
+				fakeTime,
+				metrics.New(),
+				libtime.NewWaiterDuration(),
+				notifcmd.NotificationPublishCommandSenderFunc(
+					func(_ context.Context, command notifcmd.NotificationPublishCommand) error {
+						publishMutex.Lock()
+						defer publishMutex.Unlock()
+						concurrentPublished = append(concurrentPublished, command)
+						return nil
+					},
+				),
+			)
+
+			Expect(run.CancelOnFirstErrorWait(
+				ctx,
+				func(runCtx context.Context) error {
+					return concurrentWriter.WriteResult(runCtx, first)
+				},
+				func(runCtx context.Context) error {
+					return concurrentWriter.WriteResult(runCtx, second)
+				},
+			)).To(Succeed())
+
+			Expect(concurrentPublished).To(HaveLen(1))
 		})
 	})
 })
