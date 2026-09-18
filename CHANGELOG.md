@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.0
 
 - fix: retire the superseded build-fix task when a failed build is re-emitted, so a re-classified build — or one whose log fetch recovers — leaves exactly one live task instead of two concurrent build-fixer runs against the same repo and commit. The build watcher stamps `supersedes_task_id` and `supersedes_build_id` on every re-emission and documents the consumer as existing, but nothing in this repo read either marker, so both the original and the re-emission stayed non-terminal and dispatchable. The create callback now calls `retireSupersededBuildFixTasks` after `writeTaskFile`: it lists the task directory, excludes the task just created, and retires every still-live task whose parsed `task_identifier` matches `supersedes_task_id` or whose parsed `build_id` matches `supersedes_build_id`, writing the same frozen transition the recurring supersede writes (`status: aborted`, `phase: done`, `completed_date`, `superseded_by`) and never `created_by`. The retirement is best-effort — a list, read, parse or write failure is logged and swallowed and the new task is never rolled back — and every line it emits, plus its commit message, carries the frozen prefix `auto-supersede build-fix:` (spec 014)
 
