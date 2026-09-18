@@ -1356,5 +1356,402 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(absPath).To(HaveSuffix("Weekly Sched - 2026W27.md"))
 			})
 		})
+
+		Context("build-fix supersede retirement", func() {
+			buildFixCmd := func(id lib.TaskIdentifier, fm lib.TaskFrontmatter) cdb.CommandObject {
+				return buildCmdObj(task.CreateCommand{
+					TaskIdentifier: id,
+					Title:          "Fix Build - dashboard",
+					Frontmatter:    fm,
+				})
+			}
+
+			It("retires the other live task for the same build_id", func() {
+				priorPath := "tasks/Fix Build - dashboard - b1file.md"
+				newPath := "tasks/Fix Build - dashboard.md"
+				priorContent := []byte(
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\nphase: execution\n---\nbody\n",
+				)
+				fakeGit.ListFilesReturns([]string{priorPath, newPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == priorPath {
+						return priorContent, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"phase":               "execution",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+
+				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix(priorPath))
+				Expect(msg).To(ContainSubstring("auto-supersede build-fix:"))
+
+				retired, modifyErr := modify(priorContent)
+				Expect(modifyErr).NotTo(HaveOccurred())
+				retiredStr := string(retired)
+				Expect(retiredStr).To(ContainSubstring("status: aborted"))
+				Expect(retiredStr).To(ContainSubstring("phase: done"))
+				Expect(retiredStr).To(ContainSubstring("completed_date:"))
+				Expect(retiredStr).To(ContainSubstring("superseded_by:"))
+				Expect(retiredStr).To(ContainSubstring(newPath))
+				Expect(retiredStr).NotTo(ContainSubstring("created_by: recurring-task-creator"))
+
+				_, _, newContent, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
+				Expect(string(newContent)).To(ContainSubstring("status: in_progress"))
+			})
+
+			It("retires the task whose task_identifier matches supersedes_task_id", func() {
+				priorPath := "tasks/Fix Build - dashboard - b1file.md"
+				unrelatedPath := "tasks/Unrelated Task.md"
+				priorContent := []byte(
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B1\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
+				fakeGit.ListFilesReturns([]string{priorPath, unrelatedPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					switch relPath {
+					case priorPath:
+						return priorContent, nil
+					case unrelatedPath:
+						return []byte(
+							"---\ntask_identifier: unrelated-1\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+						), nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":           "claude",
+					"status":             "in_progress",
+					"build_id":           "B2",
+					"supersedes_task_id": "fixbuild-b1",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+
+				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(absPath).To(HaveSuffix(priorPath))
+				Expect(msg).To(ContainSubstring("auto-supersede build-fix:"))
+
+				retired, modifyErr := modify(priorContent)
+				Expect(modifyErr).NotTo(HaveOccurred())
+				retiredStr := string(retired)
+				Expect(retiredStr).To(ContainSubstring("status: aborted"))
+				Expect(retiredStr).To(ContainSubstring("phase: done"))
+				Expect(retiredStr).To(ContainSubstring("completed_date:"))
+				Expect(retiredStr).To(ContainSubstring("superseded_by:"))
+				Expect(retiredStr).NotTo(ContainSubstring("created_by: recurring-task-creator"))
+			})
+
+			DescribeTable(
+				"writes nothing when the markers are absent or empty",
+				func(fm lib.TaskFrontmatter) {
+					priorPath := "tasks/Prior Build Fix.md"
+					priorContent := []byte(
+						"---\ntask_identifier: prior-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+					)
+					Expect(
+						os.WriteFile(filepath.Join(tmpDir, priorPath), priorContent, 0600),
+					).To(Succeed())
+					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
+						_ context.Context,
+						absPath string,
+						modify func([]byte) ([]byte, error),
+						_ string,
+					) error {
+						current, readErr := os.ReadFile(absPath)
+						if readErr != nil {
+							return readErr
+						}
+						updated, modifyErr := modify(current)
+						if modifyErr != nil {
+							return modifyErr
+						}
+						return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
+					}
+
+					_, _, err := executor.HandleCommand(
+						ctx,
+						nil,
+						buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), fm),
+					)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+
+					after, readErr := os.ReadFile(filepath.Join(tmpDir, priorPath))
+					Expect(readErr).NotTo(HaveOccurred())
+					Expect(after).To(Equal(priorContent))
+				},
+				Entry("no marker keys", lib.TaskFrontmatter{
+					"assignee": "claude",
+					"status":   "in_progress",
+					"build_id": "B",
+				}),
+				Entry("markers present but empty", lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_task_id":  "",
+					"supersedes_build_id": "",
+				}),
+			)
+
+			It(
+				"creates no second file and retires nothing when the same build is re-emitted unchanged",
+				func() {
+					titlePath := "tasks/Fix Build - dashboard.md"
+					existing := []byte(
+						"---\ntask_identifier: fixbuild-b2\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+					)
+					fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+						if relPath == titlePath {
+							return existing, nil
+						}
+						return nil, errors.New("GET " + relPath + " returned 404: not found")
+					}
+
+					cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+						"assignee":            "claude",
+						"status":              "in_progress",
+						"build_id":            "B",
+						"supersedes_build_id": "B",
+					})
+
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				},
+			)
+
+			It("does not retire the task it has just created", func() {
+				titlePath := "tasks/Fix Build - dashboard.md"
+				selfContent := []byte(
+					"---\ntask_identifier: fixbuild-b2\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
+				var written bool
+				fakeGit.AtomicWriteIfAbsentAndCommitPushStub = func(
+					_ context.Context,
+					absPath string,
+					content []byte,
+					_ string,
+				) error {
+					written = true
+					return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if written && relPath == titlePath {
+						return selfContent, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+				fakeGit.ListFilesReturns([]string{titlePath}, nil)
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("still creates the new task when the supersede target is unreadable", func() {
+				targetPath := "tasks/Fix Build - dashboard - b1file.md"
+				fakeGit.ListFilesReturns([]string{targetPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == targetPath {
+						return nil, errors.New("git-rest 503")
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("still creates the new task when the supersede target is unparseable", func() {
+				targetPath := "tasks/Fix Build - dashboard - b1file.md"
+				fakeGit.ListFilesReturns([]string{targetPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == targetPath {
+						return []byte("---\nstatus: [unclosed\n---\nbody\n"), nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("does not retire a target that is already terminal", func() {
+				targetPath := "tasks/Fix Build - dashboard - b1file.md"
+				terminalContent := []byte(
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody\n",
+				)
+				fakeGit.ListFilesReturns([]string{targetPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == targetPath {
+						return terminalContent, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("still creates the new task when listing candidates fails", func() {
+				fakeGit.ListFilesReturns(nil, errors.New("git-rest 503"))
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("still creates the new task when the retire write is rejected", func() {
+				targetPath := "tasks/Fix Build - dashboard - b1file.md"
+				fakeGit.ListFilesReturns([]string{targetPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == targetPath {
+						return []byte(
+							"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+						), nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+				fakeGit.AtomicReadModifyWriteAndCommitPushReturns(errors.New("git-rest 409"))
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+			})
+
+			It("treats a path-traversal marker as an inert value, never a path", func() {
+				targetPath := "tasks/Fix Build - dashboard - b1file.md"
+				fakeGit.ListFilesReturns([]string{targetPath}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if relPath == targetPath {
+						return []byte(
+							"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+						), nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":           "claude",
+					"status":             "in_progress",
+					"build_id":           "B",
+					"supersedes_task_id": "../../etc/passwd",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				// The glob is the only path the marker could have influenced, and it is
+				// constant: the marker is compared as a value, never joined into a path.
+				Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
+				_, glob := fakeGit.ListFilesArgsForCall(0)
+				Expect(glob).To(Equal("tasks/*.md"))
+				// The candidate is live and carries build_id B, but the command's
+				// supersedes_build_id is absent and its supersedes_task_id does not
+				// match fixbuild-b1 — so nothing is retired.
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+
+			It("retires a task-marker match and a build-marker match in one pass", func() {
+				byTaskID := "tasks/Fix Build - dashboard - byid.md"
+				byBuildID := "tasks/Fix Build - dashboard - bybuild.md"
+				fakeGit.ListFilesReturns([]string{byTaskID, byBuildID}, nil)
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					switch relPath {
+					case byTaskID:
+						return []byte(
+							"---\ntask_identifier: fixbuild-b1\nbuild_id: OTHER\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+						), nil
+					case byBuildID:
+						return []byte(
+							"---\ntask_identifier: unrelated-1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+						), nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_task_id":  "fixbuild-b1",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				// Neither candidate matches both markers: the two predicates are
+				// evaluated independently, so each retires exactly one file.
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+			})
+		})
 	})
 })
