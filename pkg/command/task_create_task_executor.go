@@ -121,6 +121,7 @@ func NewCreateTaskExecutor(
 			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName, reopened, priorStatus); err != nil {
 				return nil, nil, err
 			}
+			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
@@ -815,4 +816,201 @@ func buildSupersedeModifyFn(
 		fm["created_by"] = "recurring-task-creator"
 		return marshalFileContent(ctx, fm, body)
 	}
+}
+
+// retireSupersededBuildFixTasks retires the tasks a re-emitted build-fix task
+// supersedes: every other still-live task carrying the same build_id, and the
+// task whose task_identifier matches supersedes_task_id. Both markers are read
+// from the create command's frontmatter; an absent or empty marker is treated
+// as absent and never matches anything. Best-effort: a list, read, parse or
+// write failure on any single file is logged and swallowed, and the
+// already-created task is never rolled back. newRelPath is the repo-root-
+// relative path of the task that was just written (the superseded_by
+// back-pointer) and must not be re-derived — the path may have been
+// disambiguated with a short-identifier suffix.
+func retireSupersededBuildFixTasks(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	cmd task.CreateCommand,
+	newRelPath string,
+) {
+	supersedesTaskID, _ := cmd.Frontmatter.String("supersedes_task_id")
+	supersedesBuildID, _ := cmd.Frontmatter.String("supersedes_build_id")
+	if supersedesTaskID == "" && supersedesBuildID == "" {
+		return
+	}
+	relPaths, err := gitClient.ListFiles(ctx, filepath.Join(taskDir, "*.md"))
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: list candidates failed for %s: %v",
+			cmd.TaskIdentifier,
+			err,
+		)
+		return
+	}
+	for _, relPath := range relPaths {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if relPath == newRelPath {
+			continue
+		}
+		retireSupersededBuildFixCandidate(
+			ctx,
+			gitClient,
+			currentDateTime,
+			relPath,
+			supersedesTaskID,
+			supersedesBuildID,
+			newRelPath,
+			cmd.TaskIdentifier,
+		)
+	}
+}
+
+// retireSupersededBuildFixCandidate retires one candidate task file when a
+// marker names it and it is still live. Every failure is logged and swallowed.
+func retireSupersededBuildFixCandidate(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	relPath string,
+	supersedesTaskID string,
+	supersedesBuildID string,
+	newRelPath string,
+	taskIdentifier lib.TaskIdentifier,
+) {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: read %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	fm, _, err := parseTaskFrontmatterAndBody(ctx, content)
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: parse %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	if !buildFixCandidateMatches(fm, supersedesTaskID, supersedesBuildID) {
+		return
+	}
+	if !buildFixCandidateIsLive(fm) {
+		return
+	}
+	buildID, _ := fm.String("build_id")
+	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
+	absPath := filepath.Join(gitClient.Path(), relPath)
+	msg := "[agent-task-controller] auto-supersede build-fix: " + relPath
+	if err := gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx,
+		absPath,
+		buildBuildFixRetireModifyFn(ctx, newRelPath, ts),
+		msg,
+	); err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: write %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	glog.V(2).Infof(
+		"auto-supersede build-fix: %s -> %s (build %s retired)",
+		relPath,
+		newRelPath,
+		buildID,
+	)
+}
+
+// buildFixCandidateMatches reports whether a candidate task file is named by
+// one of the two supersede markers. Matching is always by value on the parsed
+// frontmatter — the marker is never joined into a path. An empty marker
+// matches nothing.
+func buildFixCandidateMatches(
+	fm lib.TaskFrontmatter,
+	supersedesTaskID string,
+	supersedesBuildID string,
+) bool {
+	if supersedesTaskID != "" {
+		if id, _ := fm.String("task_identifier"); id == supersedesTaskID {
+			return true
+		}
+	}
+	if supersedesBuildID != "" {
+		if id, _ := fm.String("build_id"); id == supersedesBuildID {
+			return true
+		}
+	}
+	return false
+}
+
+// buildFixCandidateIsLive reports whether a candidate is still live: its
+// status is readable and is neither of the two terminal statuses. An absent,
+// empty, non-string or unparseable status is not live, so it is never retired.
+func buildFixCandidateIsLive(fm lib.TaskFrontmatter) bool {
+	status, _ := fm.String("status")
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return false
+	}
+	return status != "completed" && status != "aborted"
+}
+
+// buildBuildFixRetireModifyFn builds the modify closure for
+// AtomicReadModifyWriteAndCommitPush that transitions a superseded build-fix
+// task to aborted. It writes the same frozen transition set the recurring
+// supersede writes and deliberately does NOT write created_by: that value names
+// the recurring publisher and would be false on a build-fix task, whose
+// created_by is whatever the watcher's create command carried.
+func buildBuildFixRetireModifyFn(
+	ctx context.Context,
+	newRelPath string,
+	ts string,
+) func([]byte) ([]byte, error) {
+	return func(current []byte) ([]byte, error) {
+		fm, body, err := parseTaskFrontmatterAndBody(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		fm["status"] = "aborted"
+		fm["phase"] = "done"
+		fm["completed_date"] = ts
+		fm["superseded_by"] = newRelPath
+		return marshalFileContent(ctx, fm, body)
+	}
+}
+
+// parseTaskFrontmatterAndBody extracts a task file's frontmatter and body and
+// parses the frontmatter into a map. Extracted so the retire closure stays a
+// few lines and its token overlap with the sibling modify closure stays far
+// below the dupl linter's 150-token run.
+func parseTaskFrontmatterAndBody(
+	ctx context.Context,
+	current []byte,
+) (lib.TaskFrontmatter, string, error) {
+	fmStr, err := result.ExtractFrontmatter(ctx, current)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "extract frontmatter")
+	}
+	body, err := result.ExtractBody(ctx, current)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "extract body")
+	}
+	fm, err := parseTaskFrontmatter(fmStr)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "parse frontmatter")
+	}
+	return fm, body, nil
 }
