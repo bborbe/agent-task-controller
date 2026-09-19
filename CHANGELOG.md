@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.1
 
 - fix: encode a space as `%20` in the escalation notification's Obsidian deeplink, so tapping the link opens the parked task file instead of landing nowhere. The deeplink's `file=` value was built with `url.QueryEscape`, whose form encoding renders a space as `+`; Obsidian's URI handler does not decode `+` as a space, so the path it resolved carried literal `+` characters and matched no file — inert for every escalation whose task name contains a space, which every `PR Review github - <repo> - <n> - <sha> - <slug>` name does, and for every escalation from a vault whose task directory contains one. `result.vaultDeeplink` now rewrites every `+` in the escaped URI to `%20`, the encoding the vault's own convention documents and every other `obsidian://` link in the vault uses; the rewrite runs on the already-escaped result, so a literal `+` in a task name still round-trips as `%2B` and the path separator still encodes as `%2F`. The notification type, the routing, the metadata keys and the message text are unchanged, the encoding is not configurable, and the V(1) publish line now carries the emitted deeplink so a deployed encoder is observable in the pod log (spec 015)
 
