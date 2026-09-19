@@ -155,7 +155,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			"openclaw",
 			spacedTaskName,
 			[]string{
-				"obsidian://open?vault=openclaw&file=tasks%2FPR%20Review%20github%20-%20",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=openclaw&file=tasks%2FPR%20Review%20github%20-%20",
 			},
 			[]string{"+"},
 		),
@@ -165,7 +165,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			"openclaw",
 			plainTaskName,
 			[]string{
-				"obsidian://open?vault=openclaw&file=tasks%2FUpdate-Go-bborbe-vault-cli-f9b19bd",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=openclaw&file=tasks%2FUpdate-Go-bborbe-vault-cli-f9b19bd",
 			},
 			[]string{"+", "%20"},
 		),
@@ -175,7 +175,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			"openclaw",
 			emDashTaskName,
 			[]string{
-				"obsidian://open?vault=openclaw&file=tasks%2FEm%20Dash%20%E2%80%94%20Task",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=openclaw&file=tasks%2FEm%20Dash%20%E2%80%94%20Task",
 			},
 			[]string{"+"},
 		),
@@ -185,7 +185,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			"openclaw",
 			plusTaskName,
 			[]string{
-				"obsidian://open?vault=openclaw&file=tasks%2FFix%20plus%2Bencoded%20task",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=openclaw&file=tasks%2FFix%20plus%2Bencoded%20task",
 			},
 			[]string{"+"},
 		),
@@ -195,7 +195,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			"openclaw",
 			nestedTaskName,
 			[]string{
-				"obsidian://open?vault=openclaw&file=25%20Tasks%2Fnested%2FNested%20Task",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=openclaw&file=25%20Tasks%2Fnested%2FNested%20Task",
 			},
 			[]string{"+"},
 		),
@@ -205,7 +205,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 			spacedVaultName,
 			"Spaced Vault Task",
 			[]string{
-				"obsidian://open?vault=my%20vault&file=tasks%2FSpaced%20Vault%20Task",
+				"https://redirect.benjamin-borbe.de/obsidian?vault=my%20vault&file=tasks%2FSpaced%20Vault%20Task",
 			},
 			[]string{"+"},
 		),
