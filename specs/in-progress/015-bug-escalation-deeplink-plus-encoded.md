@@ -1,9 +1,11 @@
 ---
-status: approved
+status: prompted
 tags:
     - dark-factory
     - spec
 approved: "2026-09-19T14:20:36Z"
+generating: "2026-09-19T14:50:35Z"
+prompted: "2026-09-19T14:59:49Z"
 branch: dark-factory/bug-escalation-deeplink-plus-encoded
 ---
 
