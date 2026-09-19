@@ -161,12 +161,16 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 		claimed = true
 	}
 	relPath := filepath.Join(r.taskDir, e.taskName+".md")
+	// Built once: the same URI goes into the message body and into the V(1) audit
+	// line below, so computing it twice would both duplicate the work and let the
+	// two copies drift apart.
+	deeplink := vaultDeeplink(r.vaultName, relPath)
 	message := fmt.Sprintf(
 		"escalation: %s cleared its assignee — status %s, phase %s\n%s",
 		e.previousAssignee,
 		e.status,
 		e.phase,
-		vaultDeeplink(r.vaultName, relPath),
+		deeplink,
 	)
 	command := notifcmd.NotificationPublishCommand{
 		Type:    notifcore.AgentEscalationNotificationType,
@@ -198,7 +202,7 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 		e.taskName,
 		e.taskIdentifier,
 		e.previousAssignee,
-		vaultDeeplink(r.vaultName, relPath),
+		deeplink,
 	)
 }
 
