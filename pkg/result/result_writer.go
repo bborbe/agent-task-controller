@@ -105,11 +105,28 @@ func taskNameFromRelPath(relPath string) string {
 
 // vaultDeeplink renders an Obsidian URI for the task file, so the escalation
 // message is one click from the notification into the parked task.
+//
+// url.QueryEscape is form encoding: it renders a space as "+". Obsidian's URI
+// handler does not decode "+" as a space, so the path it resolves carries literal
+// "+" characters and matches no file. Every "+" in the escaped result is therefore
+// rewritten to "%20" — the encoding the vault's own convention documents and every
+// other obsidian:// link in the vault uses.
+//
+// The rewrite runs on the escaped result, never on the input: escaping has already
+// turned a literal "+" in a task name into "%2B", so no genuine character can be
+// rewritten, and one post-step covers both query values at once.
+//
+// vaultName and relPath are raw, unescaped values. A caller passing an
+// already-escaped value would have it escaped a second time.
 func vaultDeeplink(vaultName, relPath string) string {
-	return fmt.Sprintf(
-		"obsidian://open?vault=%s&file=%s",
-		url.QueryEscape(vaultName),
-		url.QueryEscape(strings.TrimSuffix(relPath, ".md")),
+	return strings.ReplaceAll(
+		fmt.Sprintf(
+			"obsidian://open?vault=%s&file=%s",
+			url.QueryEscape(vaultName),
+			url.QueryEscape(strings.TrimSuffix(relPath, ".md")),
+		),
+		"+",
+		"%20",
 	)
 }
 
@@ -144,12 +161,16 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 		claimed = true
 	}
 	relPath := filepath.Join(r.taskDir, e.taskName+".md")
+	// Built once: the same URI goes into the message body and into the V(1) audit
+	// line below, so computing it twice would both duplicate the work and let the
+	// two copies drift apart.
+	deeplink := vaultDeeplink(r.vaultName, relPath)
 	message := fmt.Sprintf(
 		"escalation: %s cleared its assignee — status %s, phase %s\n%s",
 		e.previousAssignee,
 		e.status,
 		e.phase,
-		vaultDeeplink(r.vaultName, relPath),
+		deeplink,
 	)
 	command := notifcmd.NotificationPublishCommand{
 		Type:    notifcore.AgentEscalationNotificationType,
@@ -177,10 +198,11 @@ func (r *resultWriter) publishEscalation(ctx context.Context, e escalation) {
 	// itself is what reaches the operator. Both deployed controllers run -v=2, so
 	// this stays visible in the pod logs the proof reads.
 	glog.V(1).Infof(
-		"assignee cleared → notification published for task %s (%s) escalated by %s",
+		"assignee cleared → notification published for task %s (%s) escalated by %s deeplink %s",
 		e.taskName,
 		e.taskIdentifier,
 		e.previousAssignee,
+		deeplink,
 	)
 }
 
