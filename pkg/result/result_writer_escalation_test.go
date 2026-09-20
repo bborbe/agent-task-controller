@@ -183,7 +183,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 				Expect(published[0].Metadata["taskName"]).To(Equal("my-task"))
 				Expect(
 					string(published[0].Message),
-				).To(ContainSubstring("obsidian://open?vault=openclaw"))
+				).To(ContainSubstring("https://redirect.benjamin-borbe.de/obsidian?vault=openclaw"))
 			},
 		)
 

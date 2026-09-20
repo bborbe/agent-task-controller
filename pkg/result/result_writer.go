@@ -103,14 +103,30 @@ func taskNameFromRelPath(relPath string) string {
 	return strings.TrimSuffix(filepath.Base(relPath), ".md")
 }
 
-// vaultDeeplink renders an Obsidian URI for the task file, so the escalation
-// message is one click from the notification into the parked task.
+// redirectorBaseURL is the public HTTPS endpoint that converts a URL Telegram
+// will carry into an obsidian:// deeplink.
 //
-// url.QueryEscape is form encoding: it renders a space as "+". Obsidian's URI
-// handler does not decode "+" as a space, so the path it resolves carries literal
-// "+" characters and matches no file. Every "+" in the escaped result is therefore
-// rewritten to "%20" — the encoding the vault's own convention documents and every
-// other obsidian:// link in the vault uses.
+// The deeplink cannot be attached to the message directly: Telegram accepts only
+// http/https (and tg://) in a text_link entity URL and answers any other scheme
+// with `400 ... entity URL ... is invalid: Unsupported URL protocol`, which fails
+// the whole message rather than degrading the link to plain text. So the message
+// carries an https:// URL and the redirector emits the custom scheme on the tap.
+// The client follows that 302 out of the in-app browser and hands off to Obsidian
+// — verified by tapping a throwaway redirect from the phone before this was built.
+const redirectorBaseURL = "https://redirect.benjamin-borbe.de/obsidian"
+
+// vaultDeeplink renders a link to the task file, so the escalation message is
+// one click from the notification into the parked task.
+//
+// The URL is the redirector's, not obsidian://: see redirectorBaseURL for why the
+// raw scheme cannot be carried by the message.
+//
+// url.QueryEscape is form encoding: it renders a space as "+". The redirector
+// re-emits the value into an Obsidian URI, and Obsidian's URI handler does not
+// decode "+" as a space, so a path carrying literal "+" characters matches no
+// file. Every "+" in the escaped result is therefore rewritten to "%20" — the
+// encoding the vault's own convention documents. The redirector absorbs a "+"
+// as well, so this rewrite is belt-and-braces rather than the only defence.
 //
 // The rewrite runs on the escaped result, never on the input: escaping has already
 // turned a literal "+" in a task name into "%2B", so no genuine character can be
@@ -121,7 +137,8 @@ func taskNameFromRelPath(relPath string) string {
 func vaultDeeplink(vaultName, relPath string) string {
 	return strings.ReplaceAll(
 		fmt.Sprintf(
-			"obsidian://open?vault=%s&file=%s",
+			"%s?vault=%s&file=%s",
+			redirectorBaseURL,
 			url.QueryEscape(vaultName),
 			url.QueryEscape(strings.TrimSuffix(relPath, ".md")),
 		),
