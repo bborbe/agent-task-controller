@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.2
 
 - fix: carry the escalation deeplink as an `https://` URL rather than the raw `obsidian://` scheme, so the link in a delivered message is tappable. v0.11.1 made the deeplink's *encoding* correct, but the *scheme* was still fatal: Telegram accepts only `http`, `https` and `tg://` in a `text_link` entity URL and answers any other scheme with `400 … entity URL … is invalid: Unsupported URL protocol`, so an `obsidian://` URL does not render as an inert link — it **fails the whole message**. `result.vaultDeeplink` now emits `https://redirect.benjamin-borbe.de/obsidian?vault=<v>&file=<p>`, which the client auto-links with no entity at all; on the tap the redirector answers `302` with the equivalent `obsidian://open` URI, which the client follows out of the in-app browser and hands to Obsidian. The `+` → `%20` rewrite is unchanged and still runs on the escaped result, so a literal `+` still round-trips as `%2B` and the path separator still encodes as `%2F` — the redirector absorbs a `+` as well, making the rewrite belt-and-braces rather than the only defence. The notification type, the routing, the metadata keys, the message text and the query-parameter names are unchanged; only the URL's scheme and host differ. Whether the client follows a cross-scheme `302` at all was verified by tapping a throwaway redirect from the phone before the redirector was built, and the redirector is deployed and verified end to end on dev.
 
