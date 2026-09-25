@@ -39,6 +39,7 @@ func CreateCommandConsumer(
 	db libkv.DB,
 	topicPrefix base.TopicPrefix,
 	resultWriter result.ResultWriter,
+	resolver result.TaskPathResolver,
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
@@ -54,13 +55,21 @@ func CreateCommandConsumer(
 		currentDateTime,
 		prCommenter,
 		m,
+		resolver,
 	)
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
-		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, vaultName, m),
-		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, vaultName, m),
+		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
+		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
-		command.NewCompleteTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, m),
+		command.NewCompleteTaskExecutor(
+			gitClient,
+			taskDir,
+			vaultName,
+			currentDateTime,
+			m,
+			resolver,
+		),
 	}
 	return cdb.RunCommandConsumerTx(
 		saramaClientProvider,

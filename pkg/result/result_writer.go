@@ -38,6 +38,9 @@ type ResultWriter interface {
 // NewResultWriter creates a ResultWriter that locates task files in the vault
 // and writes the result, committing via gitClient. vaultName is the controller's
 // VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
+// resolver is the scanner's identifier→path index, consulted before the vault walk;
+// a nil resolver selects the walk-only behaviour and is a test-only value — no
+// production call site passes nil.
 func NewResultWriter(
 	gitClient gitclient.GitClient,
 	taskDir string,
@@ -46,6 +49,7 @@ func NewResultWriter(
 	m metrics.Metrics,
 	waiter libtime.WaiterDuration,
 	notificationSender notifcmd.NotificationPublishCommandSender,
+	resolver TaskPathResolver,
 ) ResultWriter {
 	return &resultWriter{
 		gitClient:          gitClient,
@@ -55,6 +59,7 @@ func NewResultWriter(
 		metrics:            m,
 		waiter:             waiter,
 		notificationSender: notificationSender,
+		resolver:           resolver,
 
 		escalationPublishedAt: make(map[string]libtime.DateTime),
 	}
@@ -68,6 +73,7 @@ type resultWriter struct {
 	metrics            metrics.Metrics
 	waiter             libtime.WaiterDuration
 	notificationSender notifcmd.NotificationPublishCommandSender
+	resolver           TaskPathResolver
 
 	// escalationCoalescingMutex guards escalationPublishedAt. The check and the record in
 	// claimEscalationCoalescingSlot are one atomic step under it, so two concurrent
@@ -306,8 +312,62 @@ func escalationCoalescingKey(taskName string) (string, bool) {
 	return match[1] + "#" + match[2], true
 }
 
-// FindTaskFilePath lists files in taskDir via gitClient and returns the relative path of
-// the .md file whose frontmatter has task_identifier == id, plus the parsed existing frontmatter.
+// resolveFromIndex consults the resolver for one identifier. It reports hit=false —
+// meaning "run the walk" — for a nil resolver, for a miss, and for a hit whose single
+// read or frontmatter parse failed; the snapshot is rebuilt every scan cycle, so a
+// stale entry lives at most one cycle and the walk is the correct recovery. A resolver
+// error is returned as an error and never downgraded to a miss: an ambiguous
+// identifier reported as a miss would be re-derived by the walk, which could pick one
+// of the two files — the 2026-08-31 incident.
+//
+// A hit reads exactly one file and issues no directory listing. The path is the one
+// the resolver observed; it is never built from id.
+func resolveFromIndex(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	id lib.TaskIdentifier,
+	resolver TaskPathResolver,
+) (string, lib.TaskFrontmatter, bool, error) {
+	if resolver == nil {
+		return "", nil, false, nil
+	}
+	relPath, found, resolveErr := resolver.Resolve(ctx, id)
+	if resolveErr != nil {
+		return "", nil, false, resolveErr
+	}
+	if !found {
+		return "", nil, false, nil
+	}
+	content, readErr := gitClient.ReadFile(ctx, relPath)
+	if readErr != nil {
+		glog.V(3).
+			Infof("FindTaskFilePath: index hit %s unreadable (%v), falling back to walk", relPath, readErr)
+		return "", nil, false, nil
+	}
+	frontmatter, fmErr := ExtractFrontmatter(ctx, content)
+	if fmErr != nil {
+		glog.V(3).
+			Infof("FindTaskFilePath: index hit %s has invalid frontmatter (%v), falling back to walk", relPath, fmErr)
+		return "", nil, false, nil
+	}
+	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, relPath)
+	var existingFrontmatter lib.TaskFrontmatter
+	if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFrontmatter); umErr != nil {
+		glog.V(3).
+			Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
+		existingFrontmatter = nil
+	}
+	return relPath, existingFrontmatter, true, nil
+}
+
+// FindTaskFilePath returns the relative path of the .md file whose frontmatter has
+// task_identifier == id, plus the parsed existing frontmatter.
+//
+// It consults resolver first: on a hit it reads exactly that one file — no directory
+// listing — and on a miss, on a nil resolver, and on a hit whose single read or
+// frontmatter parse fails, it falls back to listing files in taskDir via gitClient and
+// reading each one. A resolver error is returned as-is and does not trigger the walk.
+//
 // Returns ("", nil, nil) when no match is found (not an error).
 // Returns ("", nil, err) naming both paths when more than one file carries id: the match is
 // ambiguous, so no caller may write. Callers must check the error before treating an empty
@@ -317,7 +377,15 @@ func FindTaskFilePath(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	id lib.TaskIdentifier,
+	resolver TaskPathResolver,
 ) (string, lib.TaskFrontmatter, error) {
+	indexPath, indexFrontmatter, hit, resolveErr := resolveFromIndex(ctx, gitClient, id, resolver)
+	if resolveErr != nil {
+		return "", nil, resolveErr
+	}
+	if hit {
+		return indexPath, indexFrontmatter, nil
+	}
 	glob := taskDir + "/*.md"
 	paths, err := gitClient.ListFiles(ctx, glob)
 	if err != nil {
@@ -386,6 +454,7 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 			r.gitClient,
 			r.taskDir,
 			req.TaskIdentifier,
+			r.resolver,
 		)
 		if err != nil {
 			return errors.Wrapf(ctx, err, "find task file path failed")

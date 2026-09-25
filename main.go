@@ -129,15 +129,16 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	trigger := make(chan struct{}, 1)
+	vaultScanner := scanner.NewGitRestVaultScanner(
+		gitClient,
+		a.TaskDir,
+		a.PollInterval,
+		trigger,
+		metrics.New(),
+		autoInject,
+	)
 	syncLoop := pkgsync.NewSyncLoop(
-		scanner.NewGitRestVaultScanner(
-			gitClient,
-			a.TaskDir,
-			a.PollInterval,
-			trigger,
-			metrics.New(),
-			autoInject,
-		),
+		vaultScanner,
 		publisher.NewTaskPublisher(eventObjectSender, lib.TaskV1SchemaID, currentDateTime),
 		trigger,
 		metrics.New(),
@@ -187,6 +188,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		metrics.New(),
 		libtime.NewWaiterDuration(),
 		notificationSender,
+		vaultScanner,
 	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
@@ -194,6 +196,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		db,
 		a.TopicPrefix,
 		resultWriter,
+		vaultScanner,
 		gitClient,
 		a.TaskDir,
 		a.VaultName,

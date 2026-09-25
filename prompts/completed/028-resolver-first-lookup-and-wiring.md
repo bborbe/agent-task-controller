@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [016-bug-task-identifier-path-index]
+summary: Made the shared task-file lookup consult the scanner's identifier→path index first (one read, zero listings) with the unchanged vault walk as fallback, threaded the single scanner instance from main.go through the result writer and all four resolving executors, and added hit/miss/duplicate/nil/read-failure/parse-failure specs.
+execution_id: agent-task-controller-taskpath-index-exec-028-resolver-first-lookup-and-wiring
+dark-factory-version: v0.196.0
 created: "2026-09-25T18:46:00Z"
 queued: "2026-09-25T17:04:41Z"
+started: "2026-09-25T17:10:46Z"
+completed: "2026-09-25T17:20:20Z"
 branch: dark-factory/bug-task-identifier-path-index
 ---
 

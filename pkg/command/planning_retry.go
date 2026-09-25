@@ -47,6 +47,8 @@ type PlanningRetryGate interface {
 
 // NewPlanningRetryGate constructs the gate. vaultName is the controller's
 // VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
+// resolver is the scanner's identifier→path index, consulted by the lookup before
+// it walks the vault.
 func NewPlanningRetryGate(
 	gitClient gitclient.GitClient,
 	taskDir string,
@@ -54,6 +56,7 @@ func NewPlanningRetryGate(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
+	resolver result.TaskPathResolver,
 ) PlanningRetryGate {
 	return &planningRetryGate{
 		gitClient:       gitClient,
@@ -62,6 +65,7 @@ func NewPlanningRetryGate(
 		currentDateTime: currentDateTime,
 		prCommenter:     prCommenter,
 		metrics:         m,
+		resolver:        resolver,
 	}
 }
 
@@ -72,6 +76,7 @@ type planningRetryGate struct {
 	currentDateTime libtime.CurrentDateTimeGetter
 	prCommenter     prcomment.PRCommenter
 	metrics         metrics.Metrics
+	resolver        result.TaskPathResolver
 }
 
 func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled bool, err error) {
@@ -80,7 +85,7 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	}
 
 	relPath, existingFrontmatter, findErr := result.FindTaskFilePath(
-		ctx, g.gitClient, g.taskDir, req.TaskIdentifier,
+		ctx, g.gitClient, g.taskDir, req.TaskIdentifier, g.resolver,
 	)
 	if findErr != nil {
 		return false, errors.Wrapf(ctx, findErr, "planning-retry: find task file")
