@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [016-bug-task-identifier-path-index]
+summary: Recorded the shipped identifier→path index in docs/controller-design.md § 1 (scanner publishes the index) and § 2 (lookup consults it first, with the superseded 'walk task directory' step line removed); CHANGELOG.md was left unmodified because its existing `## Unreleased` section already carries spec 016's `feat:` and `fix:` bullets from prompts 1 and 2, and adding prompt 3's bullet would duplicate that logical change and fail the prompt's own exactly-one-`- fix:` check.
+execution_id: agent-task-controller-taskpath-index-exec-029-docs-and-changelog
+dark-factory-version: v0.196.0
 created: "2026-09-25T18:47:00Z"
 queued: "2026-09-25T17:04:41Z"
+started: "2026-09-25T17:20:21Z"
+completed: "2026-09-25T17:27:29Z"
 branch: dark-factory/bug-task-identifier-path-index
 ---
 
