@@ -159,7 +159,7 @@ var _ = Describe("ResultWriter identifier index", func() {
 		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
 
 		Expect(resolver.ResolveCallCount()).To(Equal(1))
-		Expect(fakeGit.ListFilesCallCount()).To(BeNumerically(">=", 1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
 		written := readFile(taskFile)
 		Expect(written).To(ContainSubstring("status: done"))
 		Expect(written).To(ContainSubstring("phase: done"))
@@ -170,7 +170,7 @@ var _ = Describe("ResultWriter identifier index", func() {
 			"",
 			false,
 			errors.New(
-				"duplicate task_identifier "+indexedID+
+				"duplicate task_identifier "+missingID+
 					" in tasks/first.md and tasks/second.md",
 			),
 		)
@@ -195,7 +195,7 @@ var _ = Describe("ResultWriter identifier index", func() {
 		writer := newWriter(nil)
 		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
 
-		Expect(fakeGit.ListFilesCallCount()).To(BeNumerically(">=", 1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
 		Expect(readFile(taskFile)).To(ContainSubstring("status: done"))
 	})
 
@@ -212,7 +212,7 @@ var _ = Describe("ResultWriter identifier index", func() {
 		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
 
 		Expect(resolver.ResolveCallCount()).To(Equal(1))
-		Expect(fakeGit.ListFilesCallCount()).To(BeNumerically(">=", 1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
 		Expect(readFile(taskFile)).To(ContainSubstring("status: done"))
 	})
 
@@ -228,25 +228,54 @@ var _ = Describe("ResultWriter identifier index", func() {
 		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
 
 		Expect(resolver.ResolveCallCount()).To(Equal(1))
-		Expect(fakeGit.ListFilesCallCount()).To(BeNumerically(">=", 1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
 		Expect(readFile(taskFile)).To(ContainSubstring("status: done"))
 	})
 
-	It("keeps the indexed path when its frontmatter will not unmarshal", func() {
-		// ExtractFrontmatter succeeds on a scalar document, but unmarshalling it into
-		// a frontmatter map fails — the same failure the walk tolerates by keeping the
-		// match with a nil existing frontmatter. Driven through the lookup helper
-		// directly: the write path itself rejects a scalar frontmatter, so this branch
-		// is unreachable through WriteResult.
+	It("falls back to the walk when the indexed file's frontmatter will not unmarshal", func() {
+		// ExtractFrontmatter succeeds on a scalar document, but unmarshalling it into a
+		// frontmatter map fails, so the identifier cannot be verified and the hit is
+		// refused — the walk would have skipped the same file for the same reason, so
+		// fail-closed keeps the two mechanisms in agreement.
+		taskFile := writeTaskFile(
+			"walked.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nOld content\n",
+		)
 		writeTaskFile("scalar.md", "---\nscalar\n---\nbody\n")
 		resolver.ResolveReturns("tasks/scalar.md", true, nil)
 
-		relPath, fm, err := result.FindTaskFilePath(ctx, fakeGit, taskDir, indexedID, resolver)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(relPath).To(Equal("tasks/scalar.md"))
-		Expect(fm).To(BeNil())
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
 		Expect(resolver.ResolveCallCount()).To(Equal(1))
-		Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-		Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
+		Expect(readFile(taskFile)).To(ContainSubstring("status: done"))
+	})
+
+	It("falls back to the walk when the indexed path no longer carries the identifier", func() {
+		// The index is rebuilt once per scan cycle, so a file repurposed since the last
+		// cycle still maps indexedID -> its path. Writing there would put this task's
+		// result onto a file that now belongs to a different task — the 2026-08-31
+		// incident — and MergeFrontmatter would then overwrite the victim's
+		// task_identifier, making the hijack permanent. The walk compares the identifier
+		// before accepting a match, so the hit path must too.
+		other := writeTaskFile(
+			"repurposed.md",
+			"---\ntask_identifier: "+missingID+"\nstatus: in-progress\n---\nOther task\n",
+		)
+		taskFile := writeTaskFile(
+			"walked.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nOld content\n",
+		)
+		resolver.ResolveReturns("tasks/repurposed.md", true, nil)
+
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
+		Expect(resolver.ResolveCallCount()).To(Equal(1))
+		Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
+		Expect(readFile(taskFile)).To(ContainSubstring("status: done"))
+		Expect(readFile(other)).NotTo(ContainSubstring("status: done"))
+		Expect(readFile(other)).To(ContainSubstring("task_identifier: " + missingID))
 	})
 })

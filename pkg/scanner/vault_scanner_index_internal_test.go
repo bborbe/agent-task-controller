@@ -44,7 +44,7 @@ func (c *indexGitClient) ListFiles(_ context.Context, glob string) ([]string, er
 	for _, m := range matches {
 		r, relErr := filepath.Rel(c.path, m)
 		if relErr != nil {
-			continue
+			return nil, relErr
 		}
 		rel = append(rel, r)
 	}
@@ -70,7 +70,7 @@ const (
 	dupID   = "33333333-3333-4333-8333-333333333333"
 )
 
-var _ = Describe("vaultScanner identifier index (spec 016)", func() {
+var _ = Describe("vaultScanner identifier index", func() {
 	var (
 		ctx     context.Context
 		dir     string
@@ -185,22 +185,31 @@ var _ = Describe("vaultScanner identifier index (spec 016)", func() {
 		Expect(path).To(Equal("newhome.md"))
 	})
 
-	It("preserves duplicate identifiers and reports the ambiguity loudly", func() {
-		s.hashes = map[string]fileEntry{
-			"first.md":  {taskIdentifier: lib.TaskIdentifier(dupID)},
-			"second.md": {taskIdentifier: lib.TaskIdentifier(dupID)},
-		}
-		s.publishIndex()
+	It(
+		"preserves duplicate identifiers and reports two paths for one identifier as an error",
+		func() {
+			s.hashes = map[string]fileEntry{
+				"first.md":  {taskIdentifier: lib.TaskIdentifier(dupID)},
+				"second.md": {taskIdentifier: lib.TaskIdentifier(dupID)},
+			}
+			s.publishIndex()
 
-		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
-		Expect(found).To(BeFalse())
-		Expect(path).To(Equal(""))
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
-		Expect(err.Error()).To(ContainSubstring("first.md"))
-		Expect(err.Error()).To(ContainSubstring("second.md"))
-	})
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(path).To(Equal(""))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+			Expect(err.Error()).To(ContainSubstring("first.md"))
+			Expect(err.Error()).To(ContainSubstring("second.md"))
+		},
+	)
 
+	// Requires ENABLE_RACE=true to be meaningful: Makefile.precommit sets
+	// TESTFLAGS_RACE = -race=false by default and CI runs only `make precommit`, so
+	// in CI this is a plain concurrency smoke test. The real detector run — and the
+	// evidence spec 016's race AC names — is
+	// `ENABLE_RACE=true go test -race -count=1 ./pkg/scanner/... ./pkg/result/...`.
+	// A green CI run is therefore not race coverage.
 	It("stays clean under the race detector when scanning and resolving concurrently", func() {
 		write("alpha.md", taskFile(alphaID))
 		cycle()
@@ -216,7 +225,9 @@ var _ = Describe("vaultScanner identifier index (spec 016)", func() {
 		}()
 
 		for i := 0; i < 50; i++ {
-			_, _, _ = s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			_, found, resolveErr := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(resolveErr).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
 		}
 
 		Eventually(done).Should(BeClosed())

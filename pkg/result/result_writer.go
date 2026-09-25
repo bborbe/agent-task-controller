@@ -314,11 +314,11 @@ func escalationCoalescingKey(taskName string) (string, bool) {
 
 // resolveFromIndex consults the resolver for one identifier. It reports hit=false —
 // meaning "run the walk" — for a nil resolver, for a miss, and for a hit whose single
-// read or frontmatter parse failed; the snapshot is rebuilt every scan cycle, so a
-// stale entry lives at most one cycle and the walk is the correct recovery. A resolver
-// error is returned as an error and never downgraded to a miss: an ambiguous
-// identifier reported as a miss would be re-derived by the walk, which could pick one
-// of the two files — the 2026-08-31 incident.
+// read or frontmatter parse failed or whose file no longer carries the identifier; the
+// snapshot is rebuilt every scan cycle, so a stale entry lives at most one cycle and
+// the walk is the correct recovery. A resolver error is returned as an error and never
+// downgraded to a miss: an ambiguous identifier reported as a miss would be re-derived
+// by the walk, which could pick one of the two files — the 2026-08-31 incident.
 //
 // A hit reads exactly one file and issues no directory listing. The path is the one
 // the resolver observed; it is never built from id.
@@ -350,13 +350,24 @@ func resolveFromIndex(
 			Infof("FindTaskFilePath: index hit %s has invalid frontmatter (%v), falling back to walk", relPath, fmErr)
 		return "", nil, false, nil
 	}
-	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, relPath)
 	var existingFrontmatter lib.TaskFrontmatter
 	if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFrontmatter); umErr != nil {
 		glog.V(3).
 			Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
 		existingFrontmatter = nil
 	}
+	if carries, ok := existingFrontmatter.String("task_identifier"); !ok || carries != string(id) {
+		// The index is rebuilt once per scan cycle, so a path repurposed since the
+		// last cycle still maps id -> relPath here. Accepting it would write this
+		// task's result onto a file that now belongs to a different task — the
+		// 2026-08-31 incident. The walk compares the identifier before accepting a
+		// match, so the hit path must too. The bytes are already read and parsed,
+		// so the check adds no I/O.
+		glog.V(3).
+			Infof("FindTaskFilePath: index hit %s no longer carries %s, falling back to walk", relPath, id)
+		return "", nil, false, nil
+	}
+	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, relPath)
 	return relPath, existingFrontmatter, true, nil
 }
 

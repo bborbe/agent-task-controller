@@ -258,7 +258,11 @@ func (v *vaultScanner) scanFiles(
 // be resolvable, exactly as collectDeleted refuses to emit it downstream.
 //
 // A duplicate identifier keeps BOTH paths in the slice; Resolve reports the ambiguity
-// as an error rather than picking one.
+// as an error rather than picking one. That branch is defence-in-depth rather than the
+// primary guard: isIdentifierUnique keeps hashes duplicate-free by repairing or
+// skipping a colliding file before it is stored, so two paths for one identifier are
+// unreachable while that invariant holds. The multimap exists so that relaxing the
+// invariant fails loudly instead of silently collapsing to one path.
 func (v *vaultScanner) publishIndex() {
 	index := make(map[lib.TaskIdentifier][]string, len(v.hashes))
 	for relPath, entry := range v.hashes {
