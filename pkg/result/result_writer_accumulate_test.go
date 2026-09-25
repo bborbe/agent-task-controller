@@ -95,6 +95,7 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 			metrics.New(),
 			libtime.NewWaiterDuration(),
 			nil,
+			nil,
 		)
 	})
 

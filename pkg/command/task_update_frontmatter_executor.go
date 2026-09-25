@@ -65,12 +65,14 @@ const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFront
 // All other frontmatter keys are left unchanged. vaultName is the controller's
 // VAULT_NAME; a command whose non-empty TargetVault differs is cross-vault
 // traffic and is skipped before the task-file lookup (no write, no counter,
-// no result event).
+// no result event). resolver is the scanner's identifier→path index, consulted
+// by the lookup before it walks the vault.
 func NewUpdateFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
 	m metrics.Metrics,
+	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -103,6 +105,7 @@ func NewUpdateFrontmatterExecutor(
 				gitClient,
 				taskDir,
 				cmd.TaskIdentifier,
+				resolver,
 			)
 			if err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()

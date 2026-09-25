@@ -32,7 +32,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: foo\n---\n"), nil)
 		fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: bar\n---\n"), nil)
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "bar")
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "bar", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/b.md"))
 		Expect(fakeGC.ListFilesCallCount()).To(Equal(1))
@@ -54,7 +54,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: dup\n---\n"), nil)
 		fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: dup\n---\n"), nil)
 
-		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "dup")
+		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "dup", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier"))
 		Expect(err.Error()).To(ContainSubstring("tasks/first.md"))
@@ -73,7 +73,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: dup\n---\n"), nil)
 		fakeGC.ReadFileReturnsOnCall(2, []byte("---\ntask_identifier: target\n---\n"), nil)
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/c.md"))
 	})
@@ -83,7 +83,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ListFilesReturns([]string{"tasks/a.md"}, nil)
 		fakeGC.ReadFileReturnsOnCall(0, []byte("---\ntask_identifier: other\n---\n"), nil)
 
-		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "missing")
+		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "missing", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal(""))
 		Expect(fm).To(BeNil())
@@ -95,7 +95,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ReadFileReturnsOnCall(0, nil, errTest)
 		fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: target\n---\n"), nil)
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/good.md"))
 	})
@@ -106,7 +106,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC.ReadFileReturnsOnCall(0, []byte("no frontmatter here"), nil)
 		fakeGC.ReadFileReturnsOnCall(1, []byte("---\ntask_identifier: target\n---\n"), nil)
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target")
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/good.md"))
 	})
@@ -115,7 +115,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeGC := &mocks.GitClient{}
 		fakeGC.ListFilesReturns(nil, errTest)
 
-		_, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "any")
+		_, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "any", nil)
 		Expect(err).To(HaveOccurred())
 	})
 })
@@ -151,6 +151,7 @@ var _ = Describe("WriteResult not-found retry", func() {
 			fakeTime,
 			metrics.New(),
 			fakeWait,
+			nil,
 			nil,
 		)
 		task = lib.Task{TaskIdentifier: "late-arrival"}

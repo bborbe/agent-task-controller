@@ -94,6 +94,7 @@ var _ = Describe("ResultWriter", func() {
 			metrics.New(),
 			libtime.NewWaiterDuration(),
 			nil,
+			nil,
 		)
 	})
 

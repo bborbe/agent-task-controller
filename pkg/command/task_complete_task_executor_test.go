@@ -29,12 +29,13 @@ import (
 
 var _ = Describe("NewCompleteTaskExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx          context.Context
+		tmpDir       string
+		taskDir      string
+		fakeGit      *mocks.GitClient
+		fakeResolver *mocks.TaskPathResolver
+		executor     cdb.CommandObjectExecutorTx
+		schemaID     cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -85,12 +86,17 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
+		// Default miss: every existing spec keeps the walk-only behaviour it had.
+		fakeResolver = &mocks.TaskPathResolver{}
+		fakeResolver.ResolveReturns("", false, nil)
+
 		executor = command.NewCompleteTaskExecutor(
 			fakeGit,
 			taskDir,
 			"openclaw",
 			libtime.NewCurrentDateTime(),
 			metrics.New(),
+			fakeResolver,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -184,6 +190,31 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("identifier index", func() {
+			It("resolves an indexed identifier with zero listings and one read", func() {
+				const uuid = "aaaaaaaa-1111-4111-8111-111111111111"
+				taskFile := writeTaskFile(
+					"index-hit.md",
+					"---\ntask_identifier: "+uuid+"\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				fakeResolver.ResolveReturns("tasks/index-hit.md", true, nil)
+
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier(uuid),
+					}),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
+				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
+				Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
+				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
 			})
 		})
 

@@ -33,11 +33,14 @@ const IncrementFrontmatterCommandOperation base.CommandOperation = task.Incremen
 // assignee is never stripped on recurring tasks that accumulate trigger_count.
 // vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
 // differs is cross-vault traffic and is skipped before the task-file lookup.
+// resolver is the scanner's identifier→path index, consulted by the lookup before
+// it walks the vault.
 func NewIncrementFrontmatterExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
 	m metrics.Metrics,
+	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		IncrementFrontmatterCommandOperation,
@@ -66,6 +69,7 @@ func NewIncrementFrontmatterExecutor(
 				gitClient,
 				taskDir,
 				cmd.TaskIdentifier,
+				resolver,
 			)
 			if err != nil {
 				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
