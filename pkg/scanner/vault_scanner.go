@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -35,6 +36,12 @@ type VaultScanner interface {
 	// RunCycle executes a single scan cycle (git pull + file scan + optional commit/push).
 	// Exported for use in scanner_test package; prefer Run() in production.
 	RunCycle(ctx context.Context, results chan<- ScanResult)
+	// Resolve returns the vault-relative path of the task file carrying id, from the
+	// identifier→path index the last completed scan cycle published.
+	// It returns ("", false, nil) when the index does not hold id — an unknown
+	// identifier is not an error — and ("", false, err) naming both paths when two
+	// files carry id. The index is empty until the first cycle completes.
+	Resolve(ctx context.Context, id lib.TaskIdentifier) (string, bool, error)
 }
 
 type fileEntry struct {
@@ -60,6 +67,19 @@ type vaultScanner struct {
 	metrics      metrics.Metrics
 	ops          fileOps
 	autoInject   bool
+
+	// indexMutex guards index. publishIndex builds the whole map and swaps it under
+	// the write lock; Resolve reads the published snapshot under the read lock. A
+	// reader therefore observes either the previous cycle's map or the new one,
+	// never a partially built map and never one being mutated. The scanner's own
+	// bookkeeping (hashes) stays single-goroutine and unguarded — only this
+	// published snapshot is shared. In-process only, never serialized.
+	indexMutex sync.RWMutex
+	// index maps a task identifier to every vault-relative path carrying it. The
+	// slice is a multimap entry on purpose: collapsing a duplicate to one path is
+	// the 2026-08-31 incident (a result landing on the wrong task file). Rebuilt
+	// wholesale once per completed scan cycle; never mutated in place.
+	index map[lib.TaskIdentifier][]string
 }
 
 // newLocalFileOps creates fileOps backed by the local filesystem rooted at basePath.
@@ -113,6 +133,7 @@ func NewVaultScanner(
 		metrics:      m,
 		ops:          newLocalFileOps(gitClient.Path()),
 		autoInject:   autoInject,
+		index:        make(map[lib.TaskIdentifier][]string),
 	}
 }
 
@@ -140,6 +161,7 @@ func NewGitRestVaultScanner(
 			writeFile: gitClient.WriteFile,
 		},
 		autoInject: autoInject,
+		index:      make(map[lib.TaskIdentifier][]string),
 	}
 }
 
@@ -218,7 +240,69 @@ func (v *vaultScanner) scanFiles(
 	if err != nil {
 		glog.V(4).Infof("collectDeleted: %v", err)
 	}
+	v.publishIndex()
 	return changed, deleted, written, writeError
+}
+
+// publishIndex rebuilds the identifier→path index from the scanner's bookkeeping and
+// publishes it for readers, replacing the previous snapshot wholesale under the write
+// lock.
+//
+// It is called once per completed scan cycle, after the deleted-file collection has
+// returned, so a path that cycle deleted is already gone from the bookkeeping and the
+// published map never holds a deleted file. The map is built completely before the
+// swap, so a reader can never observe a partially built index.
+//
+// An entry whose identifier is empty is skipped: a halted repair stores an empty
+// identifier (injectAndStore), and an empty identifier is not a task — it must never
+// be resolvable, exactly as collectDeleted refuses to emit it downstream.
+//
+// A duplicate identifier keeps BOTH paths in the slice; Resolve reports the ambiguity
+// as an error rather than picking one.
+func (v *vaultScanner) publishIndex() {
+	index := make(map[lib.TaskIdentifier][]string, len(v.hashes))
+	for relPath, entry := range v.hashes {
+		if entry.taskIdentifier == "" {
+			continue
+		}
+		index[entry.taskIdentifier] = append(index[entry.taskIdentifier], relPath)
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	v.index = index
+}
+
+// Resolve returns the vault-relative path of the task file carrying id, from the
+// index the last completed scan cycle published.
+//
+// The empty identifier is never indexed, so it is always reported absent.
+// Two paths for one identifier is unresolvable — picking either one writes a result
+// onto a file that may belong to a different task (2026-08-31) — so it is reported as
+// an error naming both paths, never as a miss.
+func (v *vaultScanner) Resolve(
+	ctx context.Context,
+	id lib.TaskIdentifier,
+) (string, bool, error) {
+	if id == "" {
+		return "", false, nil
+	}
+	v.indexMutex.RLock()
+	paths := v.index[id]
+	v.indexMutex.RUnlock()
+	switch len(paths) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return paths[0], true, nil
+	default:
+		return "", false, errors.Errorf(
+			ctx,
+			"duplicate task_identifier %s in %s and %s",
+			id,
+			paths[0],
+			paths[1],
+		)
+	}
 }
 
 // processFile handles a single .md file during a scan cycle.
