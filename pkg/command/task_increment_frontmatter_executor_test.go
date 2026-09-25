@@ -85,6 +85,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 			taskDir,
 			"openclaw",
 			metrics.New(),
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})

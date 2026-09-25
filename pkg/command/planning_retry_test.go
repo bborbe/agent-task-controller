@@ -55,6 +55,7 @@ var _ = Describe("PlanningRetryGate", func() {
 			clock,
 			fakeCommenter,
 			metrics.New(),
+			nil,
 		)
 	})
 

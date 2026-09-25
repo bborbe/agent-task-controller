@@ -120,6 +120,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 					return sendErr
 				},
 			),
+			nil,
 		)
 	})
 
@@ -443,6 +444,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 						return nil
 					},
 				),
+				nil,
 			)
 
 			Expect(run.CancelOnFirstErrorWait(

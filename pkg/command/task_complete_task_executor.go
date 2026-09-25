@@ -37,12 +37,15 @@ const CompleteTaskCommandOperation base.CommandOperation = task.CompleteCommandO
 // skill's existing guard).
 // vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
 // differs is cross-vault traffic and is skipped before the task-file lookup.
+// resolver is the scanner's identifier→path index, consulted by the lookup before
+// it walks the vault.
 func NewCompleteTaskExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
+	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		CompleteTaskCommandOperation,
@@ -74,6 +77,7 @@ func NewCompleteTaskExecutor(
 				gitClient,
 				taskDir,
 				cmd.TaskIdentifier,
+				resolver,
 			)
 			if err != nil {
 				m.FrontmatterCommandsTotal("complete-task", "error").Inc()

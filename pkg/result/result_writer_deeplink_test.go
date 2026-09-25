@@ -118,6 +118,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 					return nil
 				},
 			),
+			nil,
 		)
 
 		Expect(writer.WriteResult(ctx, lib.Task{

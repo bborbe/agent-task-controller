@@ -79,7 +79,13 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
-		executor = command.NewUpdateFrontmatterExecutor(fakeGit, taskDir, "openclaw", metrics.New())
+		executor = command.NewUpdateFrontmatterExecutor(
+			fakeGit,
+			taskDir,
+			"openclaw",
+			metrics.New(),
+			nil,
+		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 

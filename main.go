@@ -73,7 +73,7 @@ type application struct {
 	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                  default:"7"`
 }
 
-//nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop; extraction would split tightly-coupled wiring.
+//nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop, +3 lines from spec-016 hoisting the single vaultScanner instance and threading it to the sync loop, result writer and command consumer; extraction would split tightly-coupled wiring.
 func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) error {
 	if err := routing.ValidateVaultName(ctx, a.VaultName); err != nil {
 		return err
@@ -129,15 +129,16 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	trigger := make(chan struct{}, 1)
+	vaultScanner := scanner.NewGitRestVaultScanner(
+		gitClient,
+		a.TaskDir,
+		a.PollInterval,
+		trigger,
+		metrics.New(),
+		autoInject,
+	)
 	syncLoop := pkgsync.NewSyncLoop(
-		scanner.NewGitRestVaultScanner(
-			gitClient,
-			a.TaskDir,
-			a.PollInterval,
-			trigger,
-			metrics.New(),
-			autoInject,
-		),
+		vaultScanner,
 		publisher.NewTaskPublisher(eventObjectSender, lib.TaskV1SchemaID, currentDateTime),
 		trigger,
 		metrics.New(),
@@ -187,6 +188,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		metrics.New(),
 		libtime.NewWaiterDuration(),
 		notificationSender,
+		vaultScanner,
 	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
@@ -194,6 +196,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		db,
 		a.TopicPrefix,
 		resultWriter,
+		vaultScanner,
 		gitClient,
 		a.TaskDir,
 		a.VaultName,
