@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-09-25T16:34:10Z"
 generating: "2026-09-25T16:34:10Z"
 prompted: "2026-09-25T16:52:52Z"
+verifying: "2026-09-25T17:27:29Z"
 branch: dark-factory/bug-task-identifier-path-index
 ---
 
