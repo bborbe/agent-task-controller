@@ -2,7 +2,9 @@ module github.com/bborbe/agent-task-controller
 
 go 1.27.1
 
-replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
+replace (
+	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
+)
 
 require (
 	github.com/IBM/sarama v1.60.2
@@ -117,4 +119,6 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-exclude cloud.google.com/go v0.26.0
+exclude (
+	cloud.google.com/go v0.26.0
+)
