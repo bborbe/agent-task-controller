@@ -154,6 +154,109 @@ var _ = Describe("MergeFrontmatter", func() {
 	})
 
 	It(
+		"applies an incoming assignee when the payload declares a reassignment, and consumes the declaration",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-analyzer-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			// Consumed, not persisted — otherwise a repeat handoff on a re-driven
+			// task would write the value the first one left behind and be discarded.
+			Expect(merged).NotTo(HaveKey("assignee_reassigned_by"))
+		},
+	)
+
+	It(
+		"applies a second handoff on a re-driven task, where the first declaration was consumed",
+		func() {
+			// Re-driven to the analyzer and handed off again: same declarer, same
+			// value. Were the key persisted rather than consumed, this second handoff
+			// would write the value the first left on disk and a value-differs
+			// freshness test would discard it — re-creating the stranding the key
+			// exists to fix, on exactly the re-drive path the runbooks use.
+			handoff := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			afterFirst, _ := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(afterFirst).NotTo(HaveKey("assignee_reassigned_by"))
+
+			afterSecond, decisions := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(decisions).To(HaveLen(0))
+			Expect(afterSecond["assignee"]).To(Equal("sentry-fix-agent"))
+		},
+	)
+
+	It(
+		"keeps an operator re-route when the payload carries no declaration",
+		func() {
+			// The guard's purpose, and the case the declaration must not weaken: an
+			// agent's spawn-time snapshot arriving after an operator re-routed the
+			// task still loses.
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "operator-chosen-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-fix-agent",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("operator-chosen-agent"))
+			Expect(merged["assignee"]).To(Equal("operator-chosen-agent"))
+		},
+	)
+
+	It(
+		"treats an empty declaration as no declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": "",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
+		"does not panic on a non-string declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": []interface{}{"malformed"},
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
 		"keeps the on-disk previous_assignee over a differing incoming value and reports one decision",
 		func() {
 			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}
