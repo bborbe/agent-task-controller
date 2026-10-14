@@ -154,7 +154,7 @@ var _ = Describe("MergeFrontmatter", func() {
 	})
 
 	It(
-		"applies an incoming assignee when the payload carries a fresh reassignment declaration",
+		"applies an incoming assignee when the payload declares a reassignment, and consumes the declaration",
 		func() {
 			existing := lib.TaskFrontmatter{
 				"status":   "in_progress",
@@ -168,50 +168,59 @@ var _ = Describe("MergeFrontmatter", func() {
 			merged, decisions := result.MergeFrontmatter(existing, incoming)
 			Expect(decisions).To(HaveLen(0))
 			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			// Consumed, not persisted — otherwise a repeat handoff on a re-driven
+			// task would write the value the first one left behind and be discarded.
+			Expect(merged).NotTo(HaveKey("assignee_reassigned_by"))
 		},
 	)
 
 	It(
-		"discards an incoming assignee when the payload echoes a declaration already on disk",
+		"applies a second handoff on a re-driven task, where the first declaration was consumed",
 		func() {
-			// The job's spawn-time snapshot carries the declaration an earlier
-			// handoff wrote; echoing it must not let a stale assignee clobber an
-			// operator re-route made while that job was running.
-			existing := lib.TaskFrontmatter{
-				"status":                 "in_progress",
-				"assignee":               "operator-chosen-agent",
-				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
-			}
-			incoming := lib.TaskFrontmatter{
+			// Re-driven to the analyzer and handed off again: same declarer, same
+			// value. Were the key persisted rather than consumed, this second handoff
+			// would write the value the first left on disk and a value-differs
+			// freshness test would discard it — re-creating the stranding the key
+			// exists to fix, on exactly the re-drive path the runbooks use.
+			handoff := lib.TaskFrontmatter{
 				"status":                 "in_progress",
 				"assignee":               "sentry-fix-agent",
 				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			afterFirst, _ := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(afterFirst).NotTo(HaveKey("assignee_reassigned_by"))
+
+			afterSecond, decisions := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(decisions).To(HaveLen(0))
+			Expect(afterSecond["assignee"]).To(Equal("sentry-fix-agent"))
+		},
+	)
+
+	It(
+		"keeps an operator re-route when the payload carries no declaration",
+		func() {
+			// The guard's purpose, and the case the declaration must not weaken: an
+			// agent's spawn-time snapshot arriving after an operator re-routed the
+			// task still loses.
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "operator-chosen-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-fix-agent",
 			}
 			merged, decisions := result.MergeFrontmatter(existing, incoming)
 			Expect(decisions).To(HaveLen(1))
 			Expect(decisions[0].Field).To(Equal("assignee"))
 			Expect(decisions[0].Kept).To(Equal("operator-chosen-agent"))
-			Expect(decisions[0].Rejected).To(Equal("sentry-fix-agent"))
 			Expect(merged["assignee"]).To(Equal("operator-chosen-agent"))
-		},
-	)
-
-	It(
-		"honours a declaration naming a different declarer than the one on disk",
-		func() {
-			existing := lib.TaskFrontmatter{
-				"status":                 "in_progress",
-				"assignee":               "claude",
-				"assignee_reassigned_by": "an-earlier-declarer",
-			}
-			incoming := lib.TaskFrontmatter{
-				"status":                 "in_progress",
-				"assignee":               "sentry-fix-agent",
-				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
-			}
-			merged, decisions := result.MergeFrontmatter(existing, incoming)
-			Expect(decisions).To(HaveLen(0))
-			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
 		},
 	)
 

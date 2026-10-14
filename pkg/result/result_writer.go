@@ -970,11 +970,15 @@ var operatorOwnedFields = []string{
 // those apart from the values alone: an agent re-routing a task and an agent echoing
 // a stale assignee both arrive as a differing incoming value.
 //
-// A declaration is honoured only when it is *fresh* — present in the incoming
-// payload and differing from the on-disk value — so a later run echoing a
-// declaration already on disk still loses to the operator's on-disk assignee. The
-// key is therefore kept in the merged frontmatter rather than consumed: its
-// persistence is what makes the next echo recognisable as an echo.
+// The key is CONSUMED, not persisted: it is deleted from the merged frontmatter
+// once honoured, so it never lands on the task. That is what makes a declaration
+// unambiguous. Keeping it on disk would make a *repeat* handoff indistinguishable
+// from an echo — a task re-delegated to the analyzer and re-analysed would write
+// the same value the earlier handoff left behind, and a value-differs test would
+// discard it, re-creating the exact stranding this key exists to fix. Consumed,
+// the task file never carries the key, so an agent's spawn-time snapshot can never
+// echo one: a declaration in the incoming payload is always this run's deliberate
+// write.
 //
 // The spelling is a frozen cross-repo contract with the emitter (the sentry-fix
 // handoff sets it to its own step name). A renamed emitter key silently reverts
@@ -1104,12 +1108,15 @@ func applyOperatorOwnedFields(
 				merged[field] = incomingValue
 				continue
 			}
-			// A fresh reassignment declaration applies the incoming assignee: the
-			// emitter states that this write deliberately re-routes the task, which
-			// is the opposite of the stale spawn-time snapshot this guard discards.
-			// Applied, not discarded — so no guard decision, same as the clear above.
-			if isFreshReassignment(existing, incoming) {
+			// A reassignment declaration applies the incoming assignee: the emitter
+			// states that this write deliberately re-routes the task, which is the
+			// opposite of the stale spawn-time snapshot this guard discards. Applied,
+			// not discarded — so no guard decision, same as the clear above. The
+			// declaration is consumed with it: leaving it on disk would make a repeat
+			// handoff on a re-driven task look like an echo, and be discarded.
+			if declaresReassignment(incoming) {
 				merged[field] = incomingValue
+				delete(merged, reassignmentDeclarationKey)
 				continue
 			}
 		}
@@ -1124,21 +1131,15 @@ func applyOperatorOwnedFields(
 	return decisions
 }
 
-// isFreshReassignment reports whether the incoming payload declares a reassignment
-// in this write, rather than echoing one already on disk. A declaration is fresh
-// when the incoming payload carries a non-empty string under
-// reassignmentDeclarationKey that differs from the on-disk value. An echo of the
-// on-disk declaration is not fresh, so an agent's later write-back still loses to
-// an operator re-route made while that agent's job was running. A non-string
-// declaration is treated as absent, keeping the comparison panic-free on a
-// malformed payload — same doctrine as frontmatterValueEqual (spec 006).
-func isFreshReassignment(existing, incoming lib.TaskFrontmatter) bool {
-	incomingDeclaration, ok := incoming[reassignmentDeclarationKey].(string)
-	if !ok || incomingDeclaration == "" {
-		return false
-	}
-	diskDeclaration, _ := existing[reassignmentDeclarationKey].(string)
-	return diskDeclaration != incomingDeclaration
+// declaresReassignment reports whether the incoming payload declares a reassignment
+// in this write. Presence is sufficient because the guard consumes the key — it
+// never lands on disk, so an agent's spawn-time snapshot can never carry one and an
+// incoming declaration is always this run's deliberate write. A non-string or empty
+// declaration is treated as absent, which keeps the check panic-free on a malformed
+// payload — same doctrine as frontmatterValueEqual (spec 006).
+func declaresReassignment(incoming lib.TaskFrontmatter) bool {
+	declaration, ok := incoming[reassignmentDeclarationKey].(string)
+	return ok && declaration != ""
 }
 
 // applyAccumulatedCounters applies the cumulative-counter rule to the merged
