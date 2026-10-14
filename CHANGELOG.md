@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.5
 
 - fix: an agent-to-agent handoff can now change the routing `assignee`. The operator-owned guard kept the on-disk assignee over any differing incoming value, on the premise that an agent authors that key from its spawn-time snapshot — true of an echo, but not of a deliberate re-route, and the two are indistinguishable from the values alone. A write now applies a non-empty incoming `assignee` when the payload carries an `assignee_reassigned_by` declaration, and **consumes** the key — it is deleted from the merged frontmatter, so it never lands on the task. Consumption is what makes a declaration unambiguous: the task file never carries the key, so an agent's spawn-time snapshot can never echo one, and a job that spawned after a handoff still loses to an operator re-route made while it ran. Persisting it instead would make a repeat handoff on a re-driven task indistinguishable from an echo and discard it, re-creating the stranding the key exists to fix. The existing empty-assignee clear (spec 039) is unchanged. Applied, not discarded — so no guard decision and no `ownership guard kept on-disk` line, the same silence the clear exception produces. The key spelling is a frozen cross-repo contract with the emitter; a renamed key silently reverts every reassignment to a discard, with the task failing the executor's `task_type` filter somewhere else entirely.
 
