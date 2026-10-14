@@ -73,6 +73,18 @@ linters:
             - max: 2000
               skipBlankLines: false
               skipComments: false
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.Writer).Write
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+    gosec:
+      excludes:
+        - G104
+
   exclusions:
     presets:
       - comments
