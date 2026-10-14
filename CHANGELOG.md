@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: an agent-to-agent handoff can now change the routing `assignee`. The operator-owned guard kept the on-disk assignee over any differing incoming value, on the premise that an agent authors that key from its spawn-time snapshot — true of an echo, but not of a deliberate re-route, and the two are indistinguishable from the values alone. A write now applies a non-empty incoming `assignee` when the payload carries a **fresh** `assignee_reassigned_by` declaration: present in the incoming frontmatter and differing from the on-disk value. An echo of a declaration already on disk is not fresh, so a job that spawned after a handoff still loses to an operator re-route made while it ran, and the existing empty-assignee clear (spec 039) is unchanged. Applied, not discarded — so no guard decision and no `ownership guard kept on-disk` line, the same silence the clear exception produces. The key spelling is a frozen cross-repo contract with the emitter; a renamed key silently reverts every reassignment to a discard, with the task failing the executor's `task_type` filter somewhere else entirely.
+
 ## v0.11.4
 
 - fix: bump `osv-scanner` to v2.6.0 and `golang.org/x/net` to v0.60.0 so the Linux vulnerability gates stop failing. v2.3.1 pins `golang.org/x/tools` v0.38.0, whose SSA builder aborts with `unexpected expr: *ast.KeyValueExpr` on the promoted-field composite-literal key Go 1.27 permits in the Linux stdlib, so a repo on the old pin passes locally on darwin and fails only in Linux CI. `x/net` v0.58.0 carries `GO-2026-6603/6610/6611/6612/6617`, which fail both `vulncheck` and `trivy`.

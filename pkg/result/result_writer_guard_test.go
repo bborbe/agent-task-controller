@@ -154,6 +154,100 @@ var _ = Describe("MergeFrontmatter", func() {
 	})
 
 	It(
+		"applies an incoming assignee when the payload carries a fresh reassignment declaration",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-analyzer-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+		},
+	)
+
+	It(
+		"discards an incoming assignee when the payload echoes a declaration already on disk",
+		func() {
+			// The job's spawn-time snapshot carries the declaration an earlier
+			// handoff wrote; echoing it must not let a stale assignee clobber an
+			// operator re-route made while that job was running.
+			existing := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "operator-chosen-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("operator-chosen-agent"))
+			Expect(decisions[0].Rejected).To(Equal("sentry-fix-agent"))
+			Expect(merged["assignee"]).To(Equal("operator-chosen-agent"))
+		},
+	)
+
+	It(
+		"honours a declaration naming a different declarer than the one on disk",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "claude",
+				"assignee_reassigned_by": "an-earlier-declarer",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+		},
+	)
+
+	It(
+		"treats an empty declaration as no declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": "",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
+		"does not panic on a non-string declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": []interface{}{"malformed"},
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
 		"keeps the on-disk previous_assignee over a differing incoming value and reports one decision",
 		func() {
 			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}

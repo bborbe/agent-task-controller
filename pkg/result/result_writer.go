@@ -952,14 +952,35 @@ var controllerOwnedFields = []string{
 // snapshot (the agent authors these keys from its spawn-time snapshot, not live
 // state), but — unlike controllerOwnedFields — an incoming value may introduce
 // an operator-owned key that is absent on disk (a spawn/claim names an assignee
-// on a task that never carried one). One exception, for "assignee" only: an
-// incoming empty string is always applied — the deliverer's deliberate
-// Failed/needs_input clear (spec 039), never a stale snapshot — and produces no
-// guard decision.
+// on a task that never carried one). Two exceptions, both for "assignee" only and
+// both producing no guard decision because each applies the incoming value rather
+// than discarding it: an incoming empty string is always applied — the deliverer's
+// deliberate Failed/needs_input clear (spec 039), never a stale snapshot — and a
+// fresh reassignment declaration (reassignmentDeclarationKey) applies the incoming
+// non-empty assignee, because the emitter states the change is deliberate rather
+// than an echo.
 var operatorOwnedFields = []string{
 	"assignee",
 	"previous_assignee",
 }
+
+// reassignmentDeclarationKey names the frontmatter key an emitter sets to declare
+// that the assignee in this write is a deliberate reassignment, not an echo of the
+// emitter's spawn-time snapshot. The rule is needed because the guard cannot tell
+// those apart from the values alone: an agent re-routing a task and an agent echoing
+// a stale assignee both arrive as a differing incoming value.
+//
+// A declaration is honoured only when it is *fresh* — present in the incoming
+// payload and differing from the on-disk value — so a later run echoing a
+// declaration already on disk still loses to the operator's on-disk assignee. The
+// key is therefore kept in the merged frontmatter rather than consumed: its
+// persistence is what makes the next echo recognisable as an echo.
+//
+// The spelling is a frozen cross-repo contract with the emitter (the sentry-fix
+// handoff sets it to its own step name). A renamed emitter key silently reverts
+// every reassignment to a discard — the failure this key exists to fix, with no
+// error anywhere.
+const reassignmentDeclarationKey = "assignee_reassigned_by"
 
 // accumulatedCounters lists frontmatter keys that are cumulative in the result
 // write-back merge: when both the on-disk frontmatter and the incoming payload
@@ -988,8 +1009,9 @@ var terminalStatuses = []domain.TaskStatus{
 // controller-owned counters take the on-disk value when present on disk and are
 // absent from the result when not; a terminal on-disk status is pinned; and
 // operator-owned routing fields (assignee, previous_assignee) take the on-disk
-// value when present on disk, with an incoming empty assignee always applied as
-// the deliverer's clear exception. The accumulated counters (metrics_agent_turns,
+// value when present on disk, with two exceptions that apply the incoming assignee
+// instead — an incoming empty string (the deliverer's clear) and a fresh
+// reassignment declaration (reassignmentDeclarationKey). The accumulated counters (metrics_agent_turns,
 // metrics_interaction_count) are summed when both sides carry a numeric value,
 // keep the on-disk value when the incoming key is absent, and take the incoming
 // value when the key is absent on disk; a non-numeric value on either side keeps
@@ -1047,8 +1069,9 @@ func MergeFrontmatter(
 	}
 
 	// Operator-owned routing fields (assignee, previous_assignee): the on-disk
-	// value always wins over a differing incoming snapshot, with an incoming empty
-	// assignee always applied as the deliverer's clear exception.
+	// value always wins over a differing incoming snapshot, with two exceptions that
+	// apply the incoming assignee — an incoming empty string (the deliverer's clear)
+	// and a fresh reassignment declaration.
 	decisions = applyOperatorOwnedFields(existing, incoming, merged, decisions)
 	decisions = applyAccumulatedCounters(existing, incoming, merged, decisions)
 	return merged, decisions
@@ -1081,6 +1104,14 @@ func applyOperatorOwnedFields(
 				merged[field] = incomingValue
 				continue
 			}
+			// A fresh reassignment declaration applies the incoming assignee: the
+			// emitter states that this write deliberately re-routes the task, which
+			// is the opposite of the stale spawn-time snapshot this guard discards.
+			// Applied, not discarded — so no guard decision, same as the clear above.
+			if isFreshReassignment(existing, incoming) {
+				merged[field] = incomingValue
+				continue
+			}
 		}
 		merged[field] = diskValue
 		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
@@ -1091,6 +1122,23 @@ func applyOperatorOwnedFields(
 		}
 	}
 	return decisions
+}
+
+// isFreshReassignment reports whether the incoming payload declares a reassignment
+// in this write, rather than echoing one already on disk. A declaration is fresh
+// when the incoming payload carries a non-empty string under
+// reassignmentDeclarationKey that differs from the on-disk value. An echo of the
+// on-disk declaration is not fresh, so an agent's later write-back still loses to
+// an operator re-route made while that agent's job was running. A non-string
+// declaration is treated as absent, keeping the comparison panic-free on a
+// malformed payload — same doctrine as frontmatterValueEqual (spec 006).
+func isFreshReassignment(existing, incoming lib.TaskFrontmatter) bool {
+	incomingDeclaration, ok := incoming[reassignmentDeclarationKey].(string)
+	if !ok || incomingDeclaration == "" {
+		return false
+	}
+	diskDeclaration, _ := existing[reassignmentDeclarationKey].(string)
+	return diskDeclaration != incomingDeclaration
 }
 
 // applyAccumulatedCounters applies the cumulative-counter rule to the merged
