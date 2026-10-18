@@ -203,6 +203,96 @@ var _ = Describe("MergeFrontmatter", func() {
 	)
 
 	It(
+		"keeps the on-disk task_type when a stale snapshot's assignee is discarded (routing tuple travels together)",
+		func() {
+			// The 2026-10-18 prod incident, task 6ea12dd3: the fix handoff wrote
+			// task_type: sentry-fix; a superseded analyzer job's result merged later.
+			// The guard kept assignee sentry-fix-agent but task_type reverted to
+			// sentry-deep-analyzer, so the executor spawned the fix agent with the
+			// analyzer's task type and the pod failed its preflight.
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-fix-agent",
+				"task_type": "sentry-fix",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(2))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("sentry-fix-agent"))
+			Expect(decisions[1].Field).To(Equal("task_type"))
+			Expect(decisions[1].Kept).To(Equal("sentry-fix"))
+			Expect(decisions[1].Rejected).To(Equal("sentry-deep-analyzer"))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			Expect(merged["task_type"]).To(Equal("sentry-fix"))
+		},
+	)
+
+	It(
+		"applies an incoming task_type alongside a declared reassignment (handoff)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"task_type":              "sentry-fix",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			Expect(merged["task_type"]).To(Equal("sentry-fix"))
+			Expect(merged).NotTo(HaveKey("assignee_reassigned_by"))
+		},
+	)
+
+	It(
+		"applies a same-assignee task_type change (triage→deep reassign produces no assignee decision)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-issue-analyzer",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["task_type"]).To(Equal("sentry-deep-analyzer"))
+		},
+	)
+
+	It(
+		"introduces an incoming task_type when none exists on disk, even if the assignee is discarded",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-fix-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["task_type"]).To(Equal("sentry-deep-analyzer"))
+		},
+	)
+
+	It(
 		"keeps an operator re-route when the payload carries no declaration",
 		func() {
 			// The guard's purpose, and the case the declaration must not weaken: an

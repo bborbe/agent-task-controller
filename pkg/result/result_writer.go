@@ -1015,7 +1015,9 @@ var terminalStatuses = []domain.TaskStatus{
 // operator-owned routing fields (assignee, previous_assignee) take the on-disk
 // value when present on disk, with two exceptions that apply the incoming assignee
 // instead — an incoming empty string (the deliverer's clear) and a fresh
-// reassignment declaration (reassignmentDeclarationKey). The accumulated counters (metrics_agent_turns,
+// reassignment declaration (reassignmentDeclarationKey); a discarded incoming
+// assignee also discards the incoming task_type (the routing tuple travels
+// together). The accumulated counters (metrics_agent_turns,
 // metrics_interaction_count) are summed when both sides carry a numeric value,
 // keep the on-disk value when the incoming key is absent, and take the incoming
 // value when the key is absent on disk; a non-numeric value on either side keeps
@@ -1088,7 +1090,9 @@ func MergeFrontmatter(
 // value may introduce a key that is absent on disk (the base merge already wrote
 // it). Exception for "assignee" only: an incoming empty string is always applied
 // (the deliverer's deliberate Failed/needs_input clear) and produces no
-// decision. Returns the decision list with any discards appended.
+// decision. When the incoming assignee is discarded, the routing tuple's
+// task_type is discarded with it (applyStaleRoutingTupleGuard). Returns the
+// decision list with any discards appended.
 func applyOperatorOwnedFields(
 	existing, incoming, merged lib.TaskFrontmatter,
 	decisions []GuardDecision,
@@ -1126,7 +1130,48 @@ func applyOperatorOwnedFields(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
 			)
+			if field == "assignee" {
+				decisions = applyStaleRoutingTupleGuard(existing, incoming, merged, decisions)
+			}
 		}
+	}
+	return decisions
+}
+
+// applyStaleRoutingTupleGuard discards an incoming task_type when the
+// operator-owned guard has just discarded the incoming assignee. assignee and
+// task_type are the routing tuple: every deliberate reassignment (the sentry
+// fix handoff and the triage→deep reassign) flips both together, and every
+// agent result echoes both from its spawn-time snapshot. A payload whose
+// assignee the guard rejected is therefore a stale snapshot, and its task_type
+// is stale by construction — writing it reverts a later handoff's routing.
+//
+// Observed live 2026-10-18 (task 6ea12dd3, prod): the fix handoff wrote
+// task_type: sentry-fix at 17:50:54; a superseded analyzer job's result merged
+// at 18:16:42. The guard kept assignee sentry-fix-agent (and logged it) but
+// task_type reverted to sentry-deep-analyzer, so the executor spawned
+// sentry-fix-agent-…181717 with TaskType 'sentry-deep-analyzer' and the pod
+// failed its analyzer preflight. The routing tuple must travel together.
+//
+// The legitimate same-assignee task_type change (the triage→deep reassign, which
+// keeps the analyzer as assignee and only flips the task type) produces no
+// assignee decision and is left untouched. Returns the decision list with a
+// task_type discard appended when the on-disk and incoming values differ.
+func applyStaleRoutingTupleGuard(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	diskValue, onDisk := existing["task_type"]
+	incomingValue, inIncoming := incoming["task_type"]
+	if !onDisk || !inIncoming {
+		return decisions
+	}
+	merged["task_type"] = diskValue
+	if !frontmatterValueEqual(diskValue, incomingValue) {
+		decisions = append(
+			decisions,
+			GuardDecision{Field: "task_type", Kept: diskValue, Rejected: incomingValue},
+		)
 	}
 	return decisions
 }
