@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["017"]
+spec: [017-bug-rename-remints-task-identifier]
 summary: Reordered scanFiles to build the path set and prune vanished paths before the per-file loop, added internal rename and genuine-duplicate specs, and recorded the fix in CHANGELOG.md
 execution_id: agent-task-controller-rename-identifier-exec-030-spec-017-rename-preserves-task-identifier
 dark-factory-version: v0.198.7
