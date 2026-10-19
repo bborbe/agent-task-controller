@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.8
 
 - fix: stop the scanner's empty→named-assignee counter reset from rewriting the whole frontmatter from its scan-time snapshot. The reset raced the executor's `trigger_count` increment and produced a frontmatter conflict git-rest quarantined as `no_frontmatter` (2026-10-19, merge `622e8c24b0`: `trigger_count: 3` vs `0`). `writeCounterReset` now applies the reset through `AtomicReadModifyWriteAndCommitPush`, re-reading the live file and changing only `trigger_count`/`retry_count`, so a concurrent write to any other field survives. No config, metric or wire-format change.
 
