@@ -7,6 +7,7 @@ package scanner
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -418,7 +419,7 @@ func (v *vaultScanner) processFile(
 
 	// Detect empty → named assignee transition (operator re-delegated a parked task).
 	if currentFMAssignee != "" && prevEntry.taskIdentifier != "" && prevEntry.assignee == "" {
-		wrote, werr := v.writeCounterReset(ctx, relPath, content, fmMap)
+		wrote, werr := v.writeCounterReset(ctx, relPath)
 		if werr {
 			return nil, "", true
 		}
@@ -553,37 +554,58 @@ func repairConverges(ctx context.Context, candidate []byte, id string) bool {
 	return resolved == id
 }
 
-// writeCounterReset rewrites the task file with trigger_count: 0 and retry_count: 0.
-// fmMap is the already-parsed frontmatter map for this file.
+// writeCounterReset resets trigger_count and retry_count to 0 through the
+// controller's atomic read-modify-write path, so the reset is applied to the
+// file as it is on disk at write time rather than to the scan-time snapshot.
+// The previous whole-file write from that snapshot raced the executor's
+// trigger_count increment and produced the frontmatter conflict git-rest
+// quarantined (2026-10-19, merge 622e8c24b0: trigger_count 3 vs 0).
 // Returns (relPath, false) on success, ("", true) on write error.
 func (v *vaultScanner) writeCounterReset(
 	ctx context.Context,
 	relPath string,
-	content []byte,
-	fmMap map[string]interface{},
 ) (string, bool) {
-	resetFm := make(map[string]interface{}, len(fmMap))
-	for k, val := range fmMap {
-		resetFm[k] = val
-	}
-	resetFm["trigger_count"] = 0
-	resetFm["retry_count"] = 0
-
-	newFmYAML, err := yaml.Marshal(resetFm)
+	fullAbsPath := filepath.Join(v.gitClient.Path(), relPath)
+	err := v.gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx,
+		fullAbsPath,
+		func(current []byte) ([]byte, error) {
+			return resetCounters(ctx, current)
+		},
+		fmt.Sprintf("[agent-task-controller] reset counters for %s", relPath),
+	)
 	if err != nil {
-		glog.Warningf("writeCounterReset: marshal failed for %s: %v", relPath, err)
-		return "", false
-	}
-
-	body := extractBody(content)
-	newContent := []byte("---\n" + string(newFmYAML) + "---\n" + body)
-
-	if writeErr := v.ops.writeFile(ctx, relPath, newContent); writeErr != nil {
-		glog.Warningf("writeCounterReset: write failed for %s: %v", relPath, writeErr)
+		glog.Warningf("writeCounterReset: atomic reset failed for %s: %v", relPath, err)
 		return "", true
 	}
 	glog.V(2).Infof("writeCounterReset: reset trigger_count/retry_count for %s", relPath)
 	return relPath, false
+}
+
+// resetCounters applies trigger_count: 0 and retry_count: 0 to the frontmatter
+// it is given, preserving every other field and the body verbatim. It runs
+// inside AtomicReadModifyWriteAndCommitPush, so its input is the file as it is
+// on disk at write time, not the scanner's earlier read.
+func resetCounters(ctx context.Context, current []byte) ([]byte, error) {
+	frontmatterStr, err := extractFrontmatter(ctx, current)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "extract frontmatter")
+	}
+	var fm map[string]interface{}
+	if err := yaml.Unmarshal([]byte(frontmatterStr), &fm); err != nil {
+		return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
+	}
+	if fm == nil {
+		fm = make(map[string]interface{})
+	}
+	fm["trigger_count"] = 0
+	fm["retry_count"] = 0
+
+	newFmYAML, err := yaml.Marshal(fm)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
+	}
+	return []byte("---\n" + string(newFmYAML) + "---\n" + extractBody(current)), nil
 }
 
 func (v *vaultScanner) collectDeleted(
