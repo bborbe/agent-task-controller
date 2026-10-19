@@ -105,6 +105,8 @@ Two mechanisms may therefore legitimately lower a controller-owned counter, and 
 
 What remains true in every case is the guard's actual purpose: no *agent result payload* can raise or lower a controller-owned counter, or revive a terminal status.
 
+**Single writer for `trigger_count`.** The controller is the only service that sets `trigger_count`; the executor only publishes commands, and the result merge pins the on-disk value. Every controller write goes through `AtomicReadModifyWriteAndCommitPush`, so it is applied to the file as it is on disk at write time: the increment executor (`task_increment_frontmatter_executor.go`), the update executor's trigger-scope write (`task_update_frontmatter_executor.go`), and the scanner's Empty-to-Named Reset (`vault_scanner.go` `writeCounterReset`). The reset must never rewrite the whole frontmatter from its scan-time snapshot — doing so raced the executor's increment and produced the frontmatter conflict git-rest quarantined on 2026-10-19 (merge `622e8c24b0`, `trigger_count: 3` vs `0`).
+
 ## Terminal Task Status (create-task dedup)
 
 The vault has exactly two terminal task statuses: `completed` and `aborted`. A task in a terminal status is finished — no longer a live duplicate — so `create-task`'s dedup rule keys on whether the title path is occupied by a *live* task rather than on file existence alone.
@@ -150,7 +152,7 @@ and prompt 075 for the same reorder pattern applied to `applyTriggerCap` on
 
 ## Empty-to-Named Reset (spec 021)
 
-When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` and `retry_count: 0` back to the file atomically and queues a git commit. This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
+When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` and `retry_count: 0` back to the file atomically and queues a git commit. The write goes through `AtomicReadModifyWriteAndCommitPush`: its modify closure re-reads the live file and changes only the two counter fields, so a concurrent write to any other field survives. (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
 
 ## Atomic Frontmatter Commands
 

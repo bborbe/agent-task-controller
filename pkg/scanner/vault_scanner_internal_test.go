@@ -21,8 +21,31 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
+
+// resetTestGitClient implements only the two GitClient methods the counter-reset
+// path calls; the embedded interface is nil and panics if another method is
+// reached, which keeps the fake honest about what the path under test touches.
+type resetTestGitClient struct {
+	gitclient.GitClient
+	writeCount *int
+	content    []byte
+}
+
+func (t *resetTestGitClient) Path() string { return "/tmp/scanner-reset-test" }
+
+func (t *resetTestGitClient) AtomicReadModifyWriteAndCommitPush(
+	_ context.Context,
+	_ string,
+	modify func([]byte) ([]byte, error),
+	_ string,
+) error {
+	*t.writeCount++
+	_, err := modify(t.content)
+	return err
+}
 
 // captureGlogWarnings runs fn with glog WARNING output captured and returns the
 // captured bytes. glog's -logtostderr defaults to false, so warnings otherwise
@@ -310,6 +333,12 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 		var writeCount int
 		taskID := "22222222-2222-4222-8222-222222222222"
 		v := &vaultScanner{
+			gitClient: &resetTestGitClient{
+				writeCount: &writeCount,
+				content: []byte(
+					"---\ntask_identifier: " + taskID + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
+				),
+			},
 			metrics: metrics.New(),
 			hashes: map[string]fileEntry{
 				"parked.md": {

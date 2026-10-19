@@ -45,6 +45,10 @@ type testGitClient struct {
 	path          string
 	pullErr       error
 	commitPushErr error
+	// beforeRMW runs inside AtomicReadModifyWriteAndCommitPush before the file
+	// is read, so a test can simulate a concurrent writer landing between the
+	// scanner's scan-time read and the atomic reset.
+	beforeRMW func(absPath string)
 }
 
 func (t *testGitClient) EnsureCloned(_ context.Context) error { return nil }
@@ -77,11 +81,25 @@ func (t *testGitClient) AtomicWriteIfAbsentAndCommitPush(
 
 func (t *testGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
-	_ string,
-	_ func([]byte) ([]byte, error),
+	absPath string,
+	modify func([]byte) ([]byte, error),
 	_ string,
 ) error {
-	return t.commitPushErr
+	if t.commitPushErr != nil {
+		return t.commitPushErr
+	}
+	if t.beforeRMW != nil {
+		t.beforeRMW(absPath)
+	}
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	updated, err := modify(current)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
 }
 
 func (t *testGitClient) ListFiles(_ context.Context, _ string) ([]string, error) { return nil, nil }
@@ -127,11 +145,22 @@ func (t *fileOpsTestGitClient) AtomicWriteIfAbsentAndCommitPush(
 
 func (t *fileOpsTestGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
-	_ string,
-	_ func([]byte) ([]byte, error),
+	absPath string,
+	modify func([]byte) ([]byte, error),
 	_ string,
 ) error {
-	return t.commitPushErr
+	if t.commitPushErr != nil {
+		return t.commitPushErr
+	}
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	updated, err := modify(current)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
 }
 
 func (t *fileOpsTestGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
@@ -258,6 +287,50 @@ var _ = Describe("VaultScanner", func() {
 				Expect(string(r3.Changed[0].Frontmatter.Assignee())).To(Equal("claude"))
 				Expect(r3.Changed[0].Frontmatter.TriggerCount()).To(Equal(0))
 				Expect(r3.Changed[0].Frontmatter.RetryCount()).To(Equal(0))
+			},
+		)
+
+		It(
+			"applies the counter reset to the live file, preserving a field changed after the scan read",
+			func() {
+				taskID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+				absPath := filepath.Join(tmpDir, taskDir, "live-reset.md")
+				initialContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: \ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(initialContent), 0600)).To(Succeed())
+
+				// First scan: parked (assignee empty).
+				s.RunCycle(ctx, results)
+				Expect(results).To(Receive())
+
+				// Operator re-delegates.
+				delegatedContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(delegatedContent), 0600)).To(Succeed())
+
+				// A concurrent writer moves the task to execution after the
+				// scanner's scan-time read but before the atomic reset. The old
+				// whole-file write reverted this to the snapshot's phase; the
+				// atomic reset must preserve it.
+				fakeGit.beforeRMW = func(p string) {
+					b, err := os.ReadFile(p) // #nosec G304 -- test-only path
+					Expect(err).To(BeNil())
+					updated := strings.Replace(string(b), "phase: planning", "phase: execution", 1)
+					Expect(os.WriteFile(p, []byte(updated), 0600)).To(Succeed())
+				}
+				defer func() { fakeGit.beforeRMW = nil }()
+
+				// Second scan: detects the transition and resets the live file.
+				s.RunCycle(ctx, results)
+				Expect(results).To(Receive())
+
+				written, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+				Expect(err).To(BeNil())
+				var fm map[string]interface{}
+				Expect(
+					yaml.Unmarshal([]byte(extractFrontmatterStr(string(written))), &fm),
+				).To(Succeed())
+				Expect(fm["trigger_count"]).To(BeNumerically("==", 0))
+				Expect(fm["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm["phase"]).To(Equal("execution"))
 			},
 		)
 
