@@ -1,10 +1,12 @@
 ---
-status: approved
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-10-19T17:01:42Z"
 generating: "2026-10-19T17:03:33Z"
+prompted: "2026-10-19T18:24:51Z"
+verifying: "2026-10-19T18:25:37Z"
 branch: fix/rename-remints-identifier
 ---
 
