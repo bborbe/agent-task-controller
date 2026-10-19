@@ -5,9 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.11.8
+## Unreleased
 
 - fix: prune vanished task paths from the scanner's per-path bookkeeping before the cycle's file loop, so renaming a task file no longer collides with its own former path in the identifier-uniqueness check and no longer re-mints its `task_identifier`. The scan already pruned vanished paths, but only after processing every file, so for the whole loop the bookkeeping still held the renamed file's old path; the new path matched that stale entry, was judged a duplicate, and `injectAndStore` stripped the identifier and wrote a fresh UUID — silently detaching the task from the escalation card, vault-cli payload and result write-back that key on it. The pruning now runs before the loop over the same listing-derived path set, so a rename is reconciled as a move: the identifier is byte-identical, no write occurs, and the spec-016 index publishes the new path only. A genuine duplicate — two existing files carrying one identifier — still re-mints exactly one file, the deleted-identifier list is unchanged, and the uniqueness check's signature is untouched (spec 017)
+
+## v0.11.8
+
 - fix: stop the scanner's empty→named-assignee counter reset from rewriting the whole frontmatter from its scan-time snapshot. The reset raced the executor's `trigger_count` increment and produced a frontmatter conflict git-rest quarantined as `no_frontmatter` (2026-10-19, merge `622e8c24b0`: `trigger_count: 3` vs `0`). `writeCounterReset` now applies the reset through `AtomicReadModifyWriteAndCommitPush`, re-reading the live file and changing only `trigger_count`/`retry_count`, so a concurrent write to any other field survives. No config, metric or wire-format change.
 
 ## v0.11.7
