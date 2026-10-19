@@ -214,7 +214,18 @@ func (v *vaultScanner) scanFiles(
 		glog.Warningf("list %s failed: %v", glob, err)
 		return nil, nil, nil, false
 	}
-	seen := make(map[string]struct{})
+	// Build the cycle's path set and prune vanished paths BEFORE processing any
+	// file. isIdentifierUnique answers against v.hashes, so a rename's old path
+	// must be gone from the bookkeeping before the new path is checked; otherwise
+	// the renamed file collides with its own former path and is re-minted.
+	seen := make(map[string]struct{}, len(paths))
+	for _, relPath := range paths {
+		seen[relPath] = struct{}{}
+	}
+	deleted, err := v.collectDeleted(ctx, seen)
+	if err != nil {
+		glog.V(4).Infof("collectDeleted: %v", err)
+	}
 	var changed []lib.Task
 	var written []string
 	writeError := false
@@ -224,7 +235,6 @@ func (v *vaultScanner) scanFiles(
 			return nil, nil, nil, false
 		default:
 		}
-		seen[relPath] = struct{}{}
 		task, wrote, werr := v.processFile(ctx, relPath)
 		if werr {
 			writeError = true
@@ -235,10 +245,6 @@ func (v *vaultScanner) scanFiles(
 		if task != nil {
 			changed = append(changed, *task)
 		}
-	}
-	deleted, err := v.collectDeleted(ctx, seen)
-	if err != nil {
-		glog.V(4).Infof("collectDeleted: %v", err)
 	}
 	v.publishIndex()
 	return changed, deleted, written, writeError

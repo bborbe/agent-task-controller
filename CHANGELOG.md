@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: prune vanished task paths from the scanner's per-path bookkeeping before the cycle's file loop, so renaming a task file no longer collides with its own former path in the identifier-uniqueness check and no longer re-mints its `task_identifier`. The scan already pruned vanished paths, but only after processing every file, so for the whole loop the bookkeeping still held the renamed file's old path; the new path matched that stale entry, was judged a duplicate, and `injectAndStore` stripped the identifier and wrote a fresh UUID — silently detaching the task from the escalation card, vault-cli payload and result write-back that key on it. The pruning now runs before the loop over the same listing-derived path set, so a rename is reconciled as a move: the identifier is byte-identical, no write occurs, and the spec-016 index publishes the new path only. A genuine duplicate — two existing files carrying one identifier — still re-mints exactly one file, the deleted-identifier list is unchanged, and the uniqueness check's signature is untouched (spec 017)
+
 ## v0.11.7
 
 - chore: update Go to 1.27.2 and github.com/IBM/sarama to v1.61.1, github.com/bborbe/agent to v0.103.1, github.com/bborbe/argument/v2 to v2.13.6, github.com/bborbe/boltkv to v1.16.2, github.com/bborbe/cqrs to v0.6.12, github.com/bborbe/errors to v1.6.3, github.com/bborbe/http to v1.26.30, github.com/bborbe/kafka to v1.28.1, github.com/bborbe/kv to v1.21.18, github.com/bborbe/log to v1.7.4, github.com/bborbe/metrics to v0.6.7, github.com/bborbe/notification to v0.7.0, github.com/bborbe/run to v1.11.2, github.com/bborbe/sentry to v1.10.4, github.com/bborbe/service to v1.11.0, github.com/bborbe/time to v1.27.16, github.com/bborbe/validation to v1.5.4, github.com/bborbe/vault-cli to v0.170.1, github.com/onsi/ginkgo/v2 to v2.33.1, github.com/onsi/gomega to v1.44.0, github.com/prometheus/client_golang to v1.25.0
