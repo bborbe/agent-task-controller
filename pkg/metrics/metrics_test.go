@@ -31,6 +31,26 @@ var _ = Describe("Metrics", func() {
 		Expect(names).To(HaveKey("agent_controller_frontmatter_commands_total"))
 		Expect(names).To(HaveKey("agent_controller_git_rest_calls_total"))
 		Expect(names).To(HaveKey("agent_controller_vault_scanner_skipped_files_total"))
+		Expect(names).To(HaveKey("agent_controller_update_go_stuck_planning_tasks"))
+	})
+
+	It("publishes the stuck-planning gauge at 0 before the first scan", func() {
+		// A gauge with no value yet reads as "no data" to an alert query, which is
+		// indistinguishable from "nothing is stuck". init() sets it explicitly so a
+		// freshly started pod answers 0 rather than absent.
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		var found bool
+		for _, mf := range mfs {
+			if mf.GetName() != "agent_controller_update_go_stuck_planning_tasks" {
+				continue
+			}
+			found = true
+			Expect(mf.GetMetric()).To(HaveLen(1))
+			Expect(mf.GetMetric()[0].GetGauge().GetValue()).To(BeNumerically("==", 0))
+		}
+		Expect(found).To(BeTrue())
 	})
 
 	It("pre-initializes all scan_cycles_total label combinations", func() {
