@@ -53,6 +53,7 @@ var _ = Describe("SyncLoop", func() {
 			fakePublisher,
 			make(chan struct{}, 1),
 			metrics.New(),
+			pkgsync.ClusterFilter{},
 		)
 		runErr = make(chan error, 1)
 		sl := syncLoop
