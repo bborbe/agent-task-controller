@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: **a controller publishes only the tasks that belong to its cluster.** The new optional `CLUSTER` env names the cluster this controller runs in. A task whose `cluster:` frontmatter names a different cluster is not published, and is counted as `agent_controller_tasks_published_total{outcome="skipped_foreign_cluster"}`. A task without `cluster:` is published only when `PUBLISH_UNTAGGED` is true (the default); set it false on a cluster that runs only explicitly tagged tasks, such as sun. If `CLUSTER` is empty, every task is published as before. Deletes are always published.
+
 ## v0.13.0
 
 - feat: collapse the `github-update-go` queue to one open task per repo. The watcher's `openUpdatePRGate` drops a repo with an open update **PR** from the emit cycle, but nothing guarded the **task** side, so a repo that never reached a PR accumulated one task per commit — measured 2026-10-20: 309 open update-go tasks across 68 repos, 217 of them excess, with `bborbe/agent-claude` alone holding 28. After a new update task is materialized, every other still-open update task for the same repo is transitioned to `aborted` with a `superseded_by` back-pointer to the new one, capped at `SupersedeLookback` candidates exactly as the recurring-task path is. Candidates are matched on the parsed `repo` and `task_type` frontmatter rather than on the filename alone, so a file that merely looks like an update task is never aborted, and `github-update-go-decision` rows — operator questions that never start a job — are never touched.

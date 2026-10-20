@@ -30,20 +30,23 @@ func NewSyncLoop(
 	publisher publisher.TaskPublisher,
 	trigger chan struct{},
 	metrics metrics.Metrics,
+	clusterFilter ClusterFilter,
 ) SyncLoop {
 	return &syncLoop{
-		scanner:   scanner,
-		publisher: publisher,
-		trigger:   trigger,
-		metrics:   metrics,
+		scanner:       scanner,
+		publisher:     publisher,
+		trigger:       trigger,
+		metrics:       metrics,
+		clusterFilter: clusterFilter,
 	}
 }
 
 type syncLoop struct {
-	scanner   scanner.VaultScanner
-	publisher publisher.TaskPublisher
-	trigger   chan struct{}
-	metrics   metrics.Metrics
+	scanner       scanner.VaultScanner
+	publisher     publisher.TaskPublisher
+	trigger       chan struct{}
+	metrics       metrics.Metrics
+	clusterFilter ClusterFilter
 }
 
 // Trigger requests an immediate scan cycle. Non-blocking: if a trigger is already pending, it is a no-op.
@@ -88,6 +91,11 @@ func (s *syncLoop) processResult(ctx context.Context, result scanner.ScanResult)
 		s.metrics.ScanCyclesTotal("no_changes").Inc()
 	}
 	for _, task := range result.Changed {
+		if !s.clusterFilter.ShouldPublish(task) {
+			glog.V(3).Infof("skip publishing task %s: foreign cluster", task.TaskIdentifier)
+			s.metrics.TasksPublishedTotal("skipped_foreign_cluster").Inc()
+			continue
+		}
 		glog.V(3).Infof("publishing changed task %s", task.TaskIdentifier)
 		if err := s.publisher.PublishChanged(ctx, task); err != nil {
 			return errors.Wrapf(ctx, err, "publish changed task %s", task.TaskIdentifier)
