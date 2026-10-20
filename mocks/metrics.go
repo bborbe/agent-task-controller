@@ -119,6 +119,16 @@ type Metrics struct {
 	tasksPublishedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	UpdateGoStuckPlanningTasksStub        func() prometheus.Gauge
+	updateGoStuckPlanningTasksMutex       sync.RWMutex
+	updateGoStuckPlanningTasksArgsForCall []struct {
+	}
+	updateGoStuckPlanningTasksReturns struct {
+		result1 prometheus.Gauge
+	}
+	updateGoStuckPlanningTasksReturnsOnCall map[int]struct {
+		result1 prometheus.Gauge
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -716,6 +726,59 @@ func (fake *Metrics) TasksPublishedTotalReturnsOnCall(i int, result1 prometheus.
 	}
 	fake.tasksPublishedTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	ret, specificReturn := fake.updateGoStuckPlanningTasksReturnsOnCall[len(fake.updateGoStuckPlanningTasksArgsForCall)]
+	fake.updateGoStuckPlanningTasksArgsForCall = append(fake.updateGoStuckPlanningTasksArgsForCall, struct {
+	}{})
+	stub := fake.UpdateGoStuckPlanningTasksStub
+	fakeReturns := fake.updateGoStuckPlanningTasksReturns
+	fake.recordInvocation("UpdateGoStuckPlanningTasks", []interface{}{})
+	fake.updateGoStuckPlanningTasksMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksCallCount() int {
+	fake.updateGoStuckPlanningTasksMutex.RLock()
+	defer fake.updateGoStuckPlanningTasksMutex.RUnlock()
+	return len(fake.updateGoStuckPlanningTasksArgsForCall)
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksCalls(stub func() prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = stub
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksReturns(result1 prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = nil
+	fake.updateGoStuckPlanningTasksReturns = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksReturnsOnCall(i int, result1 prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = nil
+	if fake.updateGoStuckPlanningTasksReturnsOnCall == nil {
+		fake.updateGoStuckPlanningTasksReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Gauge
+		})
+	}
+	fake.updateGoStuckPlanningTasksReturnsOnCall[i] = struct {
+		result1 prometheus.Gauge
 	}{result1}
 }
 

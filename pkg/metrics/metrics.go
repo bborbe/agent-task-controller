@@ -26,6 +26,7 @@ type Metrics interface {
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
 	SkippedFilesTotal(reason SkipReason) prometheus.Counter
+	UpdateGoStuckPlanningTasks() prometheus.Gauge
 }
 
 // defaultMetrics implements Metrics using promauto-registered counters.
@@ -76,6 +77,10 @@ func (m *defaultMetrics) KafkaConsumePausedTotal() prometheus.Counter {
 
 func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter {
 	return SkippedFilesTotal.WithLabelValues(reason.String())
+}
+
+func (m *defaultMetrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
+	return UpdateGoStuckPlanningTasks
 }
 
 // ScanCyclesTotal counts scan cycle completions by result.
@@ -221,6 +226,26 @@ var SkippedFilesTotal = promauto.NewCounterVec(
 	[]string{"reason"},
 )
 
+// UpdateGoStuckPlanningTasks is the number of github-update-go tasks sitting at
+// phase: planning whose last job started more than 24 hours ago and whose body
+// carries a `## Failure` entry.
+//
+// It is a level, not an edge: the scanner recomputes it once per scan cycle and
+// Set()s the result, so the series falls back to 0 as soon as the queue drains.
+// That is what makes it alertable — `agent_controller_update_go_stuck_planning_tasks >= 10`
+// is true only while at least ten tasks are actually stuck, unlike a counter which
+// would stay positive forever after the backlog was cleared.
+//
+// The 24 h age comes from the task's `job_started_at` frontmatter field; a task
+// with no recorded job start is not counted, because "stuck" is defined by a run
+// that began and never finished rather than by the file merely existing.
+var UpdateGoStuckPlanningTasks = promauto.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_update_go_stuck_planning_tasks",
+		Help: "Number of github-update-go tasks at phase planning with a job started more than 24h ago and a ## Failure entry.",
+	},
+)
+
 func init() {
 	ScanCyclesTotal.WithLabelValues("changes").Add(0)
 	ScanCyclesTotal.WithLabelValues("no_changes").Add(0)
@@ -260,4 +285,9 @@ func init() {
 	for _, reason := range AvailableSkipReasons {
 		SkippedFilesTotal.WithLabelValues(reason.String()).Add(0)
 	}
+
+	// A gauge has no label combinations to pre-initialise, but setting it to 0
+	// publishes the series before the first scan completes, so an alert query
+	// reads 0 rather than "no data" on a freshly started pod.
+	UpdateGoStuckPlanningTasks.Set(0)
 }
