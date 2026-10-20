@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.14.0
 
 - feat: **a controller publishes only the tasks that belong to its cluster.** The new optional `CLUSTER` env names the cluster this controller runs in. A task whose `cluster:` frontmatter names a different cluster is not published, and is counted as `agent_controller_tasks_published_total{outcome="skipped_foreign_cluster"}`. A task without `cluster:` is published only when `PUBLISH_UNTAGGED` is true (the default); set it false on a cluster that runs only explicitly tagged tasks, such as sun. If `CLUSTER` is empty, every task is published as before. Deletes are always published.
 
