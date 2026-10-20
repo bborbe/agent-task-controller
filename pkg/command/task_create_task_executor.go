@@ -123,6 +123,7 @@ func NewCreateTaskExecutor(
 			}
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
+			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
