@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.12.0
 
 - feat: publish `agent_controller_update_go_stuck_planning_tasks`, a gauge of `github-update-go` tasks stuck at `phase: planning`. A task counts when its `job_started_at` is more than 24 h old, its status is still `in_progress`, and its body carries a `## Failure` entry. The scanner recomputes the value once per scan cycle and `Set`s it, so the series is a level rather than an edge and falls back to 0 as the queue drains — a counter would stay positive forever after the backlog cleared. It exists so a stalled Go rollout surfaces in hours instead of days: on 2026-10-20 the queue held 125 tasks at `planning` with nothing alerting on it. Only files named `Update Go …` are read (the vault holds ~12k task files and the scanner runs every few minutes), and each candidate is confirmed against its parsed frontmatter, so `github-update-go-decision` rows — operator questions that never start a job — are not counted, and a task with no parseable `job_started_at` is treated as queued rather than stuck.
 
