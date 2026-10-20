@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.13.0
 
 - feat: collapse the `github-update-go` queue to one open task per repo. The watcher's `openUpdatePRGate` drops a repo with an open update **PR** from the emit cycle, but nothing guarded the **task** side, so a repo that never reached a PR accumulated one task per commit — measured 2026-10-20: 309 open update-go tasks across 68 repos, 217 of them excess, with `bborbe/agent-claude` alone holding 28. After a new update task is materialized, every other still-open update task for the same repo is transitioned to `aborted` with a `superseded_by` back-pointer to the new one, capped at `SupersedeLookback` candidates exactly as the recurring-task path is. Candidates are matched on the parsed `repo` and `task_type` frontmatter rather than on the filename alone, so a file that merely looks like an update task is never aborted, and `github-update-go-decision` rows — operator questions that never start a job — are never touched.
 
