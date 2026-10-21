@@ -26,15 +26,20 @@ type TaskPublisher interface {
 }
 
 // NewTaskPublisher creates a TaskPublisher that sends events via EventObjectSender.
+// Every changed event is stamped with vaultName in Task.Vault; consumers that
+// share one topic across vaults (agent-task-executor) filter on it.
+// frontmatter["target_vault"] remains the routing field for results.
 func NewTaskPublisher(
 	eventObjectSender cdb.EventObjectSender,
 	schemaID cdb.SchemaID,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
+	vaultName string,
 ) TaskPublisher {
 	return &taskPublisher{
 		eventObjectSender:     eventObjectSender,
 		schemaID:              schemaID,
 		currentDateTimeGetter: currentDateTimeGetter,
+		vaultName:             vaultName,
 	}
 }
 
@@ -42,8 +47,12 @@ type taskPublisher struct {
 	eventObjectSender     cdb.EventObjectSender
 	schemaID              cdb.SchemaID
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
+	vaultName             string
 }
 
+// PublishChanged publishes an upsert event for the given task. The event is
+// always stamped with the controller's configured vault in Task.Vault,
+// overriding any value carried by the input task.
 func (p *taskPublisher) PublishChanged(ctx context.Context, task lib.Task) error {
 	now := p.currentDateTimeGetter.Now()
 	task.Object = base.Object[base.Identifier]{
@@ -51,6 +60,7 @@ func (p *taskPublisher) PublishChanged(ctx context.Context, task lib.Task) error
 		Created:    now,
 		Modified:   now,
 	}
+	task.Vault = p.vaultName
 	event, err := base.ParseEvent(ctx, task)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "parse event for task %s failed", task.TaskIdentifier)

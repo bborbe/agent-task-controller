@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: stamp `VAULT_NAME` into every published task event (`Task.Vault`) so consumers sharing one topic across vaults can filter their own tasks without reading git
+
 ## v0.14.1
 
 - chore: update Go to 1.27.3 and github.com/bborbe/agent to v0.112.0, github.com/bborbe/kafka to v1.28.4, github.com/bborbe/notification to v0.7.3, github.com/bborbe/sentry to v1.10.5, github.com/bborbe/time to v1.27.17, github.com/bborbe/validation to v1.5.5, github.com/bborbe/vault-cli to v0.177.0
