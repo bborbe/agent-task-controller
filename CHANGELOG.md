@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- feat: stamp `VAULT_NAME` into every published task event (`Task.Vault`) so consumers sharing one topic across vaults can filter their own tasks without reading git
+- feat: stamp `VAULT_NAME` into every published task-changed event (`Task.Vault`; delete tombstones carry no body and stay unstamped) so consumers sharing one topic across vaults can filter their own tasks without reading git
 
 ## v0.14.1
 
