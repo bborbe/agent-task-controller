@@ -655,6 +655,8 @@ func collapseCandidates(
 			rc.Title,
 			newRelPath,
 			cmd.TaskIdentifier,
+			"[agent-task-controller] auto-supersede prior recurring task ",
+			true,
 		)
 	}
 }
@@ -761,6 +763,14 @@ func priorIsInProgress(
 
 // transitionPrior performs the read-modify-write that transitions the prior
 // file to aborted. Best-effort: write errors are logged and swallowed.
+//
+// msgPrefix and setCreatedBy are supplied by the caller because the two hooks
+// that share this transition must not share its attribution. The recurring
+// publisher stamps created_by: recurring-task-creator, which is truthful there;
+// a github-update-go prior was emitted by the update-go watcher, so stamping it
+// would overwrite its real created_by with a false one. The build-fix retire
+// path (buildBuildFixRetireModifyFn) already omits the field for the same
+// reason. An empty msgPrefix means the caller builds the whole message.
 func transitionPrior(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -769,11 +779,13 @@ func transitionPrior(
 	priorTitle string,
 	newRelPath string,
 	taskIdentifier lib.TaskIdentifier,
+	msgPrefix string,
+	setCreatedBy bool,
 ) {
 	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
 	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
-	modify := buildSupersedeModifyFn(ctx, newRelPath, ts)
-	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
+	modify := buildSupersedeModifyFn(ctx, newRelPath, ts, setCreatedBy)
+	msg := msgPrefix + priorTitle
 	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
 		glog.Warningf(
 			"auto-supersede: write prior %s failed for %s: %v",
@@ -791,11 +803,15 @@ func transitionPrior(
 }
 
 // buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
-// that transitions a prior-period recurring-task instance to aborted.
+// that transitions a prior instance to aborted. setCreatedBy stamps
+// created_by: recurring-task-creator, which is only truthful for a prior the
+// recurring publisher emitted — the update-go hook passes false so it leaves the
+// prior's real attribution alone.
 func buildSupersedeModifyFn(
 	ctx context.Context,
 	newRelPath string,
 	ts string,
+	setCreatedBy bool,
 ) func([]byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		fmStr, err := result.ExtractFrontmatter(ctx, current)
@@ -814,7 +830,9 @@ func buildSupersedeModifyFn(
 		fm["phase"] = "done"
 		fm["completed_date"] = ts
 		fm["superseded_by"] = newRelPath
-		fm["created_by"] = "recurring-task-creator"
+		if setCreatedBy {
+			fm["created_by"] = "recurring-task-creator"
+		}
 		return marshalFileContent(ctx, fm, body)
 	}
 }

@@ -10,4 +10,6 @@ var (
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
 	IsOpenUpdateGoTaskForRepo        = isOpenUpdateGoTaskForRepo
+	ListUpdateGoCandidateTitles      = listUpdateGoCandidateTitles
+	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
 )

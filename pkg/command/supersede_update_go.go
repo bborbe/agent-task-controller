@@ -63,12 +63,20 @@ func supersedePriorUpdateGoTasks(
 		glog.Warningf("auto-supersede(update-go): list candidates failed for %q: %v", repo, err)
 		return
 	}
-	inspected := 0
+	// openFound counts the still-open priors this scan has decided to abort, and
+	// k bounds it — deliberately NOT the number of files read. Counting reads was
+	// the original shape and it starved the hook once the glob started matching:
+	// a repo carries up to 66 historical update-go files, filenames end in a
+	// commit SHA so listing order is not recency order, and every closed file
+	// spent one unit of the default budget of 7 before any open prior was even
+	// looked at. The scan now reads until it has found k open priors, which is
+	// bounded by that repo's own file count (66 measured, 2026-10-21).
+	openFound := 0
 	for _, title := range titles {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if inspected >= k {
+		if openFound >= k {
 			break
 		}
 		if strings.ContainsAny(title, "/\\") {
@@ -82,7 +90,6 @@ func supersedePriorUpdateGoTasks(
 		if candidateRelPath == newRelPath {
 			continue
 		}
-		inspected++
 		content, err := readPriorForSupersede(ctx, gitClient, candidateRelPath, cmd.TaskIdentifier)
 		if err != nil || content == nil {
 			continue
@@ -90,6 +97,12 @@ func supersedePriorUpdateGoTasks(
 		if !isOpenUpdateGoTaskForRepo(ctx, content, repo) {
 			continue
 		}
+		openFound++
+		// setCreatedBy=false: an update-go prior was emitted by the update-go
+		// watcher, not the recurring publisher, so stamping
+		// created_by: recurring-task-creator would replace its real attribution
+		// with a false one. Same four frozen fields the build-fix retire path
+		// writes, and the same reason.
 		transitionPrior(
 			ctx,
 			gitClient,
@@ -98,6 +111,8 @@ func supersedePriorUpdateGoTasks(
 			title,
 			newRelPath,
 			cmd.TaskIdentifier,
+			"[agent-task-controller] auto-supersede prior update-go task ",
+			false,
 		)
 	}
 }
@@ -117,7 +132,7 @@ func listUpdateGoCandidateTitles(
 	if strings.ContainsAny(prefix, "*?[]\\") {
 		glob = filepath.Join(taskDir, "*.md")
 	} else {
-		glob = filepath.Join(taskDir, strings.ReplaceAll(repo, "/", "-")+" *.md")
+		glob = filepath.Join(taskDir, prefix+"*.md")
 	}
 	relPaths, err := gitClient.ListFiles(ctx, glob)
 	if err != nil {
