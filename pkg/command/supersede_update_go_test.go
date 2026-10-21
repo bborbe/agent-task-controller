@@ -6,10 +6,12 @@ package command_test
 
 import (
 	"context"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
@@ -64,5 +66,68 @@ var _ = Describe("IsOpenUpdateGoTaskForRepo", func() {
 			[]byte("not a task file\n"),
 			"bborbe/alert",
 		)).To(BeFalse())
+	})
+})
+
+var _ = Describe("ListUpdateGoCandidateTitles", func() {
+	// Filenames exactly as the emitter writes them: "Update Go <owner>-<repo> <sha>.md".
+	// The repo slug is only the MIDDLE token, so a glob built from the slug alone
+	// matches nothing — that shipped silently in v0.13.0-v0.14.1 and left the
+	// supersede hook a no-op on every create.
+	vaultFiles := []string{
+		"tasks/Update Go bborbe-alert 1111111.md",
+		"tasks/Update Go bborbe-alert 2222222.md",
+		"tasks/Update Go bborbe-alert-controller 3333333.md",
+		"tasks/Update Go bborbe-vault-cli 4444444.md",
+		"tasks/PR Review github - bborbe-alert - 1 - a52b3fa4 - update-go-module-dependencies.md",
+	}
+
+	// newGlobFakeGit applies real glob semantics over vaultFiles, so a glob that
+	// matches nothing fails the test instead of silently returning an empty slice.
+	newGlobFakeGit := func(globSeen *string) *mocks.GitClient {
+		fakeGit := &mocks.GitClient{}
+		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
+			*globSeen = glob
+			var matched []string
+			for _, path := range vaultFiles {
+				if ok, err := filepath.Match(glob, path); err == nil && ok {
+					matched = append(matched, path)
+				}
+			}
+			return matched, nil
+		}
+		return fakeGit
+	}
+
+	It("scopes the glob to the repo's update tasks, not to every task", func() {
+		var globSeen string
+		fakeGit := newGlobFakeGit(&globSeen)
+
+		titles, err := command.ListUpdateGoCandidateTitles(
+			context.Background(),
+			fakeGit,
+			"tasks",
+			"bborbe/alert",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(globSeen).To(Equal("tasks/Update Go bborbe-alert *.md"))
+		Expect(titles).To(ConsistOf(
+			"Update Go bborbe-alert 1111111",
+			"Update Go bborbe-alert 2222222",
+		))
+	})
+
+	It("falls back to listing every task file when the repo carries a glob metacharacter", func() {
+		var globSeen string
+		fakeGit := newGlobFakeGit(&globSeen)
+
+		_, err := command.ListUpdateGoCandidateTitles(
+			context.Background(),
+			fakeGit,
+			"tasks",
+			"bborbe/we*ird",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(globSeen).To(Equal("tasks/*.md"))
 	})
 })

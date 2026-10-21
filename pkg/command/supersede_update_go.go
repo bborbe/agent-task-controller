@@ -117,7 +117,7 @@ func listUpdateGoCandidateTitles(
 	if strings.ContainsAny(prefix, "*?[]\\") {
 		glob = filepath.Join(taskDir, "*.md")
 	} else {
-		glob = filepath.Join(taskDir, strings.ReplaceAll(repo, "/", "-")+" *.md")
+		glob = filepath.Join(taskDir, prefix+"*.md")
 	}
 	relPaths, err := gitClient.ListFiles(ctx, glob)
 	if err != nil {
