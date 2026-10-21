@@ -141,7 +141,12 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 	syncLoop := pkgsync.NewSyncLoop(
 		vaultScanner,
-		publisher.NewTaskPublisher(eventObjectSender, lib.TaskV1SchemaID, currentDateTime),
+		publisher.NewTaskPublisher(
+			eventObjectSender,
+			lib.TaskV1SchemaID,
+			currentDateTime,
+			a.VaultName,
+		),
 		trigger,
 		metrics.New(),
 		pkgsync.ClusterFilter{Cluster: a.Cluster, PublishUntagged: a.PublishUntagged},

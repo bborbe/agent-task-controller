@@ -47,7 +47,12 @@ var _ = Describe("Published event topic (TopicPrefix golden test)", func() {
 			prefix,
 			log.DefaultSamplerFactory,
 		)
-		return publisher.NewTaskPublisher(eventObjectSender, schemaID, currentDateTime)
+		return publisher.NewTaskPublisher(
+			eventObjectSender,
+			schemaID,
+			currentDateTime,
+			"test-vault",
+		)
 	}
 
 	Context("with a non-empty TopicPrefix", func() {
