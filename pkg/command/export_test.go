@@ -11,4 +11,5 @@ var (
 	SplitTitleToken                  = splitTitleToken
 	IsOpenUpdateGoTaskForRepo        = isOpenUpdateGoTaskForRepo
 	ListUpdateGoCandidateTitles      = listUpdateGoCandidateTitles
+	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
 )

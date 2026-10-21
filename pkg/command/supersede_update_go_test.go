@@ -6,8 +6,13 @@ package command_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 
+	lib "github.com/bborbe/agent"
+	task "github.com/bborbe/agent/command/task"
+	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -121,7 +126,7 @@ var _ = Describe("ListUpdateGoCandidateTitles", func() {
 		var globSeen string
 		fakeGit := newGlobFakeGit(&globSeen)
 
-		_, err := command.ListUpdateGoCandidateTitles(
+		titles, err := command.ListUpdateGoCandidateTitles(
 			context.Background(),
 			fakeGit,
 			"tasks",
@@ -129,5 +134,69 @@ var _ = Describe("ListUpdateGoCandidateTitles", func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(globSeen).To(Equal("tasks/*.md"))
+		// The fallback lists EVERY task file, so the in-memory HasPrefix filter is
+		// the only thing keeping another repo's task out of the abort set. Assert
+		// its result, not just the glob: a regression that drops the filter would
+		// otherwise read — and potentially abort — unrelated repos' tasks silently.
+		Expect(titles).To(BeEmpty())
+	})
+})
+
+var _ = Describe("SupersedePriorUpdateGoTasks", func() {
+	// A repo carries up to 66 historical update-go files (measured 2026-10-21) and
+	// their names end in a commit SHA, so listing order is not recency order. The
+	// look-back budget must bound how many OPEN priors get aborted, never how many
+	// files get read — spending it on closed rows starved the hook of exactly the
+	// work it exists to do.
+	It("still aborts the open prior when closed rows fill the listing ahead of it", func() {
+		const k = 7
+		const taskDir = "tasks"
+		const repo = "bborbe/alert"
+
+		listed := make([]string, 0, 13)
+		closed := map[string]bool{}
+		for i := range 12 {
+			title := fmt.Sprintf("Update Go bborbe-alert %06d", i)
+			listed = append(listed, taskDir+"/"+title+".md")
+			closed[title] = true
+		}
+		openTitle := "Update Go bborbe-alert zzzzzzz"
+		listed = append(listed, taskDir+"/"+openTitle+".md")
+
+		fakeGit := &mocks.GitClient{}
+		fakeGit.ListFilesReturns(listed, nil)
+		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+			title := strings.TrimSuffix(filepath.Base(relPath), ".md")
+			status := "in_progress"
+			if closed[title] {
+				status = "aborted"
+			}
+			return []byte(
+				"---\ntask_type: github-update-go\nrepo: " + repo +
+					"\nstatus: " + status + "\n---\nbody\n",
+			), nil
+		}
+
+		cmd := task.CreateCommand{
+			TaskIdentifier: lib.TaskIdentifier("new-id"),
+			Frontmatter: lib.TaskFrontmatter{
+				"task_type": "github-update-go",
+				"repo":      repo,
+			},
+		}
+
+		command.SupersedePriorUpdateGoTasks(
+			context.Background(),
+			fakeGit,
+			taskDir,
+			&libtimemocks.CurrentDateTimeGetter{},
+			k,
+			cmd,
+			taskDir+"/Update Go bborbe-alert newsha0.md",
+		)
+
+		Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+		_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+		Expect(absPath).To(HaveSuffix(openTitle + ".md"))
 	})
 })
