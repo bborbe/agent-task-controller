@@ -196,7 +196,74 @@ var _ = Describe("SupersedePriorUpdateGoTasks", func() {
 		)
 
 		Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-		_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+		_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
 		Expect(absPath).To(HaveSuffix(openTitle + ".md"))
+
+		// Attribution and commit message must both stay truthful: an update-go
+		// prior was emitted by the update-go watcher, so stamping
+		// created_by: recurring-task-creator (as the recurring hook does) would
+		// replace its real created_by with a false one.
+		Expect(msg).To(ContainSubstring("auto-supersede prior update-go task"))
+		Expect(msg).NotTo(ContainSubstring("recurring task"))
+
+		priorContent := []byte(
+			"---\ntask_type: github-update-go\nrepo: " + repo +
+				"\nstatus: in_progress\ncreated_by: github-update-go-watcher\n---\nbody\n",
+		)
+		transitioned, modifyErr := modify(priorContent)
+		Expect(modifyErr).NotTo(HaveOccurred())
+		Expect(string(transitioned)).To(ContainSubstring("status: aborted"))
+		Expect(string(transitioned)).To(ContainSubstring("superseded_by:"))
+		Expect(string(transitioned)).To(ContainSubstring("created_by: github-update-go-watcher"))
+		Expect(string(transitioned)).NotTo(ContainSubstring("recurring-task-creator"))
+	})
+
+	// The other half of the changed semantics: the budget bounds how many OPEN
+	// priors get aborted. Without this spec, deleting the `openFound >= k` break
+	// outright would leave every other spec green.
+	It("stops after k open priors and leaves the rest open", func() {
+		const k = 2
+		const taskDir = "tasks"
+		const repo = "bborbe/alert"
+
+		listed := make([]string, 0, 3)
+		for _, sha := range []string{"aaaaaaa", "bbbbbbb", "ccccccc"} {
+			listed = append(listed, taskDir+"/Update Go bborbe-alert "+sha+".md")
+		}
+
+		fakeGit := &mocks.GitClient{}
+		fakeGit.ListFilesReturns(listed, nil)
+		fakeGit.ReadFileStub = func(_ context.Context, _ string) ([]byte, error) {
+			return []byte(
+				"---\ntask_type: github-update-go\nrepo: " + repo +
+					"\nstatus: in_progress\n---\nbody\n",
+			), nil
+		}
+
+		command.SupersedePriorUpdateGoTasks(
+			context.Background(),
+			fakeGit,
+			taskDir,
+			&libtimemocks.CurrentDateTimeGetter{},
+			k,
+			task.CreateCommand{
+				TaskIdentifier: lib.TaskIdentifier("new-id"),
+				Frontmatter: lib.TaskFrontmatter{
+					"task_type": "github-update-go",
+					"repo":      repo,
+				},
+			},
+			taskDir+"/Update Go bborbe-alert newsha0.md",
+		)
+
+		Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(k))
+		aborted := make(map[string]bool, k)
+		for i := range k {
+			_, path, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(i)
+			aborted[filepath.Base(path)] = true
+		}
+		Expect(aborted).To(HaveKey("Update Go bborbe-alert aaaaaaa.md"))
+		Expect(aborted).To(HaveKey("Update Go bborbe-alert bbbbbbb.md"))
+		Expect(aborted).NotTo(HaveKey("Update Go bborbe-alert ccccccc.md"))
 	})
 })

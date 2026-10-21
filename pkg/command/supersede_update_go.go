@@ -98,6 +98,11 @@ func supersedePriorUpdateGoTasks(
 			continue
 		}
 		openFound++
+		// setCreatedBy=false: an update-go prior was emitted by the update-go
+		// watcher, not the recurring publisher, so stamping
+		// created_by: recurring-task-creator would replace its real attribution
+		// with a false one. Same four frozen fields the build-fix retire path
+		// writes, and the same reason.
 		transitionPrior(
 			ctx,
 			gitClient,
@@ -106,6 +111,8 @@ func supersedePriorUpdateGoTasks(
 			title,
 			newRelPath,
 			cmd.TaskIdentifier,
+			"[agent-task-controller] auto-supersede prior update-go task ",
+			false,
 		)
 	}
 }
