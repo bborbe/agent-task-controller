@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	task "github.com/bborbe/agent/command/task"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
-	task "github.com/bborbe/agent/command/task"
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 )

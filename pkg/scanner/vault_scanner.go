@@ -247,7 +247,8 @@ func (v *vaultScanner) scanFiles(
 			changed = append(changed, *task)
 		}
 	}
-	v.metrics.UpdateGoStuckPlanningTasks().Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
+	v.metrics.UpdateGoStuckPlanningTasks().
+		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
 	v.publishIndex()
 	return changed, deleted, written, writeError
 }

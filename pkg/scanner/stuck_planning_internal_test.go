@@ -65,7 +65,13 @@ var _ = Describe("countStuckPlanningTasks", func() {
 
 	It("does not count a task that is no longer in planning", func() {
 		v := newScanner(map[string]string{
-			path: taskFile("github-update-go", "human_review", "in_progress", oldStart, failureBody),
+			path: taskFile(
+				"github-update-go",
+				"human_review",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
 		})
 		Expect(v.countStuckPlanningTasks(context.Background(), []string{path}, now)).To(Equal(0))
 	})
@@ -79,7 +85,13 @@ var _ = Describe("countStuckPlanningTasks", func() {
 
 	It("does not count a decision task, which never runs a job", func() {
 		v := newScanner(map[string]string{
-			path: taskFile("github-update-go-decision", "planning", "in_progress", oldStart, failureBody),
+			path: taskFile(
+				"github-update-go-decision",
+				"planning",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
 		})
 		Expect(v.countStuckPlanningTasks(context.Background(), []string{path}, now)).To(Equal(0))
 	})
@@ -93,8 +105,20 @@ var _ = Describe("countStuckPlanningTasks", func() {
 
 	It("skips files whose name does not carry the update-go prefix", func() {
 		v := newScanner(map[string]string{
-			path:                    taskFile("github-update-go", "planning", "in_progress", oldStart, failureBody),
-			"Release bborbe-alert x.md": taskFile("github-release", "planning", "in_progress", oldStart, failureBody),
+			path: taskFile(
+				"github-update-go",
+				"planning",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
+			"Release bborbe-alert x.md": taskFile(
+				"github-release",
+				"planning",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
 		})
 		Expect(v.countStuckPlanningTasks(
 			context.Background(),
@@ -105,8 +129,20 @@ var _ = Describe("countStuckPlanningTasks", func() {
 
 	It("counts every stuck task across the vault", func() {
 		v := newScanner(map[string]string{
-			path:      taskFile("github-update-go", "planning", "in_progress", oldStart, failureBody),
-			otherPath: taskFile("github-update-go", "planning", "in_progress", oldStart, failureBody),
+			path: taskFile(
+				"github-update-go",
+				"planning",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
+			otherPath: taskFile(
+				"github-update-go",
+				"planning",
+				"in_progress",
+				oldStart,
+				failureBody,
+			),
 		})
 		Expect(v.countStuckPlanningTasks(
 			context.Background(),
