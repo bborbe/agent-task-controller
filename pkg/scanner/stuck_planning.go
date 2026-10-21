@@ -64,7 +64,11 @@ func (v *vaultScanner) countStuckPlanningTasks(
 // isStuckPlanningTask reports whether one task file meets every clause of the stuck
 // definition. Each clause is checked against the parsed frontmatter rather than the
 // filename, so a file that matches the name prefix but not the contract is not counted.
-func (v *vaultScanner) isStuckPlanningTask(ctx context.Context, relPath string, now time.Time) bool {
+func (v *vaultScanner) isStuckPlanningTask(
+	ctx context.Context,
+	relPath string,
+	now time.Time,
+) bool {
 	content, err := v.ops.readFile(ctx, relPath)
 	if err != nil {
 		glog.V(4).Infof("stuck-planning gauge: read %s: %v", relPath, err)
