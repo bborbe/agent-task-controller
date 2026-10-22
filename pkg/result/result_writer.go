@@ -533,14 +533,14 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		req.TaskIdentifier,
 	)
 	glog.V(2).Infof("WriteResult: writing and pushing for task %s", req.TaskIdentifier)
-	writeStart := time.Now()
+	writeStart := r.currentDateTime.Now()
 	if err := r.writeAndPublish(ctx, absPath, req, matchedRelPath, commitMessage); err != nil {
 		r.metrics.ResultsWrittenTotal("error").Inc()
 		return errors.Wrapf(ctx, err, "atomic read-modify-write and push failed")
 	}
 
 	glog.V(2).Infof("WriteResult: completed successfully for task %s in %dms",
-		req.TaskIdentifier, time.Since(writeStart).Milliseconds())
+		req.TaskIdentifier, r.currentDateTime.Now().Time().Sub(writeStart.Time()).Milliseconds())
 	r.metrics.ResultsWrittenTotal("success").Inc()
 	return nil
 }
