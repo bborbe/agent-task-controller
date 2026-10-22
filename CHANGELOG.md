@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.117.0, github.com/bborbe/argument/v2 to v2.13.7, github.com/bborbe/cqrs to v0.6.13, github.com/bborbe/errors to v1.6.4, github.com/bborbe/http to v1.26.31, github.com/bborbe/kafka to v1.28.6, github.com/bborbe/kv to v1.21.19, github.com/bborbe/log to v1.7.5, github.com/bborbe/metrics to v0.6.8, github.com/bborbe/notification to v0.7.4, github.com/bborbe/sentry to v1.10.6, github.com/bborbe/service to v1.11.1, github.com/bborbe/time to v1.27.18, github.com/bborbe/validation to v1.5.6
+
 ## v0.15.1
 
 - fix: **the `github-update-go` supersede hook actually fires.** `listUpdateGoCandidateTitles` built its candidate glob from the repo slug alone (`tasks/<owner>-<repo> *.md`), dropping the `Update Go ` title prefix the emitted files carry — so `ListFiles` matched nothing, the scan exited silently, and the v0.13.0 collapse never aborted a single task. Measured 2026-10-21: 0 of 1552 update-go task files carried `superseded_by`, and six repos received creates after the v0.14.0 deploy with no supersede written. The glob is now built from the same prefix the in-memory filter uses, and a regression test applies real glob semantics over emitter-shaped filenames so a prefix-less glob fails instead of returning an empty slice.
