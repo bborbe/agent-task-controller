@@ -372,6 +372,71 @@ var _ = Describe("MergeFrontmatter", func() {
 		},
 	)
 
+	// Live incident 2026-10-21, task "PR Review github - bborbe-teamvault-docker - 10":
+	// the job spawned from a snapshot carrying cluster: sun, the operator removed
+	// cluster: while it ran (vault commit d107bbdb), and the result write restored
+	// cluster: sun (vault commit 83a2ab1a). An incoming cluster must never
+	// reintroduce a key the operator removed.
+	It(
+		"does not let an incoming cluster reintroduce the key an operator removed while the job ran",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":             "in_progress",
+				"phase":              "planning",
+				"spawn_notification": true,
+				"current_job":        "pr-reviewer-agent-8ba6f21c-20261021214249",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":  "in_progress",
+				"phase":   "done",
+				"cluster": "sun",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged).NotTo(HaveKey("cluster"))
+			Expect(merged["phase"]).To(Equal("done"))
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("cluster"))
+			Expect(decisions[0].Kept).To(BeNil())
+			Expect(decisions[0].Rejected).To(Equal("sun"))
+		},
+	)
+
+	It(
+		"keeps the on-disk cluster over a differing incoming value and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "nuke"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("nuke"))
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("cluster"))
+			Expect(decisions[0].Kept).To(Equal("nuke"))
+			Expect(decisions[0].Rejected).To(Equal("sun"))
+		},
+	)
+
+	It(
+		"produces no decision when the on-disk and incoming cluster are equal",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("sun"))
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
+	It(
+		"produces no decision when the incoming payload carries no cluster",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "phase": "done"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("sun"))
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
 	It(
 		"reports both the counter decision and the operator-owned decision when both differ (additive rule)",
 		func() {

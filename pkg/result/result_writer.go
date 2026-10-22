@@ -934,8 +934,9 @@ func mergeBody(existingBody, incomingBody string) string {
 }
 
 // GuardDecision records a single ownership-guard discard: the merge kept the
-// on-disk value of a controller-owned field (or the pinned terminal status) and
-// rejected a differing incoming value. Equal values produce no decision.
+// on-disk value of a guarded field (Kept is nil when the field was absent on disk
+// and stays absent) and rejected a differing incoming value. Equal values produce
+// no decision.
 type GuardDecision struct {
 	Field    string
 	Kept     any
@@ -965,6 +966,28 @@ var controllerOwnedFields = []string{
 var operatorOwnedFields = []string{
 	"assignee",
 	"previous_assignee",
+}
+
+// operatorPinnedFields lists frontmatter keys that only the operator may write.
+// The agent's result payload is built from the TASK_CONTENT snapshot injected
+// at spawn, so any value it carries for these keys is an echo of how the task
+// looked before the run, never a decision the agent made. The on-disk value
+// therefore always wins — and, unlike operatorOwnedFields, an incoming value can
+// never introduce a pinned key that is absent on disk: an operator who removed
+// the key while the job ran must not see a late result write put it back.
+//
+// cluster is the operator's routing pin (which controller publishes the task).
+// The operator is its only legitimate writer; the automatic cluster assigner is
+// being retired. Observed live 2026-10-21: a pr-reviewer job spawned from a
+// snapshot carrying cluster: sun, the operator removed cluster: six minutes
+// later, and the job's result write restored cluster: sun — 27 tasks were
+// re-tagged onto a cluster that was being shut down.
+//
+// Unlike controllerOwnedFields, a discarded incoming value is reported as a
+// guard decision even when the key is absent on disk (Kept: nil), so every
+// dropped echo shows up in the ownership-guard log line.
+var operatorPinnedFields = []string{
+	"cluster",
 }
 
 // reassignmentDeclarationKey names the frontmatter key an emitter sets to declare
@@ -1014,7 +1037,10 @@ var terminalStatuses = []domain.TaskStatus{
 // MergeFrontmatter returns a new frontmatter map with all keys from existing,
 // overridden by all keys from incoming, then applies the field-ownership guard:
 // controller-owned counters take the on-disk value when present on disk and are
-// absent from the result when not; a terminal on-disk status is pinned; and
+// absent from the result when not; a terminal on-disk status is pinned;
+// operator-pinned fields (cluster) always take the on-disk value, are absent from
+// the result when absent on disk, and report every differing discarded incoming
+// value as a decision (Kept nil when the key was absent on disk); and
 // operator-owned routing fields (assignee, previous_assignee) take the on-disk
 // value when present on disk, with two exceptions that apply the incoming assignee
 // instead — an incoming empty string (the deliverer's clear) and a fresh
@@ -1077,6 +1103,10 @@ func MergeFrontmatter(
 		}
 	}
 
+	// Operator-pinned fields (cluster): the on-disk value always wins and an
+	// incoming value can never introduce the key when it is absent on disk.
+	decisions = applyOperatorPinnedFields(existing, incoming, merged, decisions)
+
 	// Operator-owned routing fields (assignee, previous_assignee): the on-disk
 	// value always wins over a differing incoming snapshot, with two exceptions that
 	// apply the incoming assignee — an incoming empty string (the deliverer's clear)
@@ -1084,6 +1114,42 @@ func MergeFrontmatter(
 	decisions = applyOperatorOwnedFields(existing, incoming, merged, decisions)
 	decisions = applyAccumulatedCounters(existing, incoming, merged, decisions)
 	return merged, decisions
+}
+
+// applyOperatorPinnedFields applies the operator-pinned rule to the merged
+// frontmatter: the on-disk value of each operatorPinnedFields key always wins.
+// A key present on disk keeps its on-disk value and a differing incoming value is
+// reported as a decision. A key absent on disk stays absent even when incoming
+// carries it, and the discarded incoming value is reported as a decision with
+// Kept: nil. Equal values and an incoming payload without the key produce no
+// decision. Returns the decision list with any discards appended.
+func applyOperatorPinnedFields(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	for _, field := range operatorPinnedFields {
+		diskValue, onDisk := existing[field]
+		incomingValue, inIncoming := incoming[field]
+		if !inIncoming {
+			continue // base merge already kept the on-disk value (or its absence)
+		}
+		if !onDisk {
+			delete(merged, field)
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: nil, Rejected: incomingValue},
+			)
+			continue
+		}
+		merged[field] = diskValue
+		if !frontmatterValueEqual(diskValue, incomingValue) {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
+			)
+		}
+	}
+	return decisions
 }
 
 // applyOperatorOwnedFields applies the operator-owned routing-field rule to the
