@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **an agent's result write can no longer change a task's `cluster:` pin.** `MergeFrontmatter` overlaid every incoming key, and `cluster` belonged to no ownership guard, so a result built from the spawn-time task snapshot echoed the snapshot's `cluster` back onto the task. Measured 2026-10-21: an operator removed `cluster: sun` from a running pr-reviewer task and the job's result write six minutes later restored it; 27 tasks were re-tagged this way onto a cluster being shut down. `cluster` is now operator-pinned: the on-disk value always wins, an incoming value can never introduce the key when it is absent on disk, and every discarded incoming value is logged on the `ownership guard kept on-disk` line.
+
 ## v0.16.0
 
 - fix: **an unchanged result write no longer posts to git-rest.** `AtomicReadModifyWriteAndCommitPush` POSTed the merged content even when the modify closure returned the bytes it read — e.g. a re-delivered result, or one where the ownership guard keeps every on-disk field. Each POST is a git-rest write+commit+push round trip, measured 2026-10-21 on openclaw-0 at p50 2.71 s / p99 7.18 s over 1294 writes, and it dominated per-message intake time (p50 2.40 s/msg under a 1172-deep backlog, 20 `command expired` drops). An unchanged result now returns without the POST and logs `gitrest: skip unchanged read-modify-write` at V(2).
