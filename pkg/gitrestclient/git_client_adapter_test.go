@@ -177,6 +177,20 @@ var _ = Describe("gitRestGitClientAdapter", func() {
 			Expect(postContent).To(Equal(modified))
 		})
 
+		It("does not call Post when modify returns the content unchanged", func() {
+			existing := []byte("same")
+			fakeClient.GetReturns(existing, nil)
+			err := adapter.AtomicReadModifyWriteAndCommitPush(
+				ctx,
+				"/data/vault/tasks/bar.md",
+				func(current []byte) ([]byte, error) { return []byte("same"), nil },
+				"msg",
+			)
+			Expect(err).To(Succeed())
+			Expect(fakeClient.GetCallCount()).To(Equal(1))
+			Expect(fakeClient.PostCallCount()).To(Equal(0))
+		})
+
 		It("returns error and does not call Post when Get fails", func() {
 			fakeClient.GetReturns(nil, stderrors.New("not found"))
 			err := adapter.AtomicReadModifyWriteAndCommitPush(

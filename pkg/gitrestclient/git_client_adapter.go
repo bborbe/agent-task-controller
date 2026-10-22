@@ -5,6 +5,7 @@
 package gitrestclient
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
@@ -120,6 +121,12 @@ func (a *gitRestGitClientAdapter) AtomicReadModifyWriteAndCommitPush(
 	updated, err := modify(current)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "modify func failed for %s", rel)
+	}
+	if bytes.Equal(updated, current) {
+		// An unchanged file produces no commit, so the POST would only spend a
+		// git-rest write+push round trip (~2.7 s p50 on openclaw, 2026-10-21) for nothing.
+		glog.V(2).Infof("gitrest: skip unchanged read-modify-write %s (%s)", rel, message)
+		return nil
 	}
 	glog.V(3).Infof("gitrest: POST (read-modify-write) %s (%s)", rel, message)
 	return errors.Wrapf(ctx, a.client.Post(ctx, rel, updated), "write after modify %s", rel)
