@@ -336,17 +336,18 @@ func resolveFromIndex(
 		return "", nil, false, resolveErr
 	}
 	if !found {
+		glog.V(2).Infof("FindTaskFilePath: index miss for task %s, falling back to walk", id)
 		return "", nil, false, nil
 	}
 	content, readErr := gitClient.ReadFile(ctx, relPath)
 	if readErr != nil {
-		glog.V(3).
+		glog.V(2).
 			Infof("FindTaskFilePath: index hit %s unreadable (%v), falling back to walk", relPath, readErr)
 		return "", nil, false, nil
 	}
 	frontmatter, fmErr := ExtractFrontmatter(ctx, content)
 	if fmErr != nil {
-		glog.V(3).
+		glog.V(2).
 			Infof("FindTaskFilePath: index hit %s has invalid frontmatter (%v), falling back to walk", relPath, fmErr)
 		return "", nil, false, nil
 	}
@@ -363,7 +364,7 @@ func resolveFromIndex(
 		// 2026-08-31 incident. The walk compares the identifier before accepting a
 		// match, so the hit path must too. The bytes are already read and parsed,
 		// so the check adds no I/O.
-		glog.V(3).
+		glog.V(2).
 			Infof("FindTaskFilePath: index hit %s no longer carries %s, falling back to walk", relPath, id)
 		return "", nil, false, nil
 	}
@@ -532,12 +533,14 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		req.TaskIdentifier,
 	)
 	glog.V(2).Infof("WriteResult: writing and pushing for task %s", req.TaskIdentifier)
+	writeStart := r.currentDateTime.Now()
 	if err := r.writeAndPublish(ctx, absPath, req, matchedRelPath, commitMessage); err != nil {
 		r.metrics.ResultsWrittenTotal("error").Inc()
 		return errors.Wrapf(ctx, err, "atomic read-modify-write and push failed")
 	}
 
-	glog.V(2).Infof("WriteResult: completed successfully for task %s", req.TaskIdentifier)
+	glog.V(2).Infof("WriteResult: completed successfully for task %s in %dms",
+		req.TaskIdentifier, r.currentDateTime.Now().Time().Sub(writeStart.Time()).Milliseconds())
 	r.metrics.ResultsWrittenTotal("success").Inc()
 	return nil
 }

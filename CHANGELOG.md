@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **an unchanged result write no longer posts to git-rest.** `AtomicReadModifyWriteAndCommitPush` POSTed the merged content even when the modify closure returned the bytes it read — e.g. a re-delivered result, or one where the ownership guard keeps every on-disk field. Each POST is a git-rest write+commit+push round trip, measured 2026-10-21 on openclaw-0 at p50 2.71 s / p99 7.18 s over 1294 writes, and it dominated per-message intake time (p50 2.40 s/msg under a 1172-deep backlog, 20 `command expired` drops). An unchanged result now returns without the POST and logs `gitrest: skip unchanged read-modify-write` at V(2).
+- feat: intake timing is visible at the deployed `-v=2`. `WriteResult: completed successfully` now carries the write duration in ms, a plain resolver miss logs `FindTaskFilePath: index miss`, and the three index-hit fallback reasons (unreadable, invalid frontmatter, identifier no longer carried) moved from V(3) to V(2).
+
 ## v0.15.1
 
 - fix: **the `github-update-go` supersede hook actually fires.** `listUpdateGoCandidateTitles` built its candidate glob from the repo slug alone (`tasks/<owner>-<repo> *.md`), dropping the `Update Go ` title prefix the emitted files carry — so `ListFiles` matched nothing, the scan exited silently, and the v0.13.0 collapse never aborted a single task. Measured 2026-10-21: 0 of 1552 update-go task files carried `superseded_by`, and six repos received creates after the v0.14.0 deploy with no supersede written. The glob is now built from the same prefix the in-memory filter uses, and a regression test applies real glob semantics over emitter-shaped filenames so a prefix-less glob fails instead of returning an empty slice.
