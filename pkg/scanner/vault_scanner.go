@@ -167,13 +167,21 @@ func NewGitRestVaultScanner(
 }
 
 func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error {
-	ticker := time.NewTicker(v.pollInterval)
-	defer ticker.Stop()
+	// A non-positive poll interval disables the periodic scan: the vault is then
+	// scanned only when something sends on trigger. time.NewTicker panics on a
+	// non-positive duration, so no ticker is constructed at all and the nil
+	// channel blocks forever — which is exactly "never ticks".
+	var tick <-chan time.Time
+	if v.pollInterval > 0 {
+		ticker := time.NewTicker(v.pollInterval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-tick:
 			v.RunCycle(ctx, results)
 		case <-v.trigger:
 			v.RunCycle(ctx, results)
