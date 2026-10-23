@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.18.0
 
 - feat: **a non-positive `POLL_INTERVAL` disables the periodic vault scan, leaving it trigger-only.** `time.NewTicker` panics on a non-positive duration, so no ticker is constructed at all and the nil channel blocks forever; the scan then runs only when something sends on the trigger. This is the mode a controller needs when another writer is the sole producer of change events and its per-pass read of every task file — 8,573 files per pass on the personal vault — is pure cost.
 
