@@ -9,9 +9,25 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
+)
+
+// readinessAttempts and readinessAttemptTimeout bound the startup probe, so a
+// genuinely dead endpoint still fails the process instead of hanging it.
+//
+// The budget is sized against two hard limits. The controller serves no /healthz
+// until EnsureCloned returns — the router is built later in Run — so the liveness
+// probe (initialDelaySeconds 10, periodSeconds 10, failureThreshold 5) kills the
+// container at ~50 s. And the vault pod's measured cold start is 23 s, which the
+// probe must be able to outlast: 5 attempts with 2s/4s/8s/16s backoff put the last
+// attempt at ~38 s, while the per-attempt timeout stops a blackholed endpoint from
+// stretching a single attempt to the HTTP client's 30 s.
+const (
+	readinessAttempts       = 5
+	readinessAttemptTimeout = 2 * time.Second
 )
 
 // NewGitClient creates a GitClient backed by git-rest HTTP calls.
@@ -19,34 +35,93 @@ import (
 // (e.g. "/data/vault") — it does NOT need to exist on disk.
 // gitRestClient is the HTTP client created by NewGitRestClient.
 func NewGitClient(gitRestClient GitRestClient, basePath string) GitClient {
+	return newGitClientWithBackoff(gitRestClient, basePath, exponentialBackoff)
+}
+
+func newGitClientWithBackoff(
+	gitRestClient GitRestClient,
+	basePath string,
+	backoff func(attempt int) time.Duration,
+) GitClient {
 	return &gitRestGitClientAdapter{
 		client:   gitRestClient,
 		basePath: strings.TrimRight(basePath, "/"),
+		backoff:  backoff,
 	}
 }
 
 type gitRestGitClientAdapter struct {
 	client   GitRestClient
 	basePath string
+	backoff  func(attempt int) time.Duration
 }
 
 // Compile-time assertion — catches missing methods if the GitClient interface evolves.
 var _ GitClient = (*gitRestGitClientAdapter)(nil)
 
-// EnsureCloned probes git-rest readiness at startup.
+// EnsureCloned probes git-rest readiness at startup, retrying a transient refusal.
+//
+// A single probe used to be fatal, so a refusal that clears on its own — the vault
+// listener not yet accepting, or the new pod's route not yet programmed — exited the
+// process. Each exit cost a Sentry event and left the controller dispatching nothing
+// until its next restart.
 func (a *gitRestGitClientAdapter) EnsureCloned(ctx context.Context) error {
-	ready, err := a.client.IsReady(ctx)
-	if err != nil {
-		return errors.Wrapf(ctx, err, "probe git-rest readiness")
-	}
-	if !ready {
-		return errors.Errorf(
-			ctx,
-			"git-rest is not ready (503); check vault-obsidian-openclaw pod status",
+	var lastErr error
+	for attempt := 1; attempt <= readinessAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return errors.Wrapf(
+					ctx,
+					ctx.Err(),
+					"probe git-rest readiness cancelled during backoff",
+				)
+			case <-time.After(a.backoff(attempt)):
+			}
+		}
+		ready, err := a.probeReadiness(ctx)
+		if err == nil && ready {
+			if attempt > 1 {
+				// Unconditional: the only signal separating a transient refusal
+				// from a permanent one, and the one an operator reads after a rollout.
+				glog.Infof(
+					"git-rest readiness confirmed on attempt %d of %d",
+					attempt,
+					readinessAttempts,
+				)
+			} else {
+				glog.V(2).Infof("git-rest readiness confirmed")
+			}
+			return nil
+		}
+		lastErr = err
+		failure := "git-rest not ready (503)"
+		if err != nil {
+			failure = err.Error()
+		}
+		glog.Warningf(
+			"git-rest readiness probe failed on attempt %d of %d: %s",
+			attempt,
+			readinessAttempts,
+			failure,
 		)
 	}
-	glog.V(2).Infof("git-rest readiness confirmed")
-	return nil
+	if lastErr != nil {
+		return errors.Wrapf(ctx, lastErr, "probe git-rest readiness")
+	}
+	return errors.Errorf(
+		ctx,
+		"git-rest is not ready (503) after %d attempts; check vault-obsidian-openclaw pod status",
+		readinessAttempts,
+	)
+}
+
+// probeReadiness runs one readiness call under its own deadline, so a blackholed
+// endpoint cannot spend the whole retry budget on a single attempt.
+func (a *gitRestGitClientAdapter) probeReadiness(ctx context.Context) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, readinessAttemptTimeout)
+	defer cancel()
+	return a.client.IsReady(probeCtx)
 }
 
 // Pull is a no-op — git-rest manages its own pulls internally.
