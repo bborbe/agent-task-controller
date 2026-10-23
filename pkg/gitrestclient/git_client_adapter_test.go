@@ -125,7 +125,7 @@ var _ = Describe("gitRestGitClientAdapter", func() {
 				return false, stderrors.New("connection refused")
 			})
 
-			_ = adapter.EnsureCloned(ctx)
+			Expect(adapter.EnsureCloned(ctx)).To(HaveOccurred())
 			Expect(deadlines).To(HaveLen(5))
 			for _, deadline := range deadlines {
 				Expect(time.Until(deadline)).To(BeNumerically("<=", 2*time.Second))
