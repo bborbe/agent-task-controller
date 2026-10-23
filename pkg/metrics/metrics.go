@@ -253,7 +253,6 @@ func init() {
 
 	TasksPublishedTotal.WithLabelValues("changed").Add(0)
 	TasksPublishedTotal.WithLabelValues("deleted").Add(0)
-	TasksPublishedTotal.WithLabelValues("skipped_foreign_cluster").Add(0)
 
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)

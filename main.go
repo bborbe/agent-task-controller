@@ -52,27 +52,25 @@ func main() {
 }
 
 type application struct {
-	SentryDSN                string            `required:"true"  arg:"sentry-dsn"                  env:"SENTRY_DSN"                  usage:"SentryDSN"                                                                                                                                                          display:"length"`
+	SentryDSN                string            `required:"true"  arg:"sentry-dsn"                  env:"SENTRY_DSN"                  usage:"SentryDSN"                                                                                                                                                        display:"length"`
 	SentryProxy              string            `required:"false" arg:"sentry-proxy"                env:"SENTRY_PROXY"                usage:"Sentry Proxy"`
 	Listen                   string            `required:"true"  arg:"listen"                      env:"LISTEN"                      usage:"address to listen to"`
 	KafkaBrokers             string            `required:"true"  arg:"kafka-brokers"               env:"KAFKA_BROKERS"               usage:"comma-separated Kafka broker addresses"`
 	Branch                   base.Branch       `required:"true"  arg:"branch"                      env:"BRANCH"                      usage:"Kafka topic prefix branch (develop/live)"`
-	Cluster                  string            `required:"false" arg:"cluster"                     env:"CLUSTER"                     usage:"cluster this controller runs in (e.g. nukedev, nukeprod, sun); a task whose cluster frontmatter names another cluster is not published; empty publishes every task"`
-	PublishUntagged          bool              `required:"false" arg:"publish-untagged"            env:"PUBLISH_UNTAGGED"            usage:"publish tasks without a cluster field; set false on clusters that run only explicitly tagged tasks (sun)"                                                                            default:"true"`
 	TopicPrefix              base.TopicPrefix  `required:"false" arg:"topic-prefix"                env:"TOPIC_PREFIX"                usage:"Explicit Kafka topic prefix; empty means unprefixed topics"`
-	PollInterval             time.Duration     `required:"false" arg:"poll-interval"               env:"POLL_INTERVAL"               usage:"vault polling interval"                                                                                                                                                              default:"60s"`
+	PollInterval             time.Duration     `required:"false" arg:"poll-interval"               env:"POLL_INTERVAL"               usage:"vault polling interval"                                                                                                                                                            default:"60s"`
 	TaskDir                  string            `required:"true"  arg:"task-dir"                    env:"TASK_DIR"                    usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
 	DataDir                  string            `required:"true"  arg:"data-dir"                    env:"DATA_DIR"                    usage:"directory for BoltDB offset storage"`
 	NoSync                   bool              `required:"false" arg:"no-sync"                     env:"NO_SYNC"                     usage:"disable BoltDB fsync (for testing only)"`
-	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                          default:"http://vault-obsidian-openclaw:9090"`
-	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                          display:"length" default:""`
-	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                            default:"dev"`
-	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                               default:"none"`
+	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                        default:"http://vault-obsidian-openclaw:9090"`
+	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                        display:"length" default:""`
+	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                          default:"dev"`
+	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                             default:"none"`
 	BuildDate                *libtime.DateTime `required:"false" arg:"build-date"                  env:"BUILD_DATE"                  usage:"Build timestamp (RFC3339)"`
 	VaultName                string            `required:"true"  arg:"vault-name"                  env:"VAULT_NAME"                  usage:"vault slug this controller serves (e.g. openclaw, personal); legacy empty targetVault defaults to openclaw"`
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
-	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"            display:"length" default:""`
-	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                    default:"7"`
+	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"          display:"length" default:""`
+	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                  default:"7"`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop, +3 lines from spec-016 hoisting the single vaultScanner instance and threading it to the sync loop, result writer and command consumer; extraction would split tightly-coupled wiring.
@@ -149,7 +147,6 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		),
 		trigger,
 		metrics.New(),
-		pkgsync.ClusterFilter{Cluster: a.Cluster, PublishUntagged: a.PublishUntagged},
 	)
 
 	var boltOptions []boltkv.ChangeOptions
