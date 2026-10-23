@@ -666,6 +666,36 @@ var _ = Describe("VaultScanner", func() {
 			cancel()
 			Eventually(done, 200*time.Millisecond).Should(Receive(BeNil()))
 		})
+
+		It("does not scan periodically when the poll interval is zero", func() {
+			content := "---\ntask_identifier: 55555555-5555-4555-8555-555555555555\nstatus: todo\nassignee: claude\n---\n# Trigger-only task"
+			absPath := filepath.Join(tmpDir, taskDir, "trigger-only-task.md")
+			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
+
+			trigger := make(chan struct{}, 1)
+			vs := scanner.NewVaultScanner(fakeGit, taskDir, 0, trigger, metrics.New(), true)
+			scanResults := make(chan scanner.ScanResult, 1)
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() {
+				done <- vs.Run(runCtx, scanResults)
+			}()
+
+			// No periodic scan: nothing arrives until the trigger fires. A
+			// time.NewTicker(0) would panic here rather than merely stay quiet.
+			Consistently(scanResults, 300*time.Millisecond).ShouldNot(Receive())
+
+			trigger <- struct{}{}
+
+			var result scanner.ScanResult
+			Eventually(scanResults, time.Second).Should(Receive(&result))
+			Expect(result.Changed).To(HaveLen(1))
+
+			cancel()
+			Eventually(done, 200*time.Millisecond).Should(Receive(BeNil()))
+		})
 	})
 
 	Describe("runCycle", func() {
