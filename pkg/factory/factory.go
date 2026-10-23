@@ -71,7 +71,7 @@ func CreateCommandConsumer(
 			resolver,
 		),
 	}
-	return cdb.RunCommandConsumerTx(
+	consumer := cdb.RunCommandConsumerTx(
 		saramaClientProvider,
 		syncProducer,
 		db,
@@ -83,4 +83,5 @@ func CreateCommandConsumer(
 		run.NewTrigger(),
 		executors,
 	)
+	return RetryConsumer(consumer, retryConsumerDelay)
 }
