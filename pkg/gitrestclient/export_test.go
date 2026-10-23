@@ -29,3 +29,13 @@ func NewGitRestClientForTest(
 func ExponentialBackoff(attempt int) time.Duration {
 	return exponentialBackoff(attempt)
 }
+
+// NewGitClientForTest creates a GitClient with a custom readiness backoff.
+// Pass a function returning 0 or 1ms to make the retry specs run fast.
+func NewGitClientForTest(
+	gitRestClient GitRestClient,
+	basePath string,
+	backoff func(attempt int) time.Duration,
+) GitClient {
+	return newGitClientWithBackoff(gitRestClient, basePath, backoff)
+}

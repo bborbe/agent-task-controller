@@ -7,6 +7,8 @@ package gitrestclient_test
 import (
 	"context"
 	stderrors "errors"
+	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -14,6 +16,12 @@ import (
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 )
+
+// fastBackoff keeps the readiness-retry specs at millisecond scale; the real
+// 2s/4s/8s/16s schedule is exercised in the cluster, not here.
+func fastBackoff(attempt int) time.Duration {
+	return time.Duration(attempt) * time.Millisecond
+}
 
 var _ = Describe("gitRestGitClientAdapter", func() {
 	var (
@@ -38,28 +46,100 @@ var _ = Describe("gitRestGitClientAdapter", func() {
 		ctx = context.Background()
 		fakeClient = &mocks.GitRestClient{}
 		basePath = "/data/vault"
-		adapter = gitrestclient.NewGitClient(fakeClient, basePath)
+		adapter = gitrestclient.NewGitClientForTest(fakeClient, basePath, fastBackoff)
 	})
 
 	Describe("EnsureCloned", func() {
-		It("returns nil when git-rest is ready", func() {
+		It("returns nil without retrying when git-rest is ready", func() {
 			fakeClient.IsReadyReturns(true, nil)
 			Expect(adapter.EnsureCloned(ctx)).To(Succeed())
+			Expect(fakeClient.IsReadyCallCount()).To(Equal(1))
 		})
 
-		It("returns error when git-rest returns not-ready (503)", func() {
-			fakeClient.IsReadyReturns(false, nil)
-			err := adapter.EnsureCloned(ctx)
+		It("retries a refused connection and succeeds once the endpoint answers", func() {
+			refused := stderrors.New("dial tcp: connect: connection refused")
+			fakeClient.IsReadyReturnsOnCall(0, false, refused)
+			fakeClient.IsReadyReturnsOnCall(1, false, refused)
+			fakeClient.IsReadyReturnsOnCall(2, true, nil)
+
+			Expect(adapter.EnsureCloned(ctx)).To(Succeed())
+			Expect(fakeClient.IsReadyCallCount()).To(Equal(3))
+		})
+
+		It("retries a not-ready (503) answer and succeeds once the endpoint answers", func() {
+			fakeClient.IsReadyReturnsOnCall(0, false, nil)
+			fakeClient.IsReadyReturnsOnCall(1, true, nil)
+
+			Expect(adapter.EnsureCloned(ctx)).To(Succeed())
+			Expect(fakeClient.IsReadyCallCount()).To(Equal(2))
+		})
+
+		It("warns on every refused attempt, quoting the attempt number and the failure", func() {
+			refused := stderrors.New("dial tcp: connect: connection refused")
+			fakeClient.IsReadyReturns(false, refused)
+
+			var err error
+			out := captureGlogWarnings(func() { err = adapter.EnsureCloned(ctx) })
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("not ready"))
+
+			Expect(out).To(ContainSubstring("attempt 1 of 5"))
+			Expect(out).To(ContainSubstring("attempt 5 of 5"))
+			Expect(strings.Count(out, "git-rest readiness probe failed on attempt")).To(Equal(5))
+			Expect(out).To(ContainSubstring("connection refused"))
 		})
 
-		It("returns wrapped error on network failure", func() {
-			someErr := stderrors.New("connection refused")
-			fakeClient.IsReadyReturns(false, someErr)
+		It("warns with the 503 wording when the endpoint answers not-ready", func() {
+			fakeClient.IsReadyReturns(false, nil)
+
+			var err error
+			out := captureGlogWarnings(func() { err = adapter.EnsureCloned(ctx) })
+			Expect(err).To(HaveOccurred())
+			Expect(out).To(ContainSubstring("git-rest not ready (503)"))
+		})
+
+		It("fails after exactly 5 attempts when the endpoint never answers", func() {
+			fakeClient.IsReadyReturns(false, stderrors.New("connection refused"))
+
 			err := adapter.EnsureCloned(ctx)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("probe git-rest readiness"))
+			Expect(fakeClient.IsReadyCallCount()).To(Equal(5))
+		})
+
+		It("fails after exactly 5 attempts when the endpoint never becomes ready", func() {
+			fakeClient.IsReadyReturns(false, nil)
+
+			err := adapter.EnsureCloned(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not ready"))
+			Expect(err.Error()).To(ContainSubstring("after 5 attempts"))
+			Expect(fakeClient.IsReadyCallCount()).To(Equal(5))
+		})
+
+		It("gives each attempt its own deadline so a hang cannot outlive the budget", func() {
+			var deadlines []time.Time
+			fakeClient.IsReadyCalls(func(probeCtx context.Context) (bool, error) {
+				deadline, ok := probeCtx.Deadline()
+				Expect(ok).To(BeTrue())
+				deadlines = append(deadlines, deadline)
+				return false, stderrors.New("connection refused")
+			})
+
+			Expect(adapter.EnsureCloned(ctx)).To(HaveOccurred())
+			Expect(deadlines).To(HaveLen(5))
+			for _, deadline := range deadlines {
+				Expect(time.Until(deadline)).To(BeNumerically("<=", 2*time.Second))
+			}
+		})
+
+		It("stops retrying when the context is cancelled during backoff", func() {
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			fakeClient.IsReadyReturns(false, stderrors.New("connection refused"))
+
+			err := adapter.EnsureCloned(cancelled)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cancelled"))
 		})
 	})
 

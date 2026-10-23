@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **the startup git-rest readiness probe retries with bounded backoff instead of exiting 1 on the first refusal.** Observed 2026-10-23T10:56:01Z on nuke dev: pod `agent-task-controller-openclaw-0` rolled out, probed `/readiness` 25 ms after "application started", got `connect: connection refused` from `vault-obsidian-openclaw:9090`, and exited 1. The vault pod was healthy throughout (`restartCount=0`, ready since 2026-10-22T17:36:49Z), so the refusal was a transient of pod creation that would have cleared on its own — but each exit spent a Sentry event (issue NUKE-DEV-EX, 7 events over 92 days) and left the controller dispatching nothing until its next restart. `EnsureCloned` now makes 5 attempts with 2s/4s/8s/16s backoff, each attempt capped at 2 s so a blackholed endpoint cannot stretch a single attempt to the HTTP client's 30 s. Every refused attempt logs a WARNING quoting the attempt number and the failure, and a probe that never succeeds still fails the process after ~40 s — inside the liveness probe's ~50 s kill window, which binds because the router and `/healthz` are only built after `EnsureCloned` returns.
+
 ## v0.18.0
 
 - feat: **a non-positive `POLL_INTERVAL` disables the periodic vault scan, leaving it trigger-only.** `time.NewTicker` panics on a non-positive duration, so no ticker is constructed at all and the nil channel blocks forever; the scan then runs only when something sends on the trigger. This is the mode a controller needs when another writer is the sole producer of change events and its per-pass read of every task file — 8,573 files per pass on the personal vault — is pure cost.
