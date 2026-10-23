@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.16.2
 
 - fix: **a transient Kafka consume error no longer terminates the controller process.** The command consumer returned its transport error to `service.Run`, which treats it as fatal, so a single `kafka: error while consuming <topic>/<partition>: EOF` exited the binary and Kubernetes restarted it — measured 2026-10-22: **six restarts in 5h31m**, each preceded by a consume EOF at a request-topic lag of 257–265. While the controller is down or behind it scans nothing and publishes nothing, so every in-flight task command waits out the restart and the topic then drains one message at a time (~3.4 s each). `CreateCommandConsumer` now wraps the consumer in `RetryConsumer`, which logs the error and re-enters after 5 s until the context ends; a shutdown returns nil rather than an error. Covered by three cases: clean return stops after one call, a transient error re-enters until it succeeds, and a context cancelled during the wait returns nil without propagating.
 
