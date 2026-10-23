@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.17.0
 
 - fix: **a task pinned to another cluster is published instead of dropped.** The controller skipped a task whose `cluster:` frontmatter named a different cluster, but the task topic keeps only the latest event per task: dropping the pinned version left the executor's view on the last version this controller had published, often an untagged one from before the operator pinned the task, so the executor kept running a task pinned elsewhere. Observed 2026-10-23: task `a2b59b2e` pinned `cluster: sun` ran twice on nuke prod. Every changed task is now published with its pin intact, and executors — which already filter by cluster — make the routing decision. The `CLUSTER` and `PUBLISH_UNTAGGED` settings and the `skipped_foreign_cluster` publish label are removed; untagged tasks are published exactly as before.
 
