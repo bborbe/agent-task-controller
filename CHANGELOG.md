@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a task pinned to another cluster is published instead of dropped.** The controller skipped a task whose `cluster:` frontmatter named a different cluster, but the task topic keeps only the latest event per task: dropping the pinned version left the executor's view on the last version this controller had published, often an untagged one from before the operator pinned the task, so the executor kept running a task pinned elsewhere. Observed 2026-10-23: task `a2b59b2e` pinned `cluster: sun` ran twice on nuke prod. Every changed task is now published with its pin intact, and executors — which already filter by cluster — make the routing decision. The `CLUSTER` and `PUBLISH_UNTAGGED` settings and the `skipped_foreign_cluster` publish label are removed; untagged tasks are published exactly as before.
+
 ## v0.16.1
 
 - fix: **an agent's result write can no longer change a task's `cluster:` pin.** `MergeFrontmatter` overlaid every incoming key, and `cluster` belonged to no ownership guard, so a result built from the spawn-time task snapshot echoed the snapshot's `cluster` back onto the task. Measured 2026-10-21: an operator removed `cluster: sun` from a running pr-reviewer task and the job's result write six minutes later restored it; 27 tasks were re-tagged this way onto a cluster being shut down. `cluster` is now operator-pinned: the on-disk value always wins, an incoming value can never introduce the key when it is absent on disk, and every discarded incoming value is logged on the `ownership guard kept on-disk` line.

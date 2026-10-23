@@ -53,7 +53,6 @@ var _ = Describe("SyncLoop", func() {
 			fakePublisher,
 			make(chan struct{}, 1),
 			metrics.New(),
-			pkgsync.ClusterFilter{},
 		)
 		runErr = make(chan error, 1)
 		sl := syncLoop
@@ -79,6 +78,21 @@ var _ = Describe("SyncLoop", func() {
 		Eventually(fakePublisher.PublishChangedCallCount, time.Second).Should(Equal(1))
 		_, publishedTask := fakePublisher.PublishChangedArgsForCall(0)
 		Expect(publishedTask.TaskIdentifier).To(Equal(task.TaskIdentifier))
+	})
+
+	It("publishes a task pinned to another cluster with its pin intact", func() {
+		task := lib.Task{
+			TaskIdentifier: lib.TaskIdentifier("test-uuid"),
+			Frontmatter:    lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"},
+			Content:        lib.TaskContent("# Test"),
+		}
+		fakePublisher.PublishChangedReturns(nil)
+		resultsCh <- scanner.ScanResult{Changed: []lib.Task{task}}
+
+		Eventually(fakePublisher.PublishChangedCallCount, time.Second).Should(Equal(1))
+		Consistently(fakePublisher.PublishChangedCallCount, 100*time.Millisecond).Should(Equal(1))
+		_, publishedTask := fakePublisher.PublishChangedArgsForCall(0)
+		Expect(publishedTask.Frontmatter["cluster"]).To(Equal("sun"))
 	})
 
 	It("calls PublishDeleted for a deleted identifier in scan result", func() {
