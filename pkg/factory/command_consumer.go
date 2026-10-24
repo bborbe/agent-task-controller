@@ -28,12 +28,12 @@ import (
 // replay.
 func newCommandOffsetManager(
 	saramaClient libkafka.SaramaClient,
-	db libkv.DB,
+	offsetStore libkafka.OffsetStore,
 	currentDateTime libtime.CurrentDateTimeGetter,
 ) libkafka.OffsetManager {
 	return libkafka.NewTTLSeekOffsetManager(
 		saramaClient,
-		libkafka.NewOffsetStore(db),
+		offsetStore,
 		libtime.Duration(commandExpireDuration),
 		currentDateTime,
 	)
@@ -58,6 +58,12 @@ func newCommandHandler(
 // rather than through cdb.RunCommandConsumerTx so the offset manager and the handler wrapper above
 // can be supplied.
 //
+// The sarama client is obtained from the provider for the TTL seek only and is deliberately not
+// closed here: the provider owns its clients and main.go closes the provider. With the reused
+// provider this repository selects, the returned wrapper's Close is a documented no-op; closing it
+// per attempt would add nothing, and a pooled provider would want it returned once per run rather
+// than once per RetryConsumer attempt.
+//
 // The seek target is now minus commandExpireDuration in the broker's message-timestamp space,
 // while the drop predicate reads the command's own requestTime. The two agree only while producer
 // and consumer clocks agree: a producer running ahead can stamp a requestTime inside the window on
@@ -80,13 +86,10 @@ func newCommandConsumerFunc(
 		if err != nil {
 			return errors.Wrap(ctx, err, "create sarama client failed")
 		}
-		defer func() {
-			_ = saramaClient.Close()
-		}()
 		return libkafka.NewOffsetConsumerHighwaterMarksBatchWithProvider(
 			saramaClientProvider,
 			lib.TaskV1SchemaID.CommandTopic(topicPrefix),
-			newCommandOffsetManager(saramaClient, db, currentDateTime),
+			newCommandOffsetManager(saramaClient, libkafka.NewOffsetStore(db), currentDateTime),
 			newCommandHandler(handler, currentDateTime),
 			batchSize,
 			run.NewTrigger(),
