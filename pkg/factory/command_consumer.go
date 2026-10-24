@@ -30,7 +30,8 @@ import (
 //     transaction that NewMessageHandlerBatchTxUpdate opens. NewMessageHandlerBatchFilter composed
 //     outside it drops an expired command before the batch is handed to the transaction, so a
 //     batch whose commands have all expired — the shape every replayed batch takes — opens no
-//     transaction at all, and a partly expired batch never carries the dead messages into it.
+//     handler transaction at all (the single offset commit after the batch still writes), and a
+//     partly expired batch never carries the dead messages into it.
 //
 // batchSize is threaded through unchanged: it is the only lever over how many messages share one
 // libkv.Tx, so hardcoding it here would silently undo the batch-tx change.

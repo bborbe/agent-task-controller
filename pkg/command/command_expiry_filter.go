@@ -23,8 +23,10 @@ import (
 // transaction and its fsync. Composed outside, the same command is dropped before the
 // transaction exists.
 //
-// A message that does not unmarshal as a command is kept, so the handler reports the parse
-// error exactly as it would without this filter; the predicate never hides a malformed message.
+// A message that is not valid JSON is kept, so the handler reports the parse error exactly as it
+// would without this filter. A payload that parses but carries no RequestTime is not kept: it
+// unmarshals with a zero RequestTime, the comparison reads that as long expired, and the message
+// is dropped — the same verdict the handler reaches, one step earlier.
 func NewExpiredCommandSkip(
 	commandExpireDuration time.Duration,
 	currentDateTime libtime.CurrentDateTimeGetter,

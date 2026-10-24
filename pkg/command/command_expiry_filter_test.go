@@ -54,7 +54,16 @@ var _ = Describe("NewExpiredCommandSkip", func() {
 		Expect(skip(msg)).To(BeFalse())
 	})
 
-	It("keeps a message that does not unmarshal as a command", func() {
+	It("keeps a message that is not valid JSON", func() {
 		Expect(skip(&sarama.ConsumerMessage{Value: []byte("not json")})).To(BeFalse())
+	})
+
+	It("drops a payload that parses but carries no RequestTime", func() {
+		Expect(skip(&sarama.ConsumerMessage{Value: []byte("{}")})).To(BeTrue())
+	})
+
+	It("keeps a command with a future RequestTime", func() {
+		msg := message(base.Command{RequestTime: now.Add(5 * stdtime.Minute)})
+		Expect(skip(msg)).To(BeFalse())
 	})
 })
