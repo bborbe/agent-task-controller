@@ -14,7 +14,7 @@ require (
 	github.com/bborbe/cqrs v0.6.12
 	github.com/bborbe/errors v1.6.3
 	github.com/bborbe/http v1.26.30
-	github.com/bborbe/kafka v1.28.7-0.20261024170842-b009f47404fc
+	github.com/bborbe/kafka v1.29.0
 	github.com/bborbe/kv v1.21.19
 	github.com/bborbe/log v1.7.5
 	github.com/bborbe/metrics v0.6.7
