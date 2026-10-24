@@ -71,6 +71,7 @@ type application struct {
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
 	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"          display:"length" default:""`
 	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                  default:"7"`
+	CommandBatchSize         int               `required:"false" arg:"command-batch-size"          env:"COMMAND_BATCH_SIZE"          usage:"max command messages sharing one libkv.Tx per batch; 1 reproduces the per-message BoltDB transaction cost"                                                                          default:"100"`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop, +3 lines from spec-016 hoisting the single vaultScanner instance and threading it to the sync loop, result writer and command consumer; extraction would split tightly-coupled wiring.
@@ -88,6 +89,9 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	}
 	if a.SupersedeLookback < 1 {
 		return errors.Errorf(ctx, "SUPERSEDE_LOOKBACK must be >= 1, got %d", a.SupersedeLookback)
+	}
+	if a.CommandBatchSize < 1 {
+		return errors.Errorf(ctx, "COMMAND_BATCH_SIZE must be >= 1, got %d", a.CommandBatchSize)
 	}
 	libmetrics.NewBuildInfoMetrics().SetBuildInfo(a.BuildGitVersion, a.BuildGitCommit, a.BuildDate)
 	glog.V(1).
@@ -199,6 +203,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		saramaClientProvider,
 		syncProducer,
 		db,
+		libkafka.BatchSize(a.CommandBatchSize),
 		a.TopicPrefix,
 		resultWriter,
 		vaultScanner,

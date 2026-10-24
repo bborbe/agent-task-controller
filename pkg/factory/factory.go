@@ -33,10 +33,17 @@ import (
 const commandExpireDuration = 60 * time.Minute
 
 // CreateCommandConsumer wires a CQRS command consumer for agent-task-v1-request.
+//
+// batchSize bounds how many messages share one libkv.Tx. The handler composition
+// (cdb.CreateCommandMessageHandlerBatch) is already MessageHandlerBatchTx — one
+// db.Update per batch — so a batch size of 1 makes every message pay its own
+// BoltDB transaction and fsync. Raising it is the only lever that changes the
+// transaction count; the handler choice itself is already the batch variant.
 func CreateCommandConsumer(
 	saramaClientProvider libkafka.SaramaClientProvider,
 	syncProducer libkafka.SyncProducer,
 	db libkv.DB,
+	batchSize libkafka.BatchSize,
 	topicPrefix base.TopicPrefix,
 	resultWriter result.ResultWriter,
 	resolver result.TaskPathResolver,
@@ -76,7 +83,7 @@ func CreateCommandConsumer(
 		syncProducer,
 		db,
 		lib.TaskV1SchemaID,
-		libkafka.BatchSize(1),
+		batchSize,
 		topicPrefix,
 		true, // ignoreUnsupported: skip commands with unknown operations
 		commandExpireDuration,
