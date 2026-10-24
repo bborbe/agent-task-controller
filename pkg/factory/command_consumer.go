@@ -26,12 +26,18 @@ import (
 //     the initial offset, so a process with no committed offset replays the whole retained topic.
 //     NewTTLSeekOffsetManager instead starts at the first offset at or after now minus
 //     commandExpireDuration, which is the oldest command that can still be executed.
-//   - the expiry check. cdb.CreateCommandMessageHandlerBatch decides expiry inside the transaction
-//     that NewMessageHandlerBatchTxUpdate opens for every batch. NewMessageHandlerBatchFilter
-//     composed outside it drops an expired command before the transaction exists.
+//   - the expiry check. cdb.CreateCommandMessageHandlerBatch decides expiry inside the batch
+//     transaction that NewMessageHandlerBatchTxUpdate opens. NewMessageHandlerBatchFilter composed
+//     outside it drops an expired command before the batch is handed to the transaction, so a
+//     batch whose commands have all expired — the shape every replayed batch takes — opens no
+//     transaction at all, and a partly expired batch never carries the dead messages into it.
+//
+// batchSize is threaded through unchanged: it is the only lever over how many messages share one
+// libkv.Tx, so hardcoding it here would silently undo the batch-tx change.
 func newCommandConsumerFunc(
 	saramaClientProvider libkafka.SaramaClientProvider,
 	db libkv.DB,
+	batchSize libkafka.BatchSize,
 	topicPrefix base.TopicPrefix,
 	handler libkafka.MessageHandlerBatch,
 	currentDateTime libtime.CurrentDateTimeGetter,
@@ -57,7 +63,7 @@ func newCommandConsumerFunc(
 				command.NewExpiredCommandSkip(commandExpireDuration, currentDateTime),
 				handler,
 			),
-			libkafka.BatchSize(1),
+			batchSize,
 			run.NewTrigger(),
 			log.DefaultSamplerFactory,
 		).Consume(ctx)
