@@ -30,7 +30,8 @@ import (
 // convergenceGitClient for the methods the index specs never exercise.
 type indexGitClient struct {
 	*convergenceGitClient
-	readFileCalls int
+	readFileCalls  int
+	writeFileCalls int
 }
 
 var _ gitclient.GitClient = (*indexGitClient)(nil)
@@ -57,6 +58,7 @@ func (c *indexGitClient) ReadFile(_ context.Context, relPath string) ([]byte, er
 }
 
 func (c *indexGitClient) WriteFile(_ context.Context, relPath string, content []byte) error {
+	c.writeFileCalls++
 	return os.WriteFile(
 		filepath.Join(c.path, relPath),
 		content,
@@ -236,5 +238,94 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(found).To(BeTrue())
 		Expect(path).To(Equal("alpha.md"))
+	})
+
+	// A trigger-only deployment (POLL_INTERVAL=0s) runs no scan cycle at all, so the
+	// cycle is not the publisher the index can rely on. These specs pin the boot build
+	// that replaces it.
+	Context("trigger-only mode (poll interval zero)", func() {
+		triggerOnly := func() *vaultScanner {
+			built, ok := NewGitRestVaultScanner(
+				client, ".", 0, make(chan struct{}), metrics.New(), true,
+			).(*vaultScanner)
+			Expect(ok).To(BeTrue())
+			return built
+		}
+
+		It("builds the index at start without running a scan cycle", func() {
+			write("alpha.md", taskFile(alphaID))
+			write("beta.md", taskFile(betaID))
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+
+			path, found, err = built.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+
+			// A file created after the pass still misses, so the walk stays the
+			// recovery for it.
+			_, found, err = built.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+		})
+
+		It("skips a file with no valid task_identifier instead of repairing it", func() {
+			write("alpha.md", taskFile(alphaID))
+			write("plain.md", "---\nstatus: in_progress\nassignee: claude\n---\nbody\n")
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+
+			// No injection: the identifier-less file is untouched on disk.
+			content, readErr := os.ReadFile(
+				filepath.Join(dir, "plain.md"),
+			) // #nosec G304 -- test-only path
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(content)).To(Equal(
+				"---\nstatus: in_progress\nassignee: claude\n---\nbody\n",
+			))
+		})
+
+		It("publishes no changed task and writes nothing while building", func() {
+			write("alpha.md", taskFile(alphaID))
+			before := client.readFileCalls
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			Expect(client.readFileCalls).To(Equal(before + 1))
+			Expect(client.writeFileCalls).To(Equal(0))
+			Consistently(results).ShouldNot(Receive())
+		})
+
+		It("builds the index from Run before it starts waiting", func() {
+			write("alpha.md", taskFile(alphaID))
+
+			built := triggerOnly()
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go func() {
+				defer GinkgoRecover()
+				Expect(built.Run(runCtx, results)).To(Succeed())
+			}()
+
+			Eventually(func() bool {
+				_, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+				Expect(err).NotTo(HaveOccurred())
+				return found
+			}).Should(BeTrue())
+		})
 	})
 })
