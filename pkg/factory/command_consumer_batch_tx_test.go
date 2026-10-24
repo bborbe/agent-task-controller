@@ -88,14 +88,13 @@ var _ = Describe("command consumer batch transaction", func() {
 		Expect(db.UpdateCallCount()).To(Equal(1))
 	})
 
-	It("propagates a transaction failure so the batch commits nothing", func() {
-		db.UpdateReturns(stderrors.New("commit failed"))
+	It("propagates a transaction failure to the consumer", func() {
+		txErr := stderrors.New("commit failed")
+		db.UpdateReturns(txErr)
 
 		err := messageBatch.ConsumeMessages(ctx, []*sarama.ConsumerMessage{expiredMessage()})
-		Expect(err).NotTo(BeNil())
-		Expect(err.Error()).To(ContainSubstring("commit failed"))
-		// The callback never ran: a failed transaction applies none of the batch,
-		// so the consumer does not advance the offset past it.
+		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(txErr))
 		Expect(db.UpdateCallCount()).To(Equal(1))
 	})
 
