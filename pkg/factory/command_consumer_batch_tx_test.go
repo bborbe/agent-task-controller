@@ -7,6 +7,7 @@ package factory_test
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -84,6 +85,16 @@ var _ = Describe("command consumer batch transaction", func() {
 
 		err := messageBatch.ConsumeMessages(ctx, messages)
 		Expect(err).To(BeNil())
+		Expect(db.UpdateCallCount()).To(Equal(1))
+	})
+
+	It("propagates a transaction failure to the consumer", func() {
+		txErr := stderrors.New("commit failed")
+		db.UpdateReturns(txErr)
+
+		err := messageBatch.ConsumeMessages(ctx, []*sarama.ConsumerMessage{expiredMessage()})
+		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(txErr))
 		Expect(db.UpdateCallCount()).To(Equal(1))
 	})
 
