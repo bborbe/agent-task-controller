@@ -38,7 +38,8 @@ type VaultScanner interface {
 	// Exported for use in scanner_test package; prefer Run() in production.
 	RunCycle(ctx context.Context, results chan<- ScanResult)
 	// Resolve returns the vault-relative path of the task file carrying id, from the
-	// identifier→path index the last completed scan cycle published.
+	// identifier→path index the last completed scan cycle — or, in trigger-only mode,
+	// the boot build — published.
 	// It returns ("", false, nil) when the index does not hold id — an unknown
 	// identifier is not an error — and ("", false, err) naming both paths when two
 	// files carry id. The index is empty until the first cycle completes.
@@ -176,6 +177,14 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 		ticker := time.NewTicker(v.pollInterval)
 		defer ticker.Stop()
 		tick = ticker.C
+	} else {
+		// Trigger-only mode has no cycle to publish the identifier→path index, and
+		// nothing in that deployment fires the trigger: the index then stays empty
+		// for the pod's whole life, every lookup misses, and each command pays the
+		// full directory walk. Build it once here so a lookup for a file that
+		// already existed is one read; a cycle, when one does run, still
+		// republishes it from its own bookkeeping.
+		v.buildIndex(ctx)
 	}
 	for {
 		select {
@@ -291,6 +300,81 @@ func (v *vaultScanner) publishIndex() {
 	v.indexMutex.Lock()
 	defer v.indexMutex.Unlock()
 	v.index = index
+}
+
+// buildIndex populates the identifier→path index from one read-only pass over the
+// task directory, without running a scan cycle.
+//
+// A scan cycle is the only other publisher of this index, and a deployment that sets
+// a non-positive POLL_INTERVAL never runs one: the vault is then scanned only on a
+// trigger, and nothing in that deployment fires the trigger. The index therefore
+// stays empty for the pod's whole life, every Resolve misses, and every command pays
+// the full directory walk — measured on the prod openclaw controller at 0 hits /
+// 606 misses and a median 18 s per lookup over 17 h, which serialized the
+// single-threaded command consumer and pushed tail commands past the 60-minute
+// expiry. Building it once at start costs that same single pass and turns every
+// later lookup for a file that already existed into one read.
+//
+// Deliberately narrower than scanFiles: it does not pull, inject a missing
+// task_identifier, write, commit or publish a changed task, so trigger-only
+// deployments keep their "no vault writes from the scanner" property and no
+// vault's full task set is republished as changed on every restart. A file without
+// a valid identifier is skipped rather than repaired — the index is a lookup cache,
+// not a repair path, and the walk stays the recovery. Files created after this pass
+// miss and fall back to the walk, exactly as before; the bookkeeping (hashes) is
+// left untouched so a later cycle's change detection is unchanged.
+func (v *vaultScanner) buildIndex(ctx context.Context) {
+	// A log-only elapsed measurement, matching the direct time.Now scanFiles already
+	// uses for its own timing: no clock value reaches a task, a write or a decision.
+	start := time.Now()
+	glob := v.taskDir + "/*.md"
+	paths, err := v.ops.listFiles(ctx, glob)
+	if err != nil {
+		glog.Warningf("buildIndex: list %s failed: %v", glob, err)
+		return
+	}
+	index := make(map[lib.TaskIdentifier][]string, len(paths))
+	skipped := 0
+	for _, relPath := range paths {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		content, readErr := v.ops.readFile(ctx, relPath)
+		if readErr != nil {
+			skipped++
+			continue
+		}
+		fmYAML, fmErr := extractFrontmatter(ctx, content)
+		if fmErr != nil {
+			skipped++
+			continue
+		}
+		var fm struct {
+			TaskIdentifier string `yaml:"task_identifier"`
+		}
+		if umErr := yaml.Unmarshal([]byte(fmYAML), &fm); umErr != nil {
+			skipped++
+			continue
+		}
+		if fm.TaskIdentifier == "" || !isValidUUID(fm.TaskIdentifier) {
+			skipped++
+			continue
+		}
+		id := lib.TaskIdentifier(fm.TaskIdentifier)
+		index[id] = append(index[id], relPath)
+	}
+	v.indexMutex.Lock()
+	v.index = index
+	v.indexMutex.Unlock()
+	glog.V(2).Infof(
+		"buildIndex: %d identifier(s) from %d file(s) in %v (%d skipped)",
+		len(index),
+		len(paths),
+		time.Since(start),
+		skipped,
+	)
 }
 
 // Resolve returns the vault-relative path of the task file carrying id, from the
