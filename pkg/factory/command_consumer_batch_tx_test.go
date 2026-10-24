@@ -123,5 +123,28 @@ var _ = Describe("command consumer batch transaction", func() {
 			Expect(err).To(BeNil())
 			Expect(db.UpdateCallCount()).To(Equal(1))
 		})
+
+		It("forwards only the live messages of a mixed batch", func() {
+			inner := &kafkamocks.KafkaMessageHandlerBatch{}
+			live := &sarama.ConsumerMessage{Value: []byte("not-json")}
+			mixed := libkafka.NewMessageHandlerBatchFilter(
+				command.NewExpiredCommandSkip(
+					expiryWindow,
+					libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
+						return libtime.DateTime(time.Now())
+					}),
+				),
+				inner,
+			)
+
+			err := mixed.ConsumeMessages(
+				ctx,
+				[]*sarama.ConsumerMessage{expiredMessage(), live, expiredMessage()},
+			)
+			Expect(err).To(BeNil())
+			Expect(inner.ConsumeMessagesCallCount()).To(Equal(1))
+			_, forwarded := inner.ConsumeMessagesArgsForCall(0)
+			Expect(forwarded).To(Equal([]*sarama.ConsumerMessage{live}))
+		})
 	})
 })
