@@ -38,7 +38,8 @@ type VaultScanner interface {
 	// Exported for use in scanner_test package; prefer Run() in production.
 	RunCycle(ctx context.Context, results chan<- ScanResult)
 	// Resolve returns the vault-relative path of the task file carrying id, from the
-	// identifier→path index the last completed scan cycle published.
+	// identifier→path index the last completed scan cycle — or, in trigger-only mode,
+	// the boot build — published.
 	// It returns ("", false, nil) when the index does not hold id — an unknown
 	// identifier is not an error — and ("", false, err) naming both paths when two
 	// files carry id. The index is empty until the first cycle completes.
