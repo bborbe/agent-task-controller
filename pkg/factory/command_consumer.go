@@ -33,6 +33,13 @@ import (
 //     handler transaction at all (the single offset commit after the batch still writes), and a
 //     partly expired batch never carries the dead messages into it.
 //
+// The seek target is now minus commandExpireDuration in the broker's message-timestamp space,
+// while the drop predicate reads the command's own requestTime. The two agree only while producer
+// and consumer clocks agree: a producer running ahead can stamp a requestTime inside the window on
+// a message appended before it, and the seek then skips a command the old oldest-first start would
+// have executed. That is accepted — it applies only when the offset store is empty, and it is what
+// removes the multi-day replay.
+//
 // batchSize is threaded through unchanged: it is the only lever over how many messages share one
 // libkv.Tx, so hardcoding it here would silently undo the batch-tx change.
 func newCommandConsumerFunc(
