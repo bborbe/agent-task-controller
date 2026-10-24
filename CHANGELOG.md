@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.18.3
 
 - fix: **the command consumer shares one BoltDB transaction across a batch instead of paying one per message.** `CreateCommandConsumer` passed `libkafka.BatchSize(1)`, and the handler composition it feeds is already the batch-tx variant (`cdb.CreateCommandMessageHandlerBatch` → `NewMessageHandlerBatchTxUpdate` → `NewMessageHandlerBatchTx` → per-message `NewMessageHandlerTxSkipErrors`), so a batch size of 1 made every message open its own `db.Update` and fsync. The size is now the `COMMAND_BATCH_SIZE` argument (default 100), so a batch of N messages opens one handler transaction plus one offset transaction instead of N of each. Skip semantics are unchanged: the skip wrapper sits inside the batch, so an expired or failing message is logged and skipped without aborting the batch, and the offset still advances only after the whole batch commits. A new test pins the property: a batch of 100 expired messages, and a batch containing a malformed message, each perform exactly one `db.Update`.
 
