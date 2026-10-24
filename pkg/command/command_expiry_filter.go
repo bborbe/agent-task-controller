@@ -14,7 +14,8 @@ import (
 )
 
 // NewExpiredCommandSkip returns a predicate reporting whether msg carries a command whose
-// RequestTime is older than commandExpireDuration.
+// RequestTime is older than commandExpireDuration. True means the message is dropped; false
+// means it is passed on.
 //
 // The predicate exists to be composed outside cdb.CreateCommandMessageHandlerBatch. The handler
 // already discards an expired command, but it does so from inside the transaction that
