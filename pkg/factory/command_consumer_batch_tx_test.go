@@ -7,6 +7,7 @@ package factory_test
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -81,6 +82,17 @@ var _ = Describe("command consumer batch transaction", func() {
 
 		err := messageBatch.ConsumeMessages(ctx, messages)
 		Expect(err).To(BeNil())
+		Expect(db.UpdateCallCount()).To(Equal(1))
+	})
+
+	It("propagates a transaction failure so the batch commits nothing", func() {
+		db.UpdateReturns(stderrors.New("commit failed"))
+
+		err := messageBatch.ConsumeMessages(ctx, []*sarama.ConsumerMessage{expiredMessage()})
+		Expect(err).NotTo(BeNil())
+		Expect(err.Error()).To(ContainSubstring("commit failed"))
+		// The callback never ran: a failed transaction applies none of the batch,
+		// so the consumer does not advance the offset past it.
 		Expect(db.UpdateCallCount()).To(Equal(1))
 	})
 })
