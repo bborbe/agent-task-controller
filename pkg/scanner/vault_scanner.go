@@ -323,6 +323,8 @@ func (v *vaultScanner) publishIndex() {
 // miss and fall back to the walk, exactly as before; the bookkeeping (hashes) is
 // left untouched so a later cycle's change detection is unchanged.
 func (v *vaultScanner) buildIndex(ctx context.Context) {
+	// A log-only elapsed measurement, matching the direct time.Now scanFiles already
+	// uses for its own timing: no clock value reaches a task, a write or a decision.
 	start := time.Now()
 	glob := v.taskDir + "/*.md"
 	paths, err := v.ops.listFiles(ctx, glob)
@@ -333,8 +335,10 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 	index := make(map[lib.TaskIdentifier][]string, len(paths))
 	skipped := 0
 	for _, relPath := range paths {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return
+		default:
 		}
 		content, readErr := v.ops.readFile(ctx, relPath)
 		if readErr != nil {
@@ -363,7 +367,7 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 	v.indexMutex.Lock()
 	v.index = index
 	v.indexMutex.Unlock()
-	glog.Infof(
+	glog.V(2).Infof(
 		"buildIndex: %d identifier(s) from %d file(s) in %v (%d skipped)",
 		len(index),
 		len(paths),
