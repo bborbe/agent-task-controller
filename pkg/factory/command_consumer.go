@@ -19,19 +19,44 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
-// newCommandConsumerFunc returns the run.Func that consumes the request topic. It is composed by
-// hand rather than through cdb.RunCommandConsumerTx for two reasons:
-//
-//   - the start offset. RunCommandConsumerTx hardcodes NewStoreOffsetManager with OffsetOldest as
-//     the initial offset, so a process with no committed offset replays the whole retained topic.
-//     NewTTLSeekOffsetManager instead starts at the first offset at or after now minus
-//     commandExpireDuration, which is the oldest command that can still be executed.
-//   - the expiry check. cdb.CreateCommandMessageHandlerBatch decides expiry inside the batch
-//     transaction that NewMessageHandlerBatchTxUpdate opens. NewMessageHandlerBatchFilter composed
-//     outside it drops an expired command before the batch is handed to the transaction, so a
-//     batch whose commands have all expired — the shape every replayed batch takes — opens no
-//     handler transaction at all (the single offset commit after the batch still writes), and a
-//     partly expired batch never carries the dead messages into it.
+// newCommandOffsetManager returns the offset manager the command consumer starts from. It is
+// NewTTLSeekOffsetManager rather than the NewStoreOffsetManager that cdb.RunCommandConsumerTx
+// hardcodes, because that one resolves a partition with no committed offset to OffsetOldest and
+// replays the whole retained topic. The TTL-seek manager starts at the first offset at or after
+// now minus commandExpireDuration — the oldest command that can still be executed — and reports
+// OffsetNewest from both InitialOffset and FallbackOffset so no recovery path reinstates the
+// replay.
+func newCommandOffsetManager(
+	saramaClient libkafka.SaramaClient,
+	db libkv.DB,
+	currentDateTime libtime.CurrentDateTimeGetter,
+) libkafka.OffsetManager {
+	return libkafka.NewTTLSeekOffsetManager(
+		saramaClient,
+		libkafka.NewOffsetStore(db),
+		libtime.Duration(commandExpireDuration),
+		currentDateTime,
+	)
+}
+
+// newCommandHandler places the expiry filter outside the batch handler, so an expired command is
+// dropped before the batch reaches the transaction that cdb.CreateCommandMessageHandlerBatch opens
+// for it. A batch whose commands have all expired — the shape every replayed batch takes — then
+// opens no handler transaction at all (the single offset commit after the batch still writes), and
+// a partly expired batch never carries the dead messages into one.
+func newCommandHandler(
+	handler libkafka.MessageHandlerBatch,
+	currentDateTime libtime.CurrentDateTimeGetter,
+) libkafka.MessageHandlerBatch {
+	return libkafka.NewMessageHandlerBatchFilter(
+		command.NewExpiredCommandSkip(commandExpireDuration, currentDateTime),
+		handler,
+	)
+}
+
+// newCommandConsumerFunc returns the run.Func that consumes the request topic, composed by hand
+// rather than through cdb.RunCommandConsumerTx so the offset manager and the handler wrapper above
+// can be supplied.
 //
 // The seek target is now minus commandExpireDuration in the broker's message-timestamp space,
 // while the drop predicate reads the command's own requestTime. The two agree only while producer
@@ -61,16 +86,8 @@ func newCommandConsumerFunc(
 		return libkafka.NewOffsetConsumerHighwaterMarksBatchWithProvider(
 			saramaClientProvider,
 			lib.TaskV1SchemaID.CommandTopic(topicPrefix),
-			libkafka.NewTTLSeekOffsetManager(
-				saramaClient,
-				libkafka.NewOffsetStore(db),
-				libtime.Duration(commandExpireDuration),
-				currentDateTime,
-			),
-			libkafka.NewMessageHandlerBatchFilter(
-				command.NewExpiredCommandSkip(commandExpireDuration, currentDateTime),
-				handler,
-			),
+			newCommandOffsetManager(saramaClient, db, currentDateTime),
+			newCommandHandler(handler, currentDateTime),
 			batchSize,
 			run.NewTrigger(),
 			log.DefaultSamplerFactory,
