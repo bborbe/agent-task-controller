@@ -17,8 +17,11 @@ import (
 	kafkamocks "github.com/bborbe/kafka/mocks"
 	libkv "github.com/bborbe/kv"
 	kvmocks "github.com/bborbe/kv/mocks"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
 // This suite pins the property the controller depends on: the command handler
@@ -82,5 +85,66 @@ var _ = Describe("command consumer batch transaction", func() {
 		err := messageBatch.ConsumeMessages(ctx, messages)
 		Expect(err).To(BeNil())
 		Expect(db.UpdateCallCount()).To(Equal(1))
+	})
+
+	// The consumer composes the expiry filter outside the batch handler, so an all-expired
+	// batch — the shape every replayed batch takes — never reaches db.Update at all.
+	Context("with the pre-transaction expiry filter composed outside", func() {
+		var filteredBatch libkafka.MessageHandlerBatch
+
+		BeforeEach(func() {
+			filteredBatch = libkafka.NewMessageHandlerBatchFilter(
+				command.NewExpiredCommandSkip(
+					expiryWindow,
+					libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
+						return libtime.DateTime(time.Now())
+					}),
+				),
+				messageBatch,
+			)
+		})
+
+		It("opens no transaction when every command in the batch has expired", func() {
+			messages := make([]*sarama.ConsumerMessage, 100)
+			for i := range messages {
+				messages[i] = expiredMessage()
+			}
+
+			err := filteredBatch.ConsumeMessages(ctx, messages)
+			Expect(err).To(BeNil())
+			Expect(db.UpdateCallCount()).To(Equal(0))
+		})
+
+		It("still opens one transaction for a message the filter keeps", func() {
+			err := filteredBatch.ConsumeMessages(
+				ctx,
+				[]*sarama.ConsumerMessage{{Value: []byte("not-json")}},
+			)
+			Expect(err).To(BeNil())
+			Expect(db.UpdateCallCount()).To(Equal(1))
+		})
+
+		It("forwards only the live messages of a mixed batch", func() {
+			inner := &kafkamocks.KafkaMessageHandlerBatch{}
+			live := &sarama.ConsumerMessage{Value: []byte("not-json")}
+			mixed := libkafka.NewMessageHandlerBatchFilter(
+				command.NewExpiredCommandSkip(
+					expiryWindow,
+					libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
+						return libtime.DateTime(time.Now())
+					}),
+				),
+				inner,
+			)
+
+			err := mixed.ConsumeMessages(
+				ctx,
+				[]*sarama.ConsumerMessage{expiredMessage(), live, expiredMessage()},
+			)
+			Expect(err).To(BeNil())
+			Expect(inner.ConsumeMessagesCallCount()).To(Equal(1))
+			_, forwarded := inner.ConsumeMessagesArgsForCall(0)
+			Expect(forwarded).To(Equal([]*sarama.ConsumerMessage{live}))
+		})
 	})
 })

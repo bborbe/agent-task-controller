@@ -78,17 +78,26 @@ func CreateCommandConsumer(
 			resolver,
 		),
 	}
-	consumer := cdb.RunCommandConsumerTx(
-		saramaClientProvider,
-		syncProducer,
+	// Composed by hand rather than through cdb.RunCommandConsumerTx; the reasons live with the
+	// composition in newCommandConsumerFunc.
+	handler := cdb.CreateCommandMessageHandlerBatch(
 		db,
+		syncProducer,
 		lib.TaskV1SchemaID,
-		batchSize,
-		topicPrefix,
 		true, // ignoreUnsupported: skip commands with unknown operations
+		topicPrefix,
 		commandExpireDuration,
-		run.NewTrigger(),
-		executors,
+		executors...,
 	)
-	return RetryConsumer(consumer, retryConsumerDelay)
+	return RetryConsumer(
+		newCommandConsumerFunc(
+			saramaClientProvider,
+			db,
+			batchSize,
+			topicPrefix,
+			handler,
+			currentDateTime,
+		),
+		retryConsumerDelay,
+	)
 }
