@@ -165,6 +165,85 @@ var _ = Describe("ResultWriter identifier index", func() {
 		Expect(written).To(ContainSubstring("phase: done"))
 	})
 
+	It("records the matched path after a walk that matched exactly one file", func() {
+		writeTaskFile(
+			"walked.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nOld content\n",
+		)
+
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
+		Expect(resolver.RecordCallCount()).To(Equal(1))
+		_, id, relPath := resolver.RecordArgsForCall(0)
+		Expect(id).To(Equal(lib.TaskIdentifier(indexedID)))
+		Expect(relPath).To(Equal("tasks/walked.md"))
+	})
+
+	It("does not record on an index hit", func() {
+		writeTaskFile(
+			"indexed.md",
+			"---\ntask_identifier: "+indexedID+
+				"\nstatus: in-progress\nassignee: backtest-agent\n---\nOld content\n",
+		)
+		resolver.ResolveReturns("tasks/indexed.md", true, nil)
+
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
+		Expect(resolver.RecordCallCount()).To(Equal(0))
+	})
+
+	It("does not record when the walk matches nothing", func() {
+		writeTaskFile(
+			"other.md",
+			"---\ntask_identifier: "+missingID+"\nstatus: in-progress\n---\nOther\n",
+		)
+
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
+		Expect(resolver.RecordCallCount()).To(Equal(0))
+	})
+
+	It("does not record when the walk finds a duplicate", func() {
+		writeTaskFile(
+			"first.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nFirst\n",
+		)
+		writeTaskFile(
+			"second.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nSecond\n",
+		)
+
+		writer := newWriter(resolver)
+		err := writer.WriteResult(ctx, payloadFor(indexedID))
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + indexedID))
+		Expect(resolver.RecordCallCount()).To(Equal(0))
+	})
+
+	It("records the walked path when the indexed path no longer carries the identifier", func() {
+		writeTaskFile(
+			"repurposed.md",
+			"---\ntask_identifier: "+missingID+"\nstatus: in-progress\n---\nOther task\n",
+		)
+		writeTaskFile(
+			"walked.md",
+			"---\ntask_identifier: "+indexedID+"\nstatus: in-progress\n---\nOld content\n",
+		)
+		resolver.ResolveReturns("tasks/repurposed.md", true, nil)
+
+		writer := newWriter(resolver)
+		Expect(writer.WriteResult(ctx, payloadFor(indexedID))).To(Succeed())
+
+		Expect(resolver.RecordCallCount()).To(Equal(1))
+		_, id, relPath := resolver.RecordArgsForCall(0)
+		Expect(id).To(Equal(lib.TaskIdentifier(indexedID)))
+		Expect(relPath).To(Equal("tasks/walked.md"))
+	})
+
 	It("returns a resolver error without walking or writing", func() {
 		resolver.ResolveReturns(
 			"",

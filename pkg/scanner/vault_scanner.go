@@ -39,11 +39,19 @@ type VaultScanner interface {
 	RunCycle(ctx context.Context, results chan<- ScanResult)
 	// Resolve returns the vault-relative path of the task file carrying id, from the
 	// identifier→path index the last completed scan cycle — or, in trigger-only mode,
-	// the boot build — published.
+	// the boot build — published, including entries recorded since that rebuild.
 	// It returns ("", false, nil) when the index does not hold id — an unknown
 	// identifier is not an error — and ("", false, err) naming both paths when two
 	// files carry id. The index is empty until the first cycle completes.
 	Resolve(ctx context.Context, id lib.TaskIdentifier) (string, bool, error)
+	// Record tells the resolver that relPath is the vault-relative path of the task
+	// file carrying id, so a later Resolve(id) hits instead of missing. The caller
+	// must have just established that fact — by writing that file or by a walk that
+	// found exactly one file carrying id. It returns nothing: recording is a cache
+	// fill, and a failure to record only costs a later walk. An empty id or empty
+	// relPath is ignored. A resolver that already knows of two or more paths for id
+	// keeps them, so a known duplicate is never hidden.
+	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }
 
 type fileEntry struct {
@@ -80,7 +88,11 @@ type vaultScanner struct {
 	// index maps a task identifier to every vault-relative path carrying it. The
 	// slice is a multimap entry on purpose: collapsing a duplicate to one path is
 	// the 2026-08-31 incident (a result landing on the wrong task file). Rebuilt
-	// wholesale once per completed scan cycle; never mutated in place.
+	// wholesale once per completed scan cycle (or once by buildIndex in trigger-only
+	// mode); between rebuilds a single entry is replaced by Record — always with a
+	// new slice, never mutated in place, because Resolve uses the slice it read after
+	// releasing the read lock. A Record that lands just before a publishIndex or
+	// buildIndex swap is lost with the old map, which costs at most one later walk.
 	index map[lib.TaskIdentifier][]string
 }
 
@@ -321,8 +333,8 @@ func (v *vaultScanner) publishIndex() {
 // vault's full task set is republished as changed on every restart. A file without
 // a valid identifier is skipped rather than repaired — the index is a lookup cache,
 // not a repair path, and the walk stays the recovery. Files created after this pass
-// miss and fall back to the walk, exactly as before; the bookkeeping (hashes) is
-// left untouched so a later cycle's change detection is unchanged.
+// are added by Record — on create, or on their first walk; the bookkeeping (hashes)
+// is left untouched so a later cycle's change detection is unchanged.
 func (v *vaultScanner) buildIndex(ctx context.Context) {
 	// A log-only elapsed measurement, matching the direct time.Now scanFiles already
 	// uses for its own timing: no clock value reaches a task, a write or a decision.
@@ -408,6 +420,26 @@ func (v *vaultScanner) Resolve(
 			paths[1],
 		)
 	}
+}
+
+// Record adds one identifier→path entry to the published index between rebuilds, so
+// a task created after the last rebuild (or found by a walk) resolves with one read
+// instead of another full-vault walk. See result.TaskPathResolver.Record for the
+// contract.
+func (v *vaultScanner) Record(ctx context.Context, id lib.TaskIdentifier, relPath string) {
+	if id == "" || relPath == "" {
+		return
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	if len(v.index[id]) >= 2 {
+		// A known duplicate stays reported as one (2026-08-31 incident).
+		return
+	}
+	// Store a NEW slice: Resolve uses the slice it read after releasing the
+	// read lock, so an existing slice must never be modified in place.
+	v.index[id] = []string{relPath}
+	glog.V(2).Infof("index: recorded %s for task %s", relPath, id)
 }
 
 // processFile handles a single .md file during a scan cycle.

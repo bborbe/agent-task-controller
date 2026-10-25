@@ -25,6 +25,16 @@ import (
 //   - ("", false, err) — more than one file carries the identifier, and the error
 //     names both paths. A resolver error is never a miss: treating it as one
 //     re-derives the ambiguity and can silently resolve to one of the two files.
+//
+// Record fills the cache between rebuilds.
 type TaskPathResolver interface {
 	Resolve(ctx context.Context, id lib.TaskIdentifier) (string, bool, error)
+	// Record tells the resolver that relPath is the vault-relative path of the task
+	// file carrying id, so a later Resolve(id) hits instead of missing. The caller
+	// must have just established that fact — by writing that file or by a walk that
+	// found exactly one file carrying id. It returns nothing: recording is a cache
+	// fill, and a failure to record only costs a later walk. An empty id or empty
+	// relPath is ignored. A resolver that already knows of two or more paths for id
+	// keeps them, so a known duplicate is never hidden.
+	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }

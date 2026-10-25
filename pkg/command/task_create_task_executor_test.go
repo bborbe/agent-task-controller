@@ -72,7 +72,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
 
-		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock, testK)
+		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock, testK, nil)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -768,6 +768,80 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 		})
 
+		Context("index recording", func() {
+			const createdID = "44444444-4444-4444-8444-444444444444"
+
+			createCmd := func() cdb.CommandObject {
+				return buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier(createdID),
+					Title:          "Recorded Task",
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee": "claude",
+						"status":   "next",
+					},
+				})
+			}
+
+			It("records the written path on a clean miss", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns("", false, nil)
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.RecordCallCount()).To(Equal(1))
+				_, id, relPath := fakeResolver.RecordArgsForCall(0)
+				Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
+				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
+			})
+
+			It("does not record when the index already holds the identifier", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+			})
+
+			It("does not record when the resolver reports a duplicate", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+			})
+
+			It("does not resolve or record when the create fails as already existing", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeGit.ReadFileReturns([]byte(
+					"---\ntask_identifier: "+createdID+
+						"\nstatus: in_progress\n---\nbody\n",
+				), nil)
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
+				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+			})
+		})
+
 		Context("vault routing", func() {
 			It(
 				"skips a command whose TargetVault is openclaw when vaultName=personal (ErrCommandObjectSkipped, no git write)",
@@ -778,6 +852,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"personal",
 						clock,
 						testK,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -805,6 +880,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"openclaw",
 						clock,
 						testK,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -830,6 +906,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"openclaw",
 						clock,
 						testK,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -855,6 +932,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"personal",
 						clock,
 						testK,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -989,6 +1067,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					"openclaw",
 					clock,
 					smallK,
+					nil,
 				)
 
 				newTitle := "Weekly Sched - 2026W30"
