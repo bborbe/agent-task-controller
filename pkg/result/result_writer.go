@@ -451,7 +451,23 @@ func FindTaskFilePath(
 			}
 		}
 	}
+	recordWalkMatch(ctx, resolver, id, matchedRelPath)
 	return matchedRelPath, existingFrontmatter, nil
+}
+
+// recordWalkMatch records a unique walk match in the identifier→path index. The walk
+// just proved relPath is the only file carrying id, so the next lookup for id is one
+// read, not another full walk. A miss and a nil resolver record nothing.
+func recordWalkMatch(
+	ctx context.Context,
+	resolver TaskPathResolver,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if relPath == "" || resolver == nil {
+		return
+	}
+	resolver.Record(ctx, id, relPath)
 }
 
 func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {

@@ -68,7 +68,7 @@ func CreateCommandConsumer(
 		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
 		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
 		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
-		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
+		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k, resolver),
 		command.NewCompleteTaskExecutor(
 			gitClient,
 			taskDir,

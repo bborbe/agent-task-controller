@@ -10,6 +10,13 @@ import (
 )
 
 type VaultScanner struct {
+	RecordStub        func(context.Context, lib.TaskIdentifier, string)
+	recordMutex       sync.RWMutex
+	recordArgsForCall []struct {
+		arg1 context.Context
+		arg2 lib.TaskIdentifier
+		arg3 string
+	}
 	ResolveStub        func(context.Context, lib.TaskIdentifier) (string, bool, error)
 	resolveMutex       sync.RWMutex
 	resolveArgsForCall []struct {
@@ -46,6 +53,40 @@ type VaultScanner struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *VaultScanner) Record(arg1 context.Context, arg2 lib.TaskIdentifier, arg3 string) {
+	fake.recordMutex.Lock()
+	fake.recordArgsForCall = append(fake.recordArgsForCall, struct {
+		arg1 context.Context
+		arg2 lib.TaskIdentifier
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RecordStub
+	fake.recordInvocation("Record", []interface{}{arg1, arg2, arg3})
+	fake.recordMutex.Unlock()
+	if stub != nil {
+		fake.RecordStub(arg1, arg2, arg3)
+	}
+}
+
+func (fake *VaultScanner) RecordCallCount() int {
+	fake.recordMutex.RLock()
+	defer fake.recordMutex.RUnlock()
+	return len(fake.recordArgsForCall)
+}
+
+func (fake *VaultScanner) RecordCalls(stub func(context.Context, lib.TaskIdentifier, string)) {
+	fake.recordMutex.Lock()
+	defer fake.recordMutex.Unlock()
+	fake.RecordStub = stub
+}
+
+func (fake *VaultScanner) RecordArgsForCall(i int) (context.Context, lib.TaskIdentifier, string) {
+	fake.recordMutex.RLock()
+	defer fake.recordMutex.RUnlock()
+	argsForCall := fake.recordArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *VaultScanner) Resolve(arg1 context.Context, arg2 lib.TaskIdentifier) (string, bool, error) {

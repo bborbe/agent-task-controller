@@ -48,12 +48,14 @@ var errTitlePathOccupiedByOtherIdentifier = stderrors.New(
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
 // Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
 // match vaultName are skipped without side effects (no git write, no error, no result event).
+// resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
+	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		task.CreateCommandOperation,
@@ -121,12 +123,36 @@ func NewCreateTaskExecutor(
 			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName, reopened, priorStatus); err != nil {
 				return nil, nil, err
 			}
+			recordCreatedTaskPath(ctx, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
+}
+
+// recordCreatedTaskPath adds the file just written to the identifier→path index, so
+// the results and frontmatter updates that follow a create resolve with one read
+// instead of a full-vault walk. A trigger-only controller builds its index once at
+// pod start, so without this every task created afterwards missed for the pod's
+// whole life (2026-10-25: 155 of 159 walked identifiers, consumer 60 min behind,
+// commands dropped as expired). It records only when the resolver reports a clean
+// miss: a hit means the index already knows a file for this identifier, and a
+// resolver error means a known duplicate — neither may be overwritten.
+func recordCreatedTaskPath(
+	ctx context.Context,
+	resolver result.TaskPathResolver,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if resolver == nil {
+		return
+	}
+	if _, found, err := resolver.Resolve(ctx, id); err != nil || found {
+		return
+	}
+	resolver.Record(ctx, id, relPath)
 }
 
 // checkTitlePathFree reports whether the title path is free for a new task.

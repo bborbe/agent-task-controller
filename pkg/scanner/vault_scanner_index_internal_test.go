@@ -164,6 +164,59 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(client.readFileCalls).To(Equal(before))
 	})
 
+	It("resolves an identifier recorded after the index was built", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("beta.md"))
+	})
+
+	It("ignores an empty identifier or path", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, "", "x.md")
+		s.Record(ctx, lib.TaskIdentifier(betaID), "")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+	})
+
+	It("does not hide a known duplicate", func() {
+		s.hashes = map[string]fileEntry{
+			"first.md":  {taskIdentifier: lib.TaskIdentifier(dupID)},
+			"second.md": {taskIdentifier: lib.TaskIdentifier(dupID)},
+		}
+		s.publishIndex()
+
+		s.Record(ctx, lib.TaskIdentifier(dupID), "first.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+	})
+
+	It("replaces a single stale entry", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, lib.TaskIdentifier(alphaID), "renamed.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("renamed.md"))
+	})
+
 	It("rebuilds the index per cycle instead of accumulating stale entries", func() {
 		write("mover.md", taskFile(alphaID))
 		cycle()
@@ -227,6 +280,7 @@ var _ = Describe("vaultScanner identifier index", func() {
 		}()
 
 		for i := 0; i < 50; i++ {
+			s.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
 			_, found, resolveErr := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
 			Expect(resolveErr).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
@@ -274,6 +328,19 @@ var _ = Describe("vaultScanner identifier index", func() {
 			_, found, err = built.Resolve(ctx, lib.TaskIdentifier(dupID))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse())
+		})
+
+		It("resolves an identifier recorded after a trigger-only boot build", func() {
+			write("alpha.md", taskFile(alphaID))
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+			built.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
 		})
 
 		It("skips a file with no valid task_identifier instead of repairing it", func() {
