@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,11 +41,11 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 		return patchFSTask(dir, id, fields)
 	}
 	fake.CreateTaskStub = func(
-		context.Context,
-		vaultapi.Task,
-		vaultapi.CreateOptions,
+		_ context.Context,
+		t vaultapi.Task,
+		opts vaultapi.CreateOptions,
 	) (*vaultapi.Task, error) {
-		panic("newFSTaskClient: CreateTask is not wired for this executor")
+		return createFSTask(dir, t, opts)
 	}
 	fake.PutBodyStub = func(_ context.Context, id string, body string) error {
 		return putFSBody(dir, id, body)
@@ -57,6 +58,54 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	}
 
 	return fake
+}
+
+// createFSTask mirrors the API's create semantics over the same temp dir: the
+// title names the file, an occupant is a conflict unless it is terminal and the
+// caller asked to reopen, and a reopen REPLACES the frontmatter and body rather
+// than merging them.
+func createFSTask(
+	dir string,
+	t vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	path := filepath.Join(dir, t.Title+".md")
+	reopened := false
+	if existing, err := os.ReadFile(path); err == nil { // #nosec G304 -- test helper
+		fm, _, splitErr := splitTaskFile(string(existing))
+		var status, identifier string
+		if splitErr == nil {
+			status, _ = fm["status"].(string)
+			identifier, _ = fm["task_identifier"].(string)
+		}
+		// An occupant the server cannot parse holds the path (fail closed), so an
+		// unreadable file reports as a conflict with no status rather than as a
+		// free slot.
+		if !opts.ReopenTerminal || !vaultapi.IsTerminalStatus(status) {
+			return nil, &vaultapi.AlreadyExistsError{
+				Code:           "task_exists",
+				TaskIdentifier: identifier,
+				Status:         status,
+			}
+		}
+		reopened = true
+	}
+	marshaled, err := yaml.Marshal(map[string]any(t.Frontmatter))
+	if err != nil {
+		return nil, err
+	}
+	content := "---\n" + string(marshaled) + "---\n" + t.Body
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil { // #nosec G306 -- test helper
+		return nil, err
+	}
+	created := taskFromFrontmatter(
+		fmt.Sprint(t.Frontmatter["task_identifier"]),
+		map[string]any(t.Frontmatter),
+		t.Body,
+	)
+	created.Title = t.Title
+	created.Reopened = reopened
+	return created, nil
 }
 
 // readFSTask finds the file whose frontmatter carries id and returns it.

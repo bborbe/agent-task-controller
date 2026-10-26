@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bborbe/errors"
+	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 )
 
@@ -73,6 +74,24 @@ func (e *AlreadyExistsError) Error() string {
 // Unwrap keeps errors.Is(err, ErrAlreadyExists) true for the typed form.
 func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
 
+// IsTerminalStatus reports whether status ends a task's life, so the file no
+// longer represents live work. It mirrors the server's own predicate because the
+// create's conflict answer is only actionable with it: a terminal occupant can
+// be replaced (or, for a recurring instance, must still hold the slot), while a
+// live one must never be touched.
+//
+// The values come from domain's typed constants rather than being re-spelled, so
+// a rename or an added terminal status reaches this predicate instead of leaving
+// it silently answering "live" — which would map the conflict to
+// ErrTaskAlreadyExists where it should have reopened.
+func IsTerminalStatus(status string) bool {
+	switch domain.TaskStatus(status) {
+	case domain.TaskStatusCompleted, domain.TaskStatusAborted:
+		return true
+	}
+	return false
+}
+
 // CreateOptions carries the create route's opt-in behaviours. The zero value is
 // the route's original contract: any occupant is ErrAlreadyExists.
 type CreateOptions struct {
@@ -96,6 +115,9 @@ type Task struct {
 	Title       string         `json:"title"`
 	Frontmatter map[string]any `json:"frontmatter,omitempty"`
 	Body        string         `json:"body,omitempty"`
+	// Reopened marks a create that replaced a terminal occupant rather than
+	// writing a free path. It is only ever set on a create response.
+	Reopened bool `json:"reopened,omitempty"`
 }
 
 // Filter is a typed listing question. Zero fields are not sent, so an empty

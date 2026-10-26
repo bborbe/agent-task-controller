@@ -144,6 +144,8 @@ Reproduction replay — the mandatory bug check:
 4. When the executor cannot positively establish a status — frontmatter delimiters missing, YAML unparseable, or the `status` key absent — it fails closed: `ErrTaskAlreadyExists`, no write, and a WARNING log naming the path so the operator can see why the slot is held.
 5. A reopen is distinguishable from a first-ever create in two operator-greppable places: an unconditional INFO log line containing `create-task: reopening terminal task` with the path and the prior status, and a git commit message containing `reopen terminal task`. A first-ever create carries neither.
 
+   **Amended 2026-10-27 by the typed-API port.** Only the log line survives on the controller side, and it no longer carries the prior status. Both remaining halves moved into `bborbe/vault-api` when the create stopped writing the file itself: the commit message is now built there, and the create's success response reports only *that* it reopened, not *what* it replaced — so the controller has no prior status to log. The executor still emits the frozen substring `create-task: reopening terminal task` with the task and path at default verbosity, which is what an operator greps for; the commit-message half of this AC is now vault-api's to satisfy.
+
 ## Design Decision: overwrite in place
 
 **Adopted: overwrite the terminal file in place at the same title path.**
