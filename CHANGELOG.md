@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.21.0
 
 - feat: **the typed client can reopen a terminal task and re-address a task by identifier, and its create conflict now names the occupant.** Three additions the remaining call sites need, mirroring `bborbe/vault-api`'s new surface. `CreateTask` takes a `CreateOptions{ReopenTerminal}` so the reopen mode is opt-in — the zero value is the route's original contract, where any occupant is a conflict, and a spec pins that an ordinary create never sends the field. `ReaddressTask` moves a task to a new identifier without moving its file, which is what the planning-retry's per-attempt identifier needs and what `PATCH` refuses by design. And a create conflict now returns `*AlreadyExistsError` carrying the occupant's `task_identifier` and `status`: the 409's own `id` is the title the caller just sent, so it told the caller nothing, and the create executor cannot otherwise tell "same task, terminal, reopen" from "different task, disambiguate the title". `Unwrap` reports `ErrAlreadyExists`, so `errors.Is` is unchanged for every existing caller.
   ℹ️ `pkg/vaultapi` had **no tests at all** before this change; the new methods are covered by a spec suite that asserts the wire shape (method, path, body, gateway header) against a recording server, plus both conflict shapes. The opt-in claim is mutation-verified: making `reopen` unconditional fails the ordinary-create spec and only that spec.
