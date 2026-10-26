@@ -310,6 +310,31 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			)
 		})
 
+		Context("both the title path and its disambiguated sibling are occupied", func() {
+			It("maps the second conflict to ErrTaskAlreadyExists, not a generic failure", func() {
+				// A replay of a disambiguated task: the title path still belongs to
+				// the other task, and the suffixed path now holds THIS task's own
+				// file. Result-topic consumers special-case ErrTaskAlreadyExists, so
+				// the second 409 must carry the same sentinel as the first.
+				seedRaw(
+					"Alt Occupied",
+					"---\ntask_identifier: someone-else\nassignee: alice\nstatus: next\n---\nbody\n",
+				)
+				seedRaw(
+					"Alt Occupied - alt-task",
+					"---\ntask_identifier: alt-task-id\nassignee: claude\nstatus: next\n---\nbody\n",
+				)
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("alt-task-id"),
+					Title:          "Alt Occupied",
+					Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+			})
+		})
+
 		Context("transient API error", func() {
 			// The occupant read moved server-side with the typed surface, so the
 			// controller can no longer distinguish "unreadable" from "absent" — the
@@ -763,6 +788,31 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+			})
+
+			It("records the request title's path, not the server's echoed title", func() {
+				// The server may normalise the title it stores. The index and the
+				// supersede back-pointers key off the path this controller asked for,
+				// so a differing echo must not move the recorded path.
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns("", false, nil)
+				fakeVault.CreateTaskStub = func(
+					_ context.Context,
+					_ vaultapi.Task,
+					_ vaultapi.CreateOptions,
+				) (*vaultapi.Task, error) {
+					return &vaultapi.Task{ID: "server-id", Title: "server normalised title"}, nil
+				}
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.RecordCallCount()).To(Equal(1))
+				_, _, relPath := fakeResolver.RecordArgsForCall(0)
+				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
 			})
 		})
 
