@@ -28,12 +28,13 @@ import (
 
 var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeGit   *mocks.GitClient
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -79,12 +80,11 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewUpdateFrontmatterExecutor(
-			fakeGit,
-			taskDir,
+			fakeVault,
 			"openclaw",
 			metrics.New(),
-			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -466,7 +466,9 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				// The write is a typed PATCH now, so "wrote exactly once" moves to
+				// that seam. The file content check is what proves it landed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
 				fm := parseFrontmatter(taskFile)
 				Expect(fm["phase"]).To(Equal("done"))
 			})

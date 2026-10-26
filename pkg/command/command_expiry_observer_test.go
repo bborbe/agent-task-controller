@@ -86,7 +86,9 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 		dropped := message(2, now.Add(-61*stdtime.Minute))
 		third := message(3, now.Add(-30*stdtime.Minute))
 
-		Expect(batchHandler(context.Background(), []*sarama.ConsumerMessage{first, dropped, third})).
+		Expect(
+			batchHandler(context.Background(), []*sarama.ConsumerMessage{first, dropped, third}),
+		).
 			To(BeNil())
 
 		Expect(handler.calls).To(HaveLen(1))
@@ -110,7 +112,9 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 		kept := message(2, now.Add(-1*stdtime.Minute))
 		dropped3 := message(3, now.Add(-120*stdtime.Minute))
 
-		Expect(batchHandler(context.Background(), []*sarama.ConsumerMessage{dropped1, kept, dropped3})).
+		Expect(
+			batchHandler(context.Background(), []*sarama.ConsumerMessage{dropped1, kept, dropped3}),
+		).
 			To(BeNil())
 
 		Expect(observer.ObserveExpiredCallCount()).To(Equal(2))
