@@ -73,7 +73,15 @@ func CreateCommandConsumer(
 		// vault-relative path, mutating the YAML and re-serialising the file.
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, m),
 		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, m),
-		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k, resolver),
+		command.NewCreateTaskExecutor(
+			gitClient,
+			vaultClient,
+			taskDir,
+			vaultName,
+			currentDateTime,
+			k,
+			resolver,
+		),
 		command.NewCompleteTaskExecutor(vaultClient, vaultName, currentDateTime, m),
 	}
 	// Composed by hand rather than through cdb.RunCommandConsumerTx; the reasons live with the

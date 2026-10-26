@@ -30,13 +30,14 @@ const testK = 7
 
 var _ = Describe("NewCreateTaskExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
-		clock    *libtimemocks.CurrentDateTimeGetter
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeGit   *mocks.GitClient
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
+		clock     *libtimemocks.CurrentDateTimeGetter
 	)
 
 	BeforeEach(func() {
@@ -72,7 +73,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
 
-		executor = command.NewCreateTaskExecutor(fakeGit, taskDir, "openclaw", clock, testK, nil)
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
+		executor = command.NewCreateTaskExecutor(
+			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, nil,
+		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -116,7 +120,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 			})
 		})
 
@@ -131,7 +135,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).To(HaveOccurred())
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 			})
 		})
 
@@ -150,7 +154,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 			})
 		})
 
@@ -165,7 +169,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("status"))
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 			})
 		})
 
@@ -191,13 +195,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				// First create: file not found → writes via create-only.
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 
 				// Replay: file now exists → sentinel, no second write.
 				_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1)) // still 1
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1)) // still 1
 			})
 		})
 
@@ -214,7 +218,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 			})
 		})
 
@@ -243,7 +247,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				_, statErr := os.Stat(filepath.Join(
 					tmpDir, "tasks", "My Colliding Task - new-task.md",
 				))
@@ -286,7 +290,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, first)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 
 					second := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("1dfcfe48-e957-f2a8-c7a2-e9b8bc083a25"),
@@ -301,7 +305,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 					// Both identifiers resolve to real files: the canonical title path
 					// and the disambiguated short-id path.
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(2))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(2))
 					_, statErr := os.Stat(filepath.Join(tmpDir, "tasks", title+".md"))
 					Expect(statErr).NotTo(HaveOccurred())
 					_, statErr = os.Stat(filepath.Join(
@@ -327,7 +331,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeFalse())
 				Expect(err.Error()).To(ContainSubstring("503"))
-				Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 			})
 		})
 
@@ -348,7 +352,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 					// Single-ReadFile lock: the status decision reuses the collision-check bytes.
 					Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
 
@@ -380,7 +384,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				},
 			)
 		})
@@ -407,8 +411,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).To(HaveOccurred())
 					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 
@@ -433,8 +437,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).To(HaveOccurred())
 					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 
@@ -458,8 +462,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 		})
@@ -486,8 +490,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).To(HaveOccurred())
 					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 		})
@@ -515,8 +519,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Expect(err).To(HaveOccurred())
 					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
 					Expect(alreadyExists).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 				Entry("next", "next"),
 				Entry("in_progress", "in_progress"),
@@ -539,7 +543,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Expect(err).To(HaveOccurred())
 					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
 					Expect(alreadyExists).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 				Entry("no frontmatter delimiters", []byte("plain text, no frontmatter\n")),
 				Entry("syntactically invalid YAML", []byte("---\nstatus: [\n---\n")),
@@ -605,14 +609,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					// First handle: terminal file → reopen → write.
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 					// Replay: just-written non-terminal content → hold path.
 					_, _, err = executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).To(HaveOccurred())
 					alreadyExists := errors.Is(err, task.ErrTaskAlreadyExists)
 					Expect(alreadyExists).To(BeTrue())
 					Expect(
-						fakeGit.AtomicWriteAndCommitPushCallCount(),
+						fakeVault.CreateTaskCallCount(),
 					).To(Equal(1))
 					// unchanged across replay
 				},
@@ -672,7 +676,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 
 				_, absPath, content, message := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(
 					0,
@@ -723,7 +727,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix("My Feature Task.md"))
 				Expect(absPath).NotTo(ContainSubstring(string(taskID)))
@@ -743,7 +747,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix(string(taskID) + ".md"))
 			})
@@ -762,7 +766,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				_, absPath, _, _ := fakeGit.AtomicWriteIfAbsentAndCommitPushArgsForCall(0)
 				Expect(absPath).To(HaveSuffix(string(taskID) + ".md"))
 			})
@@ -786,7 +790,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -802,7 +806,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -815,7 +819,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -831,7 +835,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"\nstatus: in_progress\n---\nbody\n",
 				), nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -848,6 +852,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
+						fakeVault,
 						taskDir,
 						"personal",
 						clock,
@@ -867,7 +872,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					// ErrCommandObjectSkipped — the result-sender wrapper (production)
 					// converts it to a silent skip (no Success result published).
 					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 
@@ -876,6 +881,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
+						fakeVault,
 						taskDir,
 						"openclaw",
 						clock,
@@ -893,7 +899,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				},
 			)
 
@@ -902,6 +908,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
+						fakeVault,
 						taskDir,
 						"openclaw",
 						clock,
@@ -919,7 +926,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				},
 			)
 
@@ -928,6 +935,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
+						fakeVault,
 						taskDir,
 						"personal",
 						clock,
@@ -945,7 +953,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 		})
@@ -994,7 +1002,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(
-						fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount(),
+						fakeVault.CreateTaskCallCount(),
 					).To(Equal(1))
 					// new instance only
 					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
@@ -1063,6 +1071,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				smallK := 2
 				localExecutor := command.NewCreateTaskExecutor(
 					fakeGit,
+					fakeVault,
 					taskDir,
 					"openclaw",
 					clock,
@@ -1469,7 +1478,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 
 				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
@@ -1611,8 +1620,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
-					Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 				},
 			)
@@ -1649,7 +1658,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
@@ -1672,7 +1681,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
@@ -1695,7 +1704,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
@@ -1721,7 +1730,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
@@ -1737,7 +1746,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 
@@ -1763,7 +1772,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicWriteIfAbsentAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 			})
 

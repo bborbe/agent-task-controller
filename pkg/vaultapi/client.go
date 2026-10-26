@@ -96,6 +96,9 @@ type Task struct {
 	Title       string         `json:"title"`
 	Frontmatter map[string]any `json:"frontmatter,omitempty"`
 	Body        string         `json:"body,omitempty"`
+	// Reopened marks a create that replaced a terminal occupant rather than
+	// writing a free path. It is only ever set on a create response.
+	Reopened bool `json:"reopened,omitempty"`
 }
 
 // Filter is a typed listing question. Zero fields are not sent, so an empty

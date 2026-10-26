@@ -25,6 +25,7 @@ import (
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // errTitlePathOccupiedByOtherIdentifier signals that the title path is occupied
@@ -51,6 +52,7 @@ var errTitlePathOccupiedByOtherIdentifier = stderrors.New(
 // resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
@@ -95,33 +97,18 @@ func NewCreateTaskExecutor(
 			if err := validateCreateTaskFrontmatter(ctx, cmd.Frontmatter); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
-			relPath := resolveCreateTaskRelPath(ctx, taskDir, cmd)
-			reopened, priorStatus, err := checkTitlePathFree(
-				ctx,
-				gitClient,
-				relPath,
-				cmd.TaskIdentifier,
-				cmd,
-			)
-			if errors.Is(err, errTitlePathOccupiedByOtherIdentifier) {
-				// Two distinct task_identifiers targeted one title path. The
-				// occupant belongs to a different task, so this is a filename
-				// collision, not a re-publish of this task. Disambiguate the
-				// path with a short-identifier suffix so this task still gets
-				// its own file — the previous behavior dropped the losing
-				// identifier's results forever.
-				relPath, reopened, priorStatus, err = disambiguateCreateTaskRelPath(
-					ctx,
-					gitClient,
-					taskDir,
-					cmd,
-				)
-			}
+			title := createTaskTitle(ctx, cmd)
+			created, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName, reopened, priorStatus); err != nil {
-				return nil, nil, err
+			relPath := filepath.Join(taskDir, created.Title+".md")
+			if reopened {
+				glog.V(2).Infof(
+					"create-task: reopened terminal task %s at %s",
+					cmd.TaskIdentifier,
+					relPath,
+				)
 			}
 			recordCreatedTaskPath(ctx, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
@@ -130,6 +117,106 @@ func NewCreateTaskExecutor(
 			return nil, nil, nil
 		},
 	)
+}
+
+// createTaskTitle returns the filename stem the typed create sends: the command's
+// own title when it passes validation and carries no path separator, the
+// identifier otherwise. The server owns the filename, so this is the only thing
+// the controller still decides about the path.
+func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
+	if err := cmd.Validate(ctx); err != nil {
+		glog.Warningf(
+			"create-task: Title validation failed for task %s (%v); falling back to the identifier",
+			cmd.TaskIdentifier, err,
+		)
+		return string(cmd.TaskIdentifier)
+	}
+	if strings.ContainsAny(cmd.Title, "/\\") {
+		glog.Warningf(
+			"create-task: Title %q contains path separator; falling back to the identifier",
+			cmd.Title,
+		)
+		return string(cmd.TaskIdentifier)
+	}
+	return cmd.Title
+}
+
+// createThroughAPI materialises the task and settles the three answers the old
+// title-path pre-check computed: created, reopened, or a collision.
+//
+// The pre-check is gone rather than ported. The API resolves the occupant by
+// PATH and reports it in the 409, so the controller never touches the index's
+// shared identifier/name/slug key space — the lookup that let a page elsewhere
+// shadow a live task and destroy it in vault-api#28.
+func createThroughAPI(
+	ctx context.Context,
+	client vaultapi.Client,
+	cmd task.CreateCommand,
+	title string,
+	vaultName string,
+) (*vaultapi.Task, bool, error) {
+	created, reopened, err := postCreate(ctx, client, cmd, title, vaultName)
+	if err == nil {
+		return created, reopened, nil
+	}
+	var conflict *vaultapi.AlreadyExistsError
+	if !errors.As(err, &conflict) {
+		return nil, false, err
+	}
+	if conflict.TaskIdentifier == "" || conflict.TaskIdentifier == string(cmd.TaskIdentifier) {
+		// Idempotent re-publish: this task already has a file, so nothing is lost.
+		return nil, false, errors.Wrapf(
+			ctx,
+			task.ErrTaskAlreadyExists,
+			"title %q occupied for task %s",
+			title,
+			cmd.TaskIdentifier,
+		)
+	}
+	// A DIFFERENT identifier holds the title: two tasks collided on one filename.
+	// Give the loser its own file, or its results are dropped forever.
+	alt := title + " - " + shortIdentifier(cmd.TaskIdentifier)
+	created, reopened, err = postCreate(ctx, client, cmd, alt, vaultName)
+	if err != nil {
+		return nil, false, errors.Wrapf(ctx, err, "disambiguated create at %q", alt)
+	}
+	return created, reopened, nil
+}
+
+// postCreate sends one create. ReopenTerminal is off for a recurring command: a
+// terminal recurring instance holds its slot until the period rolls, because the
+// file IS the dedupe state — so it must land on the conflict branch rather than
+// be replaced.
+func postCreate(
+	ctx context.Context,
+	client vaultapi.Client,
+	cmd task.CreateCommand,
+	title string,
+	vaultName string,
+) (*vaultapi.Task, bool, error) {
+	fm := make(lib.TaskFrontmatter)
+	maps.Copy(fm, cmd.Frontmatter)
+	fm["task_identifier"] = string(cmd.TaskIdentifier)
+	fm["target_vault"] = vaultName
+	created, err := client.CreateTask(
+		ctx,
+		vaultapi.Task{Title: title, Frontmatter: fm, Body: cmd.Body},
+		vaultapi.CreateOptions{ReopenTerminal: !isRecurringTaskCommand(cmd)},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	return created, created.Reopened, nil
+}
+
+// shortIdentifier is the filename-suffix form of an identifier, matching the
+// sha[:8] short-segment convention used across task filenames.
+func shortIdentifier(id lib.TaskIdentifier) string {
+	s := string(id)
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // recordCreatedTaskPath adds the file just written to the identifier→path index, so
