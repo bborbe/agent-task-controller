@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.20.1
 
 - test: **the body re-read is now pinned by a spec that fails if the section is merged onto the stale read.** The v0.20.0 fix could be undone without any test noticing: the complete-task suite only asserted `ReadTaskCallCount() == 2`, so swapping `resolutionBody(fresh.Body, …)` back to `resolutionBody(found.Body, …)` passed. A stale-first-read stub now returns the older body on the first read and the operator's edited body on the re-read, and the spec asserts the edit survives the PUT. The same gap in the update-frontmatter read-failure spec is closed — it stubbed every read, so the first one failed and the re-read branch it was meant to cover was never reached; it now fails only the second read and asserts the PATCH had already landed. Adds specs for the two branches the fix introduced (a re-read failing after the PATCH, and a concurrent close that must skip the body write rather than append a second `## Resolution`), and addresses the body PUT by the re-read task's id rather than the stale one.
 
