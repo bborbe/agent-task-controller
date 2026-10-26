@@ -33,6 +33,7 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 		tmpDir       string
 		taskDir      string
 		fakeGit      *mocks.GitClient
+		fakeVault    *mocks.VaultAPIClient
 		fakeResolver *mocks.TaskPathResolver
 		executor     cdb.CommandObjectExecutorTx
 		schemaID     cdb.SchemaID
@@ -90,13 +91,12 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 		fakeResolver = &mocks.TaskPathResolver{}
 		fakeResolver.ResolveReturns("", false, nil)
 
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewCompleteTaskExecutor(
-			fakeGit,
-			taskDir,
+			fakeVault,
 			"openclaw",
 			libtime.NewCurrentDateTime(),
 			metrics.New(),
-			fakeResolver,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -211,9 +211,11 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
+				// The identifier IS the address now: one read, no path resolution
+				// and no directory listing, because there is no vault to walk.
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(1))
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
 				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(1))
 				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
 			})
 		})
@@ -299,7 +301,11 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				// Closing is two typed writes now — PATCH the fields, PUT the
+				// Resolution body — so the "wrote exactly once" check becomes
+				// "wrote each half once".
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(1))
 				fm := parseFrontmatter(taskFile)
 				Expect(fm["status"]).To(Equal("completed"))
 			})
