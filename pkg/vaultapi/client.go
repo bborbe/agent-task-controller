@@ -40,7 +40,9 @@ var ErrAmbiguous = stderrors.New("name is ambiguous")
 // disambiguate the title" — and the title it already sent tells it neither.
 // Unwrap reports ErrAlreadyExists, so errors.Is keeps working unchanged.
 type AlreadyExistsError struct {
-	// Code is the API's own error code: task_exists, or ambiguous_name.
+	// Code is the API's error code for the conflict. In practice that is always
+	// task_exists: an ambiguous_name envelope becomes ErrAmbiguous before this
+	// type is constructed.
 	Code string
 	// TaskIdentifier is the occupant's identifier, empty when it has none.
 	TaskIdentifier string
@@ -51,6 +53,8 @@ type AlreadyExistsError struct {
 	What string
 }
 
+// Error renders the conflict with the operation that produced it, the occupant's
+// identifier and its status, omitting the parts the API did not supply.
 func (e *AlreadyExistsError) Error() string {
 	message := "task already exists"
 	if e.What != "" {
@@ -247,13 +251,16 @@ func conflictError(ctx context.Context, raw []byte, what string) error {
 	}
 	// The occupant is carried, not discarded: the create route's caller has to
 	// tell "same task, terminal, reopen" from "different task, disambiguate",
-	// and the 409's id is the title it just sent, which says neither.
-	return &AlreadyExistsError{
+	// and the 409's id is the title it just sent, which says neither. Wrapped with
+	// ctx like every other error in this client, so the conflict keeps the
+	// caller's structured data and stack; errors.As still reaches the typed value
+	// through the Unwrap chain and errors.Is still reports ErrAlreadyExists.
+	return errors.Wrapf(ctx, &AlreadyExistsError{
 		Code:           envelope.Error,
 		TaskIdentifier: envelope.TaskIdentifier,
 		Status:         envelope.Status,
 		What:           what,
-	}
+	}, "%s", what)
 }
 
 // snippet bounds an unexpected body so an error message cannot carry a whole

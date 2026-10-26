@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -28,6 +29,7 @@ import (
 // swallowed, instead of naming the real cause. Every spec checks err in
 // AfterEach, on the spec goroutine.
 type recordingServer struct {
+	mu     sync.Mutex
 	method string
 	path   string
 	body   map[string]any
@@ -35,28 +37,60 @@ type recordingServer struct {
 	err    error
 }
 
+// captured returns a snapshot under the lock. The handler writes on net/http's
+// goroutine and the spec reads on its own; without the lock the two have no
+// happens-before edge, which is a real data race that `ENABLE_RACE=true` reports
+// even though the default `make test` does not.
+func (r *recordingServer) captured() (string, string, map[string]any, http.Header) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.method, r.path, r.body, r.header
+}
+
+// failure reports what went wrong inside the handler, read under the same lock.
+func (r *recordingServer) failure() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
+func (r *recordingServer) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err == nil {
+		r.err = err
+	}
+}
+
 func (r *recordingServer) handler(status int, response string) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		r.mu.Lock()
 		r.method = req.Method
 		r.path = req.URL.Path
 		r.header = req.Header.Clone()
+		r.mu.Unlock()
+
 		raw, err := io.ReadAll(req.Body)
 		if err != nil {
-			r.err = err
+			r.setErr(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &r.body); err != nil {
-				r.err = err
+			var body map[string]any
+			if err := json.Unmarshal(raw, &body); err != nil {
+				r.setErr(err)
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
+			r.mu.Lock()
+			r.body = body
+			r.mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		if _, err := w.Write([]byte(response)); err != nil {
-			r.err = err
+			r.setErr(err)
 		}
 	}
 }
@@ -84,7 +118,7 @@ var _ = Describe("CreateTask", func() {
 		}
 		// Asserted on the spec goroutine: the handler records rather than asserts,
 		// so a failure inside it surfaces as itself instead of a connection error.
-		Expect(recorder.err).NotTo(HaveOccurred())
+		Expect(recorder.failure()).NotTo(HaveOccurred())
 	})
 
 	Context("without ReopenTerminal", func() {
@@ -103,14 +137,15 @@ var _ = Describe("CreateTask", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(created.ID).To(Equal("task-1"))
 
-			Expect(recorder.method).To(Equal(http.MethodPost))
-			Expect(recorder.path).To(Equal("/api/v1/tasks"))
-			Expect(recorder.body["title"]).To(Equal("Alpha"))
-			Expect(recorder.body["body"]).To(Equal("hello\n"))
+			method, path, body, header := recorder.captured()
+			Expect(method).To(Equal(http.MethodPost))
+			Expect(path).To(Equal("/api/v1/tasks"))
+			Expect(body["title"]).To(Equal("Alpha"))
+			Expect(body["body"]).To(Equal("hello\n"))
 			// The mode is opt-in: sending it unconditionally would make every
 			// ordinary create ask to replace a terminal occupant.
-			Expect(recorder.body).NotTo(HaveKey("reopen"))
-			Expect(recorder.header.Get("X-Gateway-Secret")).To(Equal("secret"))
+			Expect(body).NotTo(HaveKey("reopen"))
+			Expect(header.Get("X-Gateway-Secret")).To(Equal("secret"))
 		})
 	})
 
@@ -131,7 +166,8 @@ var _ = Describe("CreateTask", func() {
 			}, vaultapi.CreateOptions{ReopenTerminal: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(created.ID).To(Equal("task-2"))
-			Expect(recorder.body["reopen"]).To(Equal("terminal"))
+			_, _, body, _ := recorder.captured()
+			Expect(body["reopen"]).To(Equal("terminal"))
 		})
 	})
 
@@ -162,6 +198,28 @@ var _ = Describe("CreateTask", func() {
 			Expect(conflict.Status).To(Equal("completed"))
 		})
 	})
+
+	Context("when the name is ambiguous", func() {
+		BeforeEach(func() {
+			server = httptest.NewServer(recorder.handler(
+				http.StatusConflict,
+				`{"error":"ambiguous_name"}`,
+			))
+		})
+
+		It("reports ErrAmbiguous, not ErrAlreadyExists", func() {
+			// The two 409 shapes must not collapse: an ambiguous name is a
+			// different failure with a different remedy from a taken title.
+			_, err := client.CreateTask(
+				ctx,
+				vaultapi.Task{Title: "Alpha"},
+				vaultapi.CreateOptions{},
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, vaultapi.ErrAmbiguous)).To(BeTrue())
+			Expect(errors.Is(err, vaultapi.ErrAlreadyExists)).To(BeFalse())
+		})
+	})
 })
 
 var _ = Describe("ReaddressTask", func() {
@@ -187,7 +245,7 @@ var _ = Describe("ReaddressTask", func() {
 		}
 		// Asserted on the spec goroutine: the handler records rather than asserts,
 		// so a failure inside it surfaces as itself instead of a connection error.
-		Expect(recorder.err).NotTo(HaveOccurred())
+		Expect(recorder.failure()).NotTo(HaveOccurred())
 	})
 
 	Context("when the target identifier is free", func() {
@@ -202,9 +260,10 @@ var _ = Describe("ReaddressTask", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(moved.ID).To(Equal("task-2"))
 
-			Expect(recorder.method).To(Equal(http.MethodPost))
-			Expect(recorder.path).To(Equal("/api/v1/tasks/task-1/readdress"))
-			Expect(recorder.body["task_identifier"]).To(Equal("task-2"))
+			method, path, body, _ := recorder.captured()
+			Expect(method).To(Equal(http.MethodPost))
+			Expect(path).To(Equal("/api/v1/tasks/task-1/readdress"))
+			Expect(body["task_identifier"]).To(Equal("task-2"))
 		})
 	})
 
