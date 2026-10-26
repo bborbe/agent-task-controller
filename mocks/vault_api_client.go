@@ -9,11 +9,12 @@ import (
 )
 
 type VaultAPIClient struct {
-	CreateTaskStub        func(context.Context, vaultapi.Task) (*vaultapi.Task, error)
+	CreateTaskStub        func(context.Context, vaultapi.Task, vaultapi.CreateOptions) (*vaultapi.Task, error)
 	createTaskMutex       sync.RWMutex
 	createTaskArgsForCall []struct {
 		arg1 context.Context
 		arg2 vaultapi.Task
+		arg3 vaultapi.CreateOptions
 	}
 	createTaskReturns struct {
 		result1 *vaultapi.Task
@@ -79,23 +80,39 @@ type VaultAPIClient struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
+	ReaddressTaskStub        func(context.Context, string, string) (*vaultapi.Task, error)
+	readdressTaskMutex       sync.RWMutex
+	readdressTaskArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	readdressTaskReturns struct {
+		result1 *vaultapi.Task
+		result2 error
+	}
+	readdressTaskReturnsOnCall map[int]struct {
+		result1 *vaultapi.Task
+		result2 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *VaultAPIClient) CreateTask(arg1 context.Context, arg2 vaultapi.Task) (*vaultapi.Task, error) {
+func (fake *VaultAPIClient) CreateTask(arg1 context.Context, arg2 vaultapi.Task, arg3 vaultapi.CreateOptions) (*vaultapi.Task, error) {
 	fake.createTaskMutex.Lock()
 	ret, specificReturn := fake.createTaskReturnsOnCall[len(fake.createTaskArgsForCall)]
 	fake.createTaskArgsForCall = append(fake.createTaskArgsForCall, struct {
 		arg1 context.Context
 		arg2 vaultapi.Task
-	}{arg1, arg2})
+		arg3 vaultapi.CreateOptions
+	}{arg1, arg2, arg3})
 	stub := fake.CreateTaskStub
 	fakeReturns := fake.createTaskReturns
-	fake.recordInvocation("CreateTask", []interface{}{arg1, arg2})
+	fake.recordInvocation("CreateTask", []interface{}{arg1, arg2, arg3})
 	fake.createTaskMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1, arg2, arg3)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -109,17 +126,17 @@ func (fake *VaultAPIClient) CreateTaskCallCount() int {
 	return len(fake.createTaskArgsForCall)
 }
 
-func (fake *VaultAPIClient) CreateTaskCalls(stub func(context.Context, vaultapi.Task) (*vaultapi.Task, error)) {
+func (fake *VaultAPIClient) CreateTaskCalls(stub func(context.Context, vaultapi.Task, vaultapi.CreateOptions) (*vaultapi.Task, error)) {
 	fake.createTaskMutex.Lock()
 	defer fake.createTaskMutex.Unlock()
 	fake.CreateTaskStub = stub
 }
 
-func (fake *VaultAPIClient) CreateTaskArgsForCall(i int) (context.Context, vaultapi.Task) {
+func (fake *VaultAPIClient) CreateTaskArgsForCall(i int) (context.Context, vaultapi.Task, vaultapi.CreateOptions) {
 	fake.createTaskMutex.RLock()
 	defer fake.createTaskMutex.RUnlock()
 	argsForCall := fake.createTaskArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *VaultAPIClient) CreateTaskReturns(result1 *vaultapi.Task, result2 error) {
@@ -402,6 +419,72 @@ func (fake *VaultAPIClient) ReadTaskReturnsOnCall(i int, result1 *vaultapi.Task,
 		})
 	}
 	fake.readTaskReturnsOnCall[i] = struct {
+		result1 *vaultapi.Task
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *VaultAPIClient) ReaddressTask(arg1 context.Context, arg2 string, arg3 string) (*vaultapi.Task, error) {
+	fake.readdressTaskMutex.Lock()
+	ret, specificReturn := fake.readdressTaskReturnsOnCall[len(fake.readdressTaskArgsForCall)]
+	fake.readdressTaskArgsForCall = append(fake.readdressTaskArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.ReaddressTaskStub
+	fakeReturns := fake.readdressTaskReturns
+	fake.recordInvocation("ReaddressTask", []interface{}{arg1, arg2, arg3})
+	fake.readdressTaskMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *VaultAPIClient) ReaddressTaskCallCount() int {
+	fake.readdressTaskMutex.RLock()
+	defer fake.readdressTaskMutex.RUnlock()
+	return len(fake.readdressTaskArgsForCall)
+}
+
+func (fake *VaultAPIClient) ReaddressTaskCalls(stub func(context.Context, string, string) (*vaultapi.Task, error)) {
+	fake.readdressTaskMutex.Lock()
+	defer fake.readdressTaskMutex.Unlock()
+	fake.ReaddressTaskStub = stub
+}
+
+func (fake *VaultAPIClient) ReaddressTaskArgsForCall(i int) (context.Context, string, string) {
+	fake.readdressTaskMutex.RLock()
+	defer fake.readdressTaskMutex.RUnlock()
+	argsForCall := fake.readdressTaskArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *VaultAPIClient) ReaddressTaskReturns(result1 *vaultapi.Task, result2 error) {
+	fake.readdressTaskMutex.Lock()
+	defer fake.readdressTaskMutex.Unlock()
+	fake.ReaddressTaskStub = nil
+	fake.readdressTaskReturns = struct {
+		result1 *vaultapi.Task
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *VaultAPIClient) ReaddressTaskReturnsOnCall(i int, result1 *vaultapi.Task, result2 error) {
+	fake.readdressTaskMutex.Lock()
+	defer fake.readdressTaskMutex.Unlock()
+	fake.ReaddressTaskStub = nil
+	if fake.readdressTaskReturnsOnCall == nil {
+		fake.readdressTaskReturnsOnCall = make(map[int]struct {
+			result1 *vaultapi.Task
+			result2 error
+		})
+	}
+	fake.readdressTaskReturnsOnCall[i] = struct {
 		result1 *vaultapi.Task
 		result2 error
 	}{result1, result2}
