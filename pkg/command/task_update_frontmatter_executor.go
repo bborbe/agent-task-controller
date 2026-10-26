@@ -155,7 +155,18 @@ func applyUpdate(
 	if cmd.Body == nil {
 		return nil
 	}
-	body := delivery.ReplaceOrAppendSection(task.Body, cmd.Body.Heading, cmd.Body.Section)
+	// Re-read before the PUT: PUT replaces the WHOLE body, so merging the section
+	// onto the body captured at the top of the command would silently drop any
+	// edit that landed in between. The old write path re-read the file inside its
+	// modify closure, which is why it could not lose a concurrent body edit; this
+	// re-read restores that property at the cost of one extra request per
+	// body-carrying command. A failure here is returned rather than falling back
+	// to the stale snapshot — the retry re-runs the whole command.
+	fresh, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
+	if err != nil {
+		return errors.Wrapf(ctx, err, "re-read task for body merge")
+	}
+	body := delivery.ReplaceOrAppendSection(fresh.Body, cmd.Body.Heading, cmd.Body.Section)
 	if err := client.PutBody(ctx, task.ID, body); err != nil {
 		return errors.Wrapf(ctx, err, "put body")
 	}

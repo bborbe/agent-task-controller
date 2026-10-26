@@ -24,6 +24,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var _ = Describe("NewUpdateFrontmatterExecutor", func() {
@@ -281,6 +282,110 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
 				Expect(readErr).NotTo(HaveOccurred())
 				Expect(string(content)).NotTo(ContainSubstring("## Failure"))
+			})
+		})
+
+		Context("body merge re-reads the task", func() {
+			It("keeps a body section that landed between the read and the PUT", func() {
+				// PUT replaces the WHOLE body, so merging onto the body captured at
+				// the top of the command would silently drop an edit made in
+				// between. The first read is stubbed to return the older body;
+				// the re-read before the PUT must see the operator's section.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: reread-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n\n## Operator\n\nkeep me\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.Body = "body\n"
+						return &stale, nil
+					}
+					return found, nil
+				}
+
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("reread-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+					Body: &task.BodySection{
+						Heading: "## Result",
+						Section: "## Result\n\nfinished\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Operator"))
+				Expect(string(content)).To(ContainSubstring("keep me"))
+				Expect(string(content)).To(ContainSubstring("## Result"))
+			})
+		})
+
+		Context("failure modes", func() {
+			It("surfaces a non-ErrNotFound read error and counts it as an error", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: readfail-uuid\nstatus: in_progress\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				fakeVault.ReadTaskReturns(nil, errors.New("vault-api unreachable"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("readfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+			})
+
+			It("surfaces a PATCH failure and counts it as an error", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: patchfail-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				fakeVault.PatchTaskReturns(nil, errors.New("patch rejected"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("patchfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+				// nothing was written: the PATCH was the only write and it failed
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("ai_review"))
 			})
 		})
 

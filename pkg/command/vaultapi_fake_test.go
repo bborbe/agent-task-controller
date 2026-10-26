@@ -21,10 +21,10 @@ import (
 // working: the client addresses tasks by identifier, but the bytes on disk are
 // what the specs read back.
 //
-// Only ReadTask and PatchTask are wired — they are the two calls the increment
-// executor makes. The rest panic rather than silently returning zero values,
-// so a ported call site that starts using them fails loudly instead of quietly
-// behaving as if the vault were empty.
+// ReadTask, PatchTask and PutBody are wired — the three calls the ported
+// frontmatter executors make. The rest panic rather than silently returning zero
+// values, so a ported call site that starts using them fails loudly instead of
+// quietly behaving as if the vault were empty.
 func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	fake := &mocks.VaultAPIClient{}
 	dir := filepath.Join(root, taskDir)
