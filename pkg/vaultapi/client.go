@@ -34,6 +34,39 @@ var ErrAlreadyExists = stderrors.New("task already exists")
 // API refuses rather than guessing, and so does this client.
 var ErrAmbiguous = stderrors.New("name is ambiguous")
 
+// AlreadyExistsError is ErrAlreadyExists carrying the occupant the API named in
+// its 409. It exists because the create route's refusal is only useful if the
+// caller can tell "same task, terminal, reopen" from "different task,
+// disambiguate the title" — and the title it already sent tells it neither.
+// Unwrap reports ErrAlreadyExists, so errors.Is keeps working unchanged.
+type AlreadyExistsError struct {
+	// Code is the API's own error code: task_exists, or ambiguous_name.
+	Code string
+	// TaskIdentifier is the occupant's identifier, empty when it has none.
+	TaskIdentifier string
+	// Status is the occupant's normalised status, empty when unreadable.
+	Status string
+}
+
+func (e *AlreadyExistsError) Error() string {
+	if e.TaskIdentifier == "" {
+		return "task already exists"
+	}
+	return "task already exists: " + e.TaskIdentifier + " (" + e.Status + ")"
+}
+
+// Unwrap keeps errors.Is(err, ErrAlreadyExists) true for the typed form.
+func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
+
+// CreateOptions carries the create route's opt-in behaviours. The zero value is
+// the route's original contract: any occupant is ErrAlreadyExists.
+type CreateOptions struct {
+	// ReopenTerminal asks the API to REPLACE an occupant whose status is
+	// terminal. A live occupant is still a conflict — reopening one would let
+	// two attempts share an identity.
+	ReopenTerminal bool
+}
+
 // requestTimeout bounds every call. It is deliberately not derived from the
 // caller's context: a caller whose deadline has already expired is exactly the
 // case a read-back has to survive, and the transport must not inherit that.
@@ -77,8 +110,9 @@ type Client interface {
 	// ReadTask returns the task with the given identifier, or ErrNotFound.
 	ReadTask(ctx context.Context, id string) (*Task, error)
 	// CreateTask creates a task and returns it with the identifier the API
-	// minted. ErrAlreadyExists when one is already present.
-	CreateTask(ctx context.Context, task Task) (*Task, error)
+	// minted. ErrAlreadyExists when one is already present — as *AlreadyExistsError,
+	// which names the occupant so the caller can decide what to do about it.
+	CreateTask(ctx context.Context, task Task, opts CreateOptions) (*Task, error)
 	// PatchTask replaces the named frontmatter fields and returns the task as it
 	// now stands. It is the atomic mutation: the API serialises per task.
 	PatchTask(ctx context.Context, id string, fields map[string]any) (*Task, error)
@@ -88,6 +122,11 @@ type Client interface {
 	// when the API reports a total the response does not carry, so a caller never
 	// mistakes a partial set for the whole population.
 	ListTasks(ctx context.Context, filter Filter) ([]Task, error)
+	// ReaddressTask moves the task to a new identifier without moving its file.
+	// ErrAlreadyExists when the target identifier is already taken — the refusal
+	// is mandatory, because silently merging two tasks into one address is the
+	// worst outcome available.
+	ReaddressTask(ctx context.Context, id string, next string) (*Task, error)
 }
 
 type client struct {
@@ -188,12 +227,21 @@ func decodeTask(ctx context.Context, status int, raw []byte, what string) (*Task
 // means the caller's addressing is wrong.
 func conflictError(ctx context.Context, raw []byte, what string) error {
 	var envelope struct {
-		Error string `json:"error"`
+		Error          string `json:"error"`
+		TaskIdentifier string `json:"task_identifier"`
+		Status         string `json:"status"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Error == "ambiguous_name" {
 		return errors.Wrapf(ctx, ErrAmbiguous, "%s", what)
 	}
-	return errors.Wrapf(ctx, ErrAlreadyExists, "%s", what)
+	// The occupant is carried, not discarded: the create route's caller has to
+	// tell "same task, terminal, reopen" from "different task, disambiguate",
+	// and the 409's id is the title it just sent, which says neither.
+	return &AlreadyExistsError{
+		Code:           envelope.Error,
+		TaskIdentifier: envelope.TaskIdentifier,
+		Status:         envelope.Status,
+	}
 }
 
 // snippet bounds an unexpected body so an error message cannot carry a whole
@@ -216,12 +264,35 @@ func (c *client) ReadTask(ctx context.Context, id string) (*Task, error) {
 }
 
 // CreateTask creates a task and returns the stored form.
-func (c *client) CreateTask(ctx context.Context, task Task) (*Task, error) {
-	status, raw, err := c.do(ctx, http.MethodPost, "/api/v1/tasks", nil, task)
+func (c *client) CreateTask(
+	ctx context.Context,
+	task Task,
+	opts CreateOptions,
+) (*Task, error) {
+	payload := struct {
+		Title       string         `json:"title"`
+		Frontmatter map[string]any `json:"frontmatter,omitempty"`
+		Body        string         `json:"body,omitempty"`
+		Reopen      string         `json:"reopen,omitempty"`
+	}{Title: task.Title, Frontmatter: task.Frontmatter, Body: task.Body}
+	if opts.ReopenTerminal {
+		payload.Reopen = "terminal"
+	}
+	status, raw, err := c.do(ctx, http.MethodPost, "/api/v1/tasks", nil, payload)
 	if err != nil {
 		return nil, err
 	}
 	return decodeTask(ctx, status, raw, "create task")
+}
+
+// ReaddressTask moves the task to a new identifier. The file does not move.
+func (c *client) ReaddressTask(ctx context.Context, id string, next string) (*Task, error) {
+	payload := map[string]string{"task_identifier": next}
+	status, raw, err := c.do(ctx, http.MethodPost, taskPath(id, "/readdress"), nil, payload)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTask(ctx, status, raw, "readdress task "+id)
 }
 
 // PatchTask replaces the named frontmatter fields.
