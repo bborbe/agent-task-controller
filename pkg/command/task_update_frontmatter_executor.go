@@ -58,13 +58,20 @@ func frontmatterCommandVaultMismatch(
 // UpdateFrontmatterCommandOperation is the CQRS command operation name for partial frontmatter update.
 const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFrontmatterCommandOperation
 
-// NewUpdateFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that atomically
-// reads the task file, merges only the specified key-value pairs, and commits.
-// All other frontmatter keys are left unchanged. vaultName is the controller's
-// VAULT_NAME; a command whose non-empty TargetVault differs is cross-vault
-// traffic and is skipped before the task-file lookup (no write, no counter,
-// no result event). resolver is the scanner's identifier→path index, consulted
-// by the lookup before it walks the vault.
+// NewUpdateFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that reads the
+// task through the typed vault API by identifier, PATCHes only the frontmatter fields
+// the command names (plus the two doctrines), and PUTs the body when the command
+// carries a body section. All other frontmatter keys are left untouched — the field
+// level PATCH is what guarantees that, so no whole-file merge happens and none of the
+// task's frontmatter is rewritten.
+//
+// It is explicitly NOT atomic: PATCH and PUT are two requests and the typed surface
+// has no combined primitive, so a failure between them leaves frontmatter updated and
+// the body stale. See applyUpdate for the window and why the retry is safe.
+//
+// vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
+// differs is cross-vault traffic and is skipped before the task lookup (no write, no
+// counter, no result event).
 func NewUpdateFrontmatterExecutor(
 	client vaultapi.Client,
 	vaultName string,
@@ -186,7 +193,16 @@ func buildUpdatePatch(
 
 	patch := map[string]any{}
 	for key, value := range merged {
-		if previous, existed := before[key]; !existed || previous != value {
+		// NEVER compare the two `any` values with `!=`: frontmatter is
+		// JSON-decoded, so a task carrying `tags:` or any nested field yields
+		// map[string]any / []any on both sides and Go panics with "comparing
+		// uncomparable type []interface {}". This loop runs over EVERY key in the
+		// task's frontmatter, not only the ones the command names, so one list
+		// field would crash the executor for every update command against that
+		// task. result.FrontmatterValueEqual is reflect.DeepEqual-based (plus
+		// int/float64 equivalence) and never panics.
+		if previous, existed := before[key]; !existed ||
+			!result.FrontmatterValueEqual(previous, value) {
 			patch[key] = value
 		}
 	}
