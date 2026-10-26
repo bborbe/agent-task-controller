@@ -91,10 +91,10 @@ type Client interface {
 }
 
 type client struct {
-	baseURL         string
-	gatewaySecret   string
+	baseURL          string
+	gatewaySecret    string
 	gatewayInitiator string
-	httpClient      *http.Client
+	httpClient       *http.Client
 }
 
 // NewClient builds a Client against baseURL. An empty gatewaySecret sends no

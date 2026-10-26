@@ -11,8 +11,11 @@ import (
 type VaultAPIClient struct {
 	CreateTaskStub        func(context.Context, vaultapi.Task) (*vaultapi.Task, error)
 	createTaskMutex       sync.RWMutex
-	createTaskArgsForCall []VaultAPIClientCreateTaskArgs
-	createTaskReturns     struct {
+	createTaskArgsForCall []struct {
+		arg1 context.Context
+		arg2 vaultapi.Task
+	}
+	createTaskReturns struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
@@ -22,8 +25,11 @@ type VaultAPIClient struct {
 	}
 	ListTasksStub        func(context.Context, vaultapi.Filter) ([]vaultapi.Task, error)
 	listTasksMutex       sync.RWMutex
-	listTasksArgsForCall []VaultAPIClientListTasksArgs
-	listTasksReturns     struct {
+	listTasksArgsForCall []struct {
+		arg1 context.Context
+		arg2 vaultapi.Filter
+	}
+	listTasksReturns struct {
 		result1 []vaultapi.Task
 		result2 error
 	}
@@ -33,8 +39,12 @@ type VaultAPIClient struct {
 	}
 	PatchTaskStub        func(context.Context, string, map[string]any) (*vaultapi.Task, error)
 	patchTaskMutex       sync.RWMutex
-	patchTaskArgsForCall []VaultAPIClientPatchTaskArgs
-	patchTaskReturns     struct {
+	patchTaskArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]any
+	}
+	patchTaskReturns struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
@@ -44,8 +54,12 @@ type VaultAPIClient struct {
 	}
 	PutBodyStub        func(context.Context, string, string) error
 	putBodyMutex       sync.RWMutex
-	putBodyArgsForCall []VaultAPIClientPutBodyArgs
-	putBodyReturns     struct {
+	putBodyArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	putBodyReturns struct {
 		result1 error
 	}
 	putBodyReturnsOnCall map[int]struct {
@@ -53,8 +67,11 @@ type VaultAPIClient struct {
 	}
 	ReadTaskStub        func(context.Context, string) (*vaultapi.Task, error)
 	readTaskMutex       sync.RWMutex
-	readTaskArgsForCall []VaultAPIClientReadTaskArgs
-	readTaskReturns     struct {
+	readTaskArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	readTaskReturns struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
@@ -63,46 +80,16 @@ type VaultAPIClient struct {
 		result2 error
 	}
 	invocations      map[string][][]interface{}
-	callOrder        []string
 	invocationsMutex sync.RWMutex
-}
-
-// VaultAPIClientCreateTaskArgs holds the arguments of one call to CreateTask.
-type VaultAPIClientCreateTaskArgs struct {
-	Arg1 context.Context
-	Arg2 vaultapi.Task
-}
-
-// VaultAPIClientListTasksArgs holds the arguments of one call to ListTasks.
-type VaultAPIClientListTasksArgs struct {
-	Arg1 context.Context
-	Arg2 vaultapi.Filter
-}
-
-// VaultAPIClientPatchTaskArgs holds the arguments of one call to PatchTask.
-type VaultAPIClientPatchTaskArgs struct {
-	Arg1 context.Context
-	Arg2 string
-	Arg3 map[string]any
-}
-
-// VaultAPIClientPutBodyArgs holds the arguments of one call to PutBody.
-type VaultAPIClientPutBodyArgs struct {
-	Arg1 context.Context
-	Arg2 string
-	Arg3 string
-}
-
-// VaultAPIClientReadTaskArgs holds the arguments of one call to ReadTask.
-type VaultAPIClientReadTaskArgs struct {
-	Arg1 context.Context
-	Arg2 string
 }
 
 func (fake *VaultAPIClient) CreateTask(arg1 context.Context, arg2 vaultapi.Task) (*vaultapi.Task, error) {
 	fake.createTaskMutex.Lock()
 	ret, specificReturn := fake.createTaskReturnsOnCall[len(fake.createTaskArgsForCall)]
-	fake.createTaskArgsForCall = append(fake.createTaskArgsForCall, VaultAPIClientCreateTaskArgs{arg1, arg2})
+	fake.createTaskArgsForCall = append(fake.createTaskArgsForCall, struct {
+		arg1 context.Context
+		arg2 vaultapi.Task
+	}{arg1, arg2})
 	stub := fake.CreateTaskStub
 	fakeReturns := fake.createTaskReturns
 	fake.recordInvocation("CreateTask", []interface{}{arg1, arg2})
@@ -132,15 +119,7 @@ func (fake *VaultAPIClient) CreateTaskArgsForCall(i int) (context.Context, vault
 	fake.createTaskMutex.RLock()
 	defer fake.createTaskMutex.RUnlock()
 	argsForCall := fake.createTaskArgsForCall[i]
-	return argsForCall.Arg1, argsForCall.Arg2
-}
-
-func (fake *VaultAPIClient) CreateTaskArgs() []VaultAPIClientCreateTaskArgs {
-	fake.createTaskMutex.RLock()
-	defer fake.createTaskMutex.RUnlock()
-	args := make([]VaultAPIClientCreateTaskArgs, len(fake.createTaskArgsForCall))
-	copy(args, fake.createTaskArgsForCall)
-	return args
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *VaultAPIClient) CreateTaskReturns(result1 *vaultapi.Task, result2 error) {
@@ -172,7 +151,10 @@ func (fake *VaultAPIClient) CreateTaskReturnsOnCall(i int, result1 *vaultapi.Tas
 func (fake *VaultAPIClient) ListTasks(arg1 context.Context, arg2 vaultapi.Filter) ([]vaultapi.Task, error) {
 	fake.listTasksMutex.Lock()
 	ret, specificReturn := fake.listTasksReturnsOnCall[len(fake.listTasksArgsForCall)]
-	fake.listTasksArgsForCall = append(fake.listTasksArgsForCall, VaultAPIClientListTasksArgs{arg1, arg2})
+	fake.listTasksArgsForCall = append(fake.listTasksArgsForCall, struct {
+		arg1 context.Context
+		arg2 vaultapi.Filter
+	}{arg1, arg2})
 	stub := fake.ListTasksStub
 	fakeReturns := fake.listTasksReturns
 	fake.recordInvocation("ListTasks", []interface{}{arg1, arg2})
@@ -202,15 +184,7 @@ func (fake *VaultAPIClient) ListTasksArgsForCall(i int) (context.Context, vaulta
 	fake.listTasksMutex.RLock()
 	defer fake.listTasksMutex.RUnlock()
 	argsForCall := fake.listTasksArgsForCall[i]
-	return argsForCall.Arg1, argsForCall.Arg2
-}
-
-func (fake *VaultAPIClient) ListTasksArgs() []VaultAPIClientListTasksArgs {
-	fake.listTasksMutex.RLock()
-	defer fake.listTasksMutex.RUnlock()
-	args := make([]VaultAPIClientListTasksArgs, len(fake.listTasksArgsForCall))
-	copy(args, fake.listTasksArgsForCall)
-	return args
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *VaultAPIClient) ListTasksReturns(result1 []vaultapi.Task, result2 error) {
@@ -242,7 +216,11 @@ func (fake *VaultAPIClient) ListTasksReturnsOnCall(i int, result1 []vaultapi.Tas
 func (fake *VaultAPIClient) PatchTask(arg1 context.Context, arg2 string, arg3 map[string]any) (*vaultapi.Task, error) {
 	fake.patchTaskMutex.Lock()
 	ret, specificReturn := fake.patchTaskReturnsOnCall[len(fake.patchTaskArgsForCall)]
-	fake.patchTaskArgsForCall = append(fake.patchTaskArgsForCall, VaultAPIClientPatchTaskArgs{arg1, arg2, arg3})
+	fake.patchTaskArgsForCall = append(fake.patchTaskArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]any
+	}{arg1, arg2, arg3})
 	stub := fake.PatchTaskStub
 	fakeReturns := fake.patchTaskReturns
 	fake.recordInvocation("PatchTask", []interface{}{arg1, arg2, arg3})
@@ -272,15 +250,7 @@ func (fake *VaultAPIClient) PatchTaskArgsForCall(i int) (context.Context, string
 	fake.patchTaskMutex.RLock()
 	defer fake.patchTaskMutex.RUnlock()
 	argsForCall := fake.patchTaskArgsForCall[i]
-	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
-}
-
-func (fake *VaultAPIClient) PatchTaskArgs() []VaultAPIClientPatchTaskArgs {
-	fake.patchTaskMutex.RLock()
-	defer fake.patchTaskMutex.RUnlock()
-	args := make([]VaultAPIClientPatchTaskArgs, len(fake.patchTaskArgsForCall))
-	copy(args, fake.patchTaskArgsForCall)
-	return args
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *VaultAPIClient) PatchTaskReturns(result1 *vaultapi.Task, result2 error) {
@@ -312,7 +282,11 @@ func (fake *VaultAPIClient) PatchTaskReturnsOnCall(i int, result1 *vaultapi.Task
 func (fake *VaultAPIClient) PutBody(arg1 context.Context, arg2 string, arg3 string) error {
 	fake.putBodyMutex.Lock()
 	ret, specificReturn := fake.putBodyReturnsOnCall[len(fake.putBodyArgsForCall)]
-	fake.putBodyArgsForCall = append(fake.putBodyArgsForCall, VaultAPIClientPutBodyArgs{arg1, arg2, arg3})
+	fake.putBodyArgsForCall = append(fake.putBodyArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
 	stub := fake.PutBodyStub
 	fakeReturns := fake.putBodyReturns
 	fake.recordInvocation("PutBody", []interface{}{arg1, arg2, arg3})
@@ -342,15 +316,7 @@ func (fake *VaultAPIClient) PutBodyArgsForCall(i int) (context.Context, string, 
 	fake.putBodyMutex.RLock()
 	defer fake.putBodyMutex.RUnlock()
 	argsForCall := fake.putBodyArgsForCall[i]
-	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
-}
-
-func (fake *VaultAPIClient) PutBodyArgs() []VaultAPIClientPutBodyArgs {
-	fake.putBodyMutex.RLock()
-	defer fake.putBodyMutex.RUnlock()
-	args := make([]VaultAPIClientPutBodyArgs, len(fake.putBodyArgsForCall))
-	copy(args, fake.putBodyArgsForCall)
-	return args
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *VaultAPIClient) PutBodyReturns(result1 error) {
@@ -379,7 +345,10 @@ func (fake *VaultAPIClient) PutBodyReturnsOnCall(i int, result1 error) {
 func (fake *VaultAPIClient) ReadTask(arg1 context.Context, arg2 string) (*vaultapi.Task, error) {
 	fake.readTaskMutex.Lock()
 	ret, specificReturn := fake.readTaskReturnsOnCall[len(fake.readTaskArgsForCall)]
-	fake.readTaskArgsForCall = append(fake.readTaskArgsForCall, VaultAPIClientReadTaskArgs{arg1, arg2})
+	fake.readTaskArgsForCall = append(fake.readTaskArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
 	stub := fake.ReadTaskStub
 	fakeReturns := fake.readTaskReturns
 	fake.recordInvocation("ReadTask", []interface{}{arg1, arg2})
@@ -409,15 +378,7 @@ func (fake *VaultAPIClient) ReadTaskArgsForCall(i int) (context.Context, string)
 	fake.readTaskMutex.RLock()
 	defer fake.readTaskMutex.RUnlock()
 	argsForCall := fake.readTaskArgsForCall[i]
-	return argsForCall.Arg1, argsForCall.Arg2
-}
-
-func (fake *VaultAPIClient) ReadTaskArgs() []VaultAPIClientReadTaskArgs {
-	fake.readTaskMutex.RLock()
-	defer fake.readTaskMutex.RUnlock()
-	args := make([]VaultAPIClientReadTaskArgs, len(fake.readTaskArgsForCall))
-	copy(args, fake.readTaskArgsForCall)
-	return args
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *VaultAPIClient) ReadTaskReturns(result1 *vaultapi.Task, result2 error) {
@@ -456,18 +417,9 @@ func (fake *VaultAPIClient) Invocations() map[string][][]interface{} {
 	return copiedInvocations
 }
 
-func (fake *VaultAPIClient) CallOrder() []string {
-	fake.invocationsMutex.RLock()
-	defer fake.invocationsMutex.RUnlock()
-	order := make([]string, len(fake.callOrder))
-	copy(order, fake.callOrder)
-	return order
-}
-
 func (fake *VaultAPIClient) recordInvocation(key string, args []interface{}) {
 	fake.invocationsMutex.Lock()
 	defer fake.invocationsMutex.Unlock()
-	fake.callOrder = append(fake.callOrder, key)
 	if fake.invocations == nil {
 		fake.invocations = map[string][][]interface{}{}
 	}

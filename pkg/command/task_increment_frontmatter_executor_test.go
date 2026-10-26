@@ -28,13 +28,13 @@ import (
 
 var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
 		fakeGit   *mocks.GitClient
 		fakeVault *mocks.VaultAPIClient
 		executor  cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
