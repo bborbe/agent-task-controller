@@ -449,6 +449,64 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 				Expect(strings.Count(readFile(taskFile), "## Resolution")).To(Equal(0))
 			})
+
+			It("addresses the body PUT by the re-read task's id, not the stale one", func() {
+				// The filesystem fake gives both reads the same ID, so without a
+				// stub that makes them differ, reverting fresh.ID to found.ID
+				// leaves the suite green — the hardening would be untested.
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: idmix-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.ID = "stale-id"
+						return &stale, nil
+					}
+					fresh := *found
+					fresh.ID = "fresh-id"
+					return &fresh, nil
+				}
+				// The PATCH is addressed by the stale ID, so stub it rather than
+				// let the fake's identifier lookup fail on a synthetic ID.
+				fakeVault.PatchTaskStub = func(
+					context.Context,
+					string,
+					map[string]any,
+				) (*vaultapi.Task, error) {
+					return &vaultapi.Task{ID: "stale-id"}, nil
+				}
+				// Same for the PUT: the filesystem stub resolves the id on disk, so
+				// a synthetic id would fail the lookup. Capture the argument instead.
+				var putID string
+				fakeVault.PutBodyStub = func(_ context.Context, id string, _ string) error {
+					putID = id
+					return nil
+				}
+
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("idmix-uuid"),
+					}),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(1))
+				Expect(putID).To(Equal("fresh-id"))
+			})
 		})
 
 		Context("vault routing", func() {
