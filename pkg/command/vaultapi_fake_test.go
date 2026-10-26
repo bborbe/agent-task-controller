@@ -73,15 +73,15 @@ func createFSTask(
 	reopened := false
 	if existing, err := os.ReadFile(path); err == nil { // #nosec G304 -- test helper
 		fm, _, splitErr := splitTaskFile(string(existing))
-		if splitErr != nil {
-			return nil, splitErr
+		var status, identifier string
+		if splitErr == nil {
+			status, _ = fm["status"].(string)
+			identifier, _ = fm["task_identifier"].(string)
 		}
-		status, _ := fm["status"].(string)
-		identifier, _ := fm["task_identifier"].(string)
-		// The server owns terminality, so the fake mirrors its rule rather than
-		// sharing a predicate with it: the controller has no business deciding
-		// which statuses are terminal, and a shared helper here would let it.
-		if !opts.ReopenTerminal || (status != "completed" && status != "aborted") {
+		// An occupant the server cannot parse holds the path (fail closed), so an
+		// unreadable file reports as a conflict with no status rather than as a
+		// free slot.
+		if !opts.ReopenTerminal || !vaultapi.IsTerminalStatus(status) {
 			return nil, &vaultapi.AlreadyExistsError{
 				Code:           "task_exists",
 				TaskIdentifier: identifier,

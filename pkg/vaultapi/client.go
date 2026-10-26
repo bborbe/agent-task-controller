@@ -73,6 +73,16 @@ func (e *AlreadyExistsError) Error() string {
 // Unwrap keeps errors.Is(err, ErrAlreadyExists) true for the typed form.
 func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
 
+// IsTerminalStatus reports whether status ends a task's life, so the file no
+// longer represents live work. It mirrors the server's own predicate because the
+// create's conflict answer is only actionable with it: a terminal occupant can
+// be replaced (or, for a recurring instance, must still hold the slot), while a
+// live one must never be touched. These two values are the protocol, not a
+// business rule — the server decides which statuses exist, this only reads them.
+func IsTerminalStatus(status string) bool {
+	return status == "completed" || status == "aborted"
+}
+
 // CreateOptions carries the create route's opt-in behaviours. The zero value is
 // the route's original contract: any occupant is ErrAlreadyExists.
 type CreateOptions struct {
