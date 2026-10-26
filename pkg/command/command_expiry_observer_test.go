@@ -23,27 +23,6 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 )
 
-// observedDrop records one observation, so a spec can assert both what the observer was told and
-// that it was told exactly once.
-type observedDrop struct {
-	command base.Command
-	message *sarama.ConsumerMessage
-}
-
-// recordingObserver is a hand-written ExpiredCommandObserver: the interface has one method, so a
-// counterfeiter fake would be more machinery than the two fields it replaces.
-type recordingObserver struct {
-	drops []observedDrop
-}
-
-func (o *recordingObserver) ObserveExpired(
-	_ context.Context,
-	cmd base.Command,
-	msg *sarama.ConsumerMessage,
-) {
-	o.drops = append(o.drops, observedDrop{command: cmd, message: msg})
-}
-
 // recordingHandler records every batch it is handed, so a spec can assert the wrapper forwards
 // once and in order rather than per message.
 type recordingHandler struct {
@@ -63,7 +42,7 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 	const expiryWindow = 60 * stdtime.Minute
 
 	var now stdtime.Time
-	var observer *recordingObserver
+	var observer *mocks.ExpiredCommandObserver
 	var handler *recordingHandler
 	var batchHandler func(context.Context, []*sarama.ConsumerMessage) error
 
@@ -87,7 +66,7 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 
 	BeforeEach(func() {
 		now = stdtime.Date(2026, 10, 24, 12, 0, 0, 0, stdtime.UTC)
-		observer = &recordingObserver{}
+		observer = &mocks.ExpiredCommandObserver{}
 		handler = &recordingHandler{}
 		inner := command.NewExpiredCommandBatchHandler(
 			command.NewExpiredCommandSkip(
@@ -119,10 +98,11 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 
 		Expect(batchHandler(context.Background(), []*sarama.ConsumerMessage{dropped})).To(BeNil())
 
-		Expect(observer.drops).To(HaveLen(1))
-		Expect(observer.drops[0].message).To(BeIdenticalTo(dropped))
-		Expect(observer.drops[0].command.Operation).To(Equal(base.CommandOperation("create-task")))
-		Expect(observer.drops[0].command.RequestTime).To(BeTemporally("==", now.Add(-61*stdtime.Minute)))
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(1))
+		_, droppedCommand, droppedMessage := observer.ObserveExpiredArgsForCall(0)
+		Expect(droppedMessage).To(BeIdenticalTo(dropped))
+		Expect(droppedCommand.Operation).To(Equal(base.CommandOperation("create-task")))
+		Expect(droppedCommand.RequestTime).To(BeTemporally("==", now.Add(-61*stdtime.Minute)))
 	})
 
 	It("observes each dropped message exactly once", func() {
@@ -133,9 +113,11 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 		Expect(batchHandler(context.Background(), []*sarama.ConsumerMessage{dropped1, kept, dropped3})).
 			To(BeNil())
 
-		Expect(observer.drops).To(HaveLen(2))
-		Expect(observer.drops[0].message).To(BeIdenticalTo(dropped1))
-		Expect(observer.drops[1].message).To(BeIdenticalTo(dropped3))
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(2))
+		_, _, firstMessage := observer.ObserveExpiredArgsForCall(0)
+		_, _, secondMessage := observer.ObserveExpiredArgsForCall(1)
+		Expect(firstMessage).To(BeIdenticalTo(dropped1))
+		Expect(secondMessage).To(BeIdenticalTo(dropped3))
 	})
 
 	It("observes nothing when no message is dropped", func() {
@@ -144,7 +126,7 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 			message(2, now.Add(-2*stdtime.Minute)),
 		})).To(BeNil())
 
-		Expect(observer.drops).To(BeEmpty())
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(0))
 		Expect(handler.calls).To(HaveLen(1))
 	})
 
@@ -155,13 +137,13 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 		})).To(BeNil())
 
 		Expect(handler.calls).To(BeEmpty())
-		Expect(observer.drops).To(HaveLen(2))
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(2))
 	})
 
 	It("does not call the handler for an empty batch", func() {
 		Expect(batchHandler(context.Background(), nil)).To(BeNil())
 		Expect(handler.calls).To(BeEmpty())
-		Expect(observer.drops).To(BeEmpty())
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(0))
 	})
 
 	It("returns the handler error unchanged", func() {
@@ -181,7 +163,7 @@ var _ = Describe("NewExpiredCommandBatchHandler", func() {
 		})).To(MatchError(context.Canceled))
 
 		Expect(handler.calls).To(BeEmpty())
-		Expect(observer.drops).To(BeEmpty())
+		Expect(observer.ObserveExpiredCallCount()).To(Equal(0))
 	})
 })
 

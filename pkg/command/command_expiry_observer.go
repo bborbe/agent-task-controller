@@ -17,6 +17,8 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
+//counterfeiter:generate -o ../../mocks/expired_command_observer.go --fake-name ExpiredCommandObserver . ExpiredCommandObserver
+
 // ExpiredCommandObserver is told about every command the expiry predicate drops.
 //
 // It exists because a dropped command is otherwise invisible: the predicate reports a bool, so
