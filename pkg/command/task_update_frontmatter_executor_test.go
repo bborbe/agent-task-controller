@@ -335,7 +335,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 		})
 
 		Context("failure modes", func() {
-			It("surfaces a non-ErrNotFound read error and counts it as an error", func() {
+			It("surfaces a read failure at the top of the executor", func() {
 				writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: readfail-uuid\nstatus: in_progress\n---\nbody\n",
@@ -350,6 +350,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(
 					testutil.ToFloat64(
 						metrics.FrontmatterCommandsTotal.WithLabelValues(
@@ -358,6 +359,54 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 						),
 					),
 				).To(Equal(before + 1))
+			})
+
+			It("surfaces a re-read failure that happens after the PATCH landed", func() {
+				// The top-of-executor read must succeed, so only the SECOND read is
+				// stubbed to fail — the one applyUpdate makes before its PUT. This
+				// is the branch the re-read added; stubbing every read would fail
+				// the first one and never reach it.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: rereadfail-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					calls++
+					if calls == 2 {
+						return nil, errors.New("vault-api unreachable")
+					}
+					return realRead(c, id)
+				}
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("rereadfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "human_review"},
+					Body: &task.BodySection{
+						Heading: "## Failure",
+						Section: "## Failure\n\n- **Reason:** OOMKilled\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+				// the PATCH landed before the re-read failed; the body write did not
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(parseFrontmatter(taskFile)["phase"]).To(Equal("human_review"))
 			})
 
 			It("surfaces a PATCH failure and counts it as an error", func() {
