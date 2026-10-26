@@ -40,6 +40,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
 	pkgsync "github.com/bborbe/agent-task-controller/pkg/sync"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 const vaultLocalPath = "/data/vault"
@@ -52,26 +53,27 @@ func main() {
 }
 
 type application struct {
-	SentryDSN                string            `required:"true"  arg:"sentry-dsn"                  env:"SENTRY_DSN"                  usage:"SentryDSN"                                                                                                                                                        display:"length"`
+	SentryDSN                string            `required:"true"  arg:"sentry-dsn"                  env:"SENTRY_DSN"                  usage:"SentryDSN"                                                                                                                                                                                               display:"length"`
 	SentryProxy              string            `required:"false" arg:"sentry-proxy"                env:"SENTRY_PROXY"                usage:"Sentry Proxy"`
 	Listen                   string            `required:"true"  arg:"listen"                      env:"LISTEN"                      usage:"address to listen to"`
 	KafkaBrokers             string            `required:"true"  arg:"kafka-brokers"               env:"KAFKA_BROKERS"               usage:"comma-separated Kafka broker addresses"`
 	Branch                   base.Branch       `required:"true"  arg:"branch"                      env:"BRANCH"                      usage:"Kafka topic prefix branch (develop/live)"`
 	TopicPrefix              base.TopicPrefix  `required:"false" arg:"topic-prefix"                env:"TOPIC_PREFIX"                usage:"Explicit Kafka topic prefix; empty means unprefixed topics"`
-	PollInterval             time.Duration     `required:"false" arg:"poll-interval"               env:"POLL_INTERVAL"               usage:"vault polling interval; 0 disables the periodic scan, leaving the scan trigger-only"                                                                                               default:"60s"`
+	PollInterval             time.Duration     `required:"false" arg:"poll-interval"               env:"POLL_INTERVAL"               usage:"vault polling interval; 0 disables the periodic scan, leaving the scan trigger-only"                                                                                                                                      default:"60s"`
 	TaskDir                  string            `required:"true"  arg:"task-dir"                    env:"TASK_DIR"                    usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
 	DataDir                  string            `required:"true"  arg:"data-dir"                    env:"DATA_DIR"                    usage:"directory for BoltDB offset storage"`
 	NoSync                   bool              `required:"false" arg:"no-sync"                     env:"NO_SYNC"                     usage:"disable BoltDB fsync (for testing only)"`
-	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                        default:"http://vault-obsidian-openclaw:9090"`
-	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                        display:"length" default:""`
-	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                          default:"dev"`
-	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                             default:"none"`
+	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                                                               default:"http://vault-obsidian-openclaw:9090"`
+	VaultAPIURL              string            `required:"false" arg:"vault-api-url"               env:"VAULT_API_URL"               usage:"vault-api base URL; the typed surface the executors address tasks through. REQUIRED for any command ported to it, which fails closed at construction rather than falling back to a path-addressed write"`
+	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                                                               display:"length" default:""`
+	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                                                                 default:"dev"`
+	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                                                                    default:"none"`
 	BuildDate                *libtime.DateTime `required:"false" arg:"build-date"                  env:"BUILD_DATE"                  usage:"Build timestamp (RFC3339)"`
 	VaultName                string            `required:"true"  arg:"vault-name"                  env:"VAULT_NAME"                  usage:"vault slug this controller serves (e.g. openclaw, personal); legacy empty targetVault defaults to openclaw"`
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
-	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"          display:"length" default:""`
-	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                  default:"7"`
-	CommandBatchSize         int               `required:"false" arg:"command-batch-size"          env:"COMMAND_BATCH_SIZE"          usage:"max command messages sharing one libkv.Tx per batch; 1 reproduces the per-message BoltDB transaction cost"                                                                         default:"100"`
+	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"                                                 display:"length" default:""`
+	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                                                         default:"7"`
+	CommandBatchSize         int               `required:"false" arg:"command-batch-size"          env:"COMMAND_BATCH_SIZE"          usage:"max command messages sharing one libkv.Tx per batch; 1 reproduces the per-message BoltDB transaction cost"                                                                                                                default:"100"`
 }
 
 //nolint:funlen // +6 lines from spec-043 metrics.New() passed to scanner + sync loop, +3 lines from spec-016 hoisting the single vaultScanner instance and threading it to the sync loop, result writer and command consumer; extraction would split tightly-coupled wiring.
@@ -108,6 +110,14 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		return errors.Wrapf(ctx, err, "probe git-rest readiness")
 	}
 	glog.V(1).Infof("using git-rest HTTP API at %s", a.GitRestURL)
+
+	// The typed surface. A command ported to it has no path-addressed fallback,
+	// so an unset URL fails here rather than silently writing through git-rest.
+	if a.VaultAPIURL == "" {
+		return errors.Errorf(ctx, "VAULT_API_URL is required")
+	}
+	vaultClient := vaultapi.NewClient(a.VaultAPIURL, a.GatewaySecret, "agent-task-controller")
+	glog.V(1).Infof("using vault-api at %s", a.VaultAPIURL)
 
 	syncProducer, err := libkafka.NewSyncProducer(
 		ctx,
@@ -208,6 +218,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		resultWriter,
 		vaultScanner,
 		gitClient,
+		vaultClient,
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,

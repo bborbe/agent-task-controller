@@ -79,11 +79,9 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		}
 
 		incrementExec = command.NewIncrementFrontmatterExecutor(
-			fakeGit,
-			taskDir,
+			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",
 			metrics.New(),
-			nil,
 		)
 		updateExec = command.NewUpdateFrontmatterExecutor(
 			fakeGit,

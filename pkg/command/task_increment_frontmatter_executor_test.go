@@ -28,12 +28,13 @@ import (
 
 var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeGit   *mocks.GitClient
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -80,12 +81,11 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewIncrementFrontmatterExecutor(
-			fakeGit,
-			taskDir,
+			fakeVault,
 			"openclaw",
 			metrics.New(),
-			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -385,7 +385,10 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				// The write is now a typed PATCH addressed by identifier, so the
+				// "wrote exactly once" assertion moves to that seam. The file
+				// content check below is what proves the write landed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
 				fm := parseFrontmatter(taskFile)
 				Expect(fm["trigger_count"]).To(Equal(1))
 			})
