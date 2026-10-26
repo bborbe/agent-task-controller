@@ -17,7 +17,11 @@ import (
 	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/factory"
 )
 
@@ -80,7 +84,17 @@ var _ = Describe("command consumer composition", func() {
 
 	It("drops an expired command before the wrapped handler runs", func() {
 		inner := &kafkamocks.KafkaMessageHandlerBatch{}
-		handler := factory.NewCommandHandler(inner, currentDateTime)
+		counter := prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "test_commands_expired_total",
+			Help: "test counter",
+		})
+		fakeMetrics := &mocks.Metrics{}
+		fakeMetrics.CommandExpiredTotalReturns(counter)
+		handler := factory.NewCommandHandler(
+			inner,
+			currentDateTime,
+			command.NewLoggingExpiredCommandObserver(fakeMetrics),
+		)
 		value, err := json.Marshal(base.Command{
 			RequestID:   "1234567890",
 			RequestTime: now.Add(-2 * time.Hour),
@@ -93,5 +107,11 @@ var _ = Describe("command consumer composition", func() {
 			handler.ConsumeMessages(ctx, []*sarama.ConsumerMessage{{Value: value}}),
 		).To(Succeed())
 		Expect(inner.ConsumeMessagesCallCount()).To(Equal(0))
+
+		// The drop must also be recorded: a drop that only stops the handler is the
+		// invisible failure this composition exists to end.
+		Expect(fakeMetrics.CommandExpiredTotalCallCount()).To(Equal(1))
+		Expect(fakeMetrics.CommandExpiredTotalArgsForCall(0)).To(Equal("any-op"))
+		Expect(testutil.ToFloat64(counter)).To(Equal(1.0))
 	})
 })

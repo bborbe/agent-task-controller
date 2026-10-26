@@ -25,6 +25,7 @@ type Metrics interface {
 	FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
+	CommandExpiredTotal(operation string) prometheus.Counter
 	SkippedFilesTotal(reason SkipReason) prometheus.Counter
 	UpdateGoStuckPlanningTasks() prometheus.Gauge
 }
@@ -73,6 +74,10 @@ func (m *defaultMetrics) GitRestCallsTotal(operation, status string) prometheus.
 
 func (m *defaultMetrics) KafkaConsumePausedTotal() prometheus.Counter {
 	return KafkaConsumePausedTotal
+}
+
+func (m *defaultMetrics) CommandExpiredTotal(operation string) prometheus.Counter {
+	return CommandExpiredTotal.WithLabelValues(operation)
 }
 
 func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter {
@@ -169,6 +174,31 @@ var KafkaConsumePausedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "controller_kafka_consume_paused_total",
 	Help: "Total number of times Kafka consumption was paused waiting for git-rest.",
 })
+
+// CommandExpiredTotal counts commands dropped by the expiry filter, by operation.
+//
+// It is the counter the 60-minute window could not previously report: an expired command was
+// dropped silently, so "a published create never reached the controller" had no series to read.
+// A non-zero value is loss, not slowness — the command's effect never happened — so the alert is
+// a level test on increase() over a window wide enough to cover a burst, not a rate over 5m.
+var CommandExpiredTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_commands_expired_total",
+		Help: "Total number of commands dropped as expired before execution, by operation.",
+	},
+	[]string{"operation"},
+)
+
+// AvailableCommandOperations is the closed set of command operations this controller consumes,
+// used for counter pre-initialisation so every operation series exists at 0 before the first drop.
+// An operation missing here still counts on first increment; it just starts at "no data".
+var AvailableCommandOperations = []string{
+	"create-task",
+	"complete-task",
+	"increment-frontmatter",
+	"update-frontmatter",
+	"update",
+}
 
 // SkipReason is the closed set of structured reasons the vault scanner skips a task file.
 type SkipReason string
@@ -284,6 +314,10 @@ func init() {
 
 	for _, reason := range AvailableSkipReasons {
 		SkippedFilesTotal.WithLabelValues(reason.String()).Add(0)
+	}
+
+	for _, operation := range AvailableCommandOperations {
+		CommandExpiredTotal.WithLabelValues(operation).Add(0)
 	}
 
 	// A gauge has no label combinations to pre-initialise, but setting it to 0

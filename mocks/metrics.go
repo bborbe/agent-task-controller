@@ -9,6 +9,17 @@ import (
 )
 
 type Metrics struct {
+	CommandExpiredTotalStub        func(string) prometheus.Counter
+	commandExpiredTotalMutex       sync.RWMutex
+	commandExpiredTotalArgsForCall []struct {
+		arg1 string
+	}
+	commandExpiredTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	commandExpiredTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
 	ConflictResolutionsTotalStub        func() prometheus.Counter
 	conflictResolutionsTotalMutex       sync.RWMutex
 	conflictResolutionsTotalArgsForCall []struct {
@@ -131,6 +142,67 @@ type Metrics struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *Metrics) CommandExpiredTotal(arg1 string) prometheus.Counter {
+	fake.commandExpiredTotalMutex.Lock()
+	ret, specificReturn := fake.commandExpiredTotalReturnsOnCall[len(fake.commandExpiredTotalArgsForCall)]
+	fake.commandExpiredTotalArgsForCall = append(fake.commandExpiredTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.CommandExpiredTotalStub
+	fakeReturns := fake.commandExpiredTotalReturns
+	fake.recordInvocation("CommandExpiredTotal", []interface{}{arg1})
+	fake.commandExpiredTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) CommandExpiredTotalCallCount() int {
+	fake.commandExpiredTotalMutex.RLock()
+	defer fake.commandExpiredTotalMutex.RUnlock()
+	return len(fake.commandExpiredTotalArgsForCall)
+}
+
+func (fake *Metrics) CommandExpiredTotalCalls(stub func(string) prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = stub
+}
+
+func (fake *Metrics) CommandExpiredTotalArgsForCall(i int) string {
+	fake.commandExpiredTotalMutex.RLock()
+	defer fake.commandExpiredTotalMutex.RUnlock()
+	argsForCall := fake.commandExpiredTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) CommandExpiredTotalReturns(result1 prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = nil
+	fake.commandExpiredTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) CommandExpiredTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = nil
+	if fake.commandExpiredTotalReturnsOnCall == nil {
+		fake.commandExpiredTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.commandExpiredTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
 }
 
 func (fake *Metrics) ConflictResolutionsTotal() prometheus.Counter {
