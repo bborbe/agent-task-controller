@@ -74,14 +74,7 @@ func CreateCommandConsumer(
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, m),
 		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, m),
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k, resolver),
-		command.NewCompleteTaskExecutor(
-			gitClient,
-			taskDir,
-			vaultName,
-			currentDateTime,
-			m,
-			resolver,
-		),
+		command.NewCompleteTaskExecutor(vaultClient, vaultName, currentDateTime, m),
 	}
 	// Composed by hand rather than through cdb.RunCommandConsumerTx; the reasons live with the
 	// composition in newCommandConsumerFunc.
