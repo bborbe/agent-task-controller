@@ -95,9 +95,9 @@ The terminal `status` is pinned and the controller-owned counter keeps its on-di
 
 **Guard logging.** When the guard discards an incoming value that differs from the kept on-disk value, the writer emits one unconditional INFO line containing `ownership guard kept on-disk`, naming the task, the field, and both values. Equal values produce no log line, so steady-state publishes stay silent (a JSON-decoded incoming `float64` counter compares equal to a YAML-decoded on-disk `int`, and a status alias that normalizes to the same value is likewise silent).
 
-Comparison uses `frontmatterValueEqual`, never `==`. Frontmatter values are `any` decoded from YAML (on disk) or JSON (incoming), either of which can yield a map or a slice, and `==` on two `any` values holding the same uncomparable dynamic type panics at runtime with `comparing uncomparable type map[string]interface {}`. A panic here would kill the single result-write chokepoint, so the helper compares numerics by value across int/float representations and falls back to `reflect.DeepEqual`, which never panics.
+Comparison uses `result.FrontmatterValueEqual`, never `==`. Frontmatter values are `any` decoded from YAML (on disk) or JSON (incoming), either of which can yield a map or a slice, and `==` on two `any` values holding the same uncomparable dynamic type panics at runtime with `comparing uncomparable type map[string]interface {}`. A panic here would kill the single result-write chokepoint, so the helper compares numerics by value across int/float representations and falls back to `reflect.DeepEqual`, which never panics. It is exported because the typed frontmatter executors need the same comparison: `buildUpdatePatch` diffs the merged copy against the task as read, over every frontmatter key, so a task carrying `tags:` would panic there for exactly the same reason.
 
-**What the guard does and does not cover.** The ownership guard is applied by `MergeFrontmatter`, which has exactly one call site: the result write-back path in `resultWriter`. The atomic frontmatter commands (`## Atomic Frontmatter Commands`) take a different route — `buildUpdateModifyFn` applies its `Updates` straight onto the on-disk frontmatter — and are therefore *not* subject to the guard.
+**What the guard does and does not cover.** The ownership guard is applied by `MergeFrontmatter`, which has exactly one call site: the result write-back path in `resultWriter`. The typed frontmatter commands (`## Typed Frontmatter Commands`) take a different route — `buildUpdatePatch` PATCHes only the fields the command names, plus the two doctrines — and are therefore *not* subject to the guard.
 
 That separation is deliberate rather than an oversight. The guard exists to reject a stale spawn-time snapshot that would silently roll back concurrent controller writes; it is not meant to freeze the file against the system's own deliberate, explicitly-addressed writes. An `UpdateFrontmatterCommand` naming a field is an intentional write; an agent result payload carrying that field is a side effect of when the job happened to start.
 
@@ -108,7 +108,7 @@ Two mechanisms may therefore legitimately lower a controller-owned counter, and 
 
 What remains true in every case is the guard's actual purpose: no *agent result payload* can raise or lower a controller-owned counter, or revive a terminal status.
 
-**Single writer for `trigger_count`.** The controller is the only service that sets `trigger_count`; the executor only publishes commands, and the result merge pins the on-disk value. Every controller write goes through `AtomicReadModifyWriteAndCommitPush`, so it is applied to the file as it is on disk at write time: the increment executor (`task_increment_frontmatter_executor.go`), the update executor's trigger-scope write (`task_update_frontmatter_executor.go`), and the scanner's Empty-to-Named Reset (`vault_scanner.go` `writeCounterReset`). The reset must never rewrite the whole frontmatter from its scan-time snapshot — doing so raced the executor's increment and produced the frontmatter conflict git-rest quarantined on 2026-10-19 (merge `622e8c24b0`, `trigger_count: 3` vs `0`).
+**Single writer for `trigger_count`.** The controller is the only service that sets `trigger_count`; the executor only publishes commands, and the result merge pins the on-disk value. Two write paths carry a controller counter write, and neither can rewrite a field it did not name: the increment executor (`task_increment_frontmatter_executor.go`) and the update executor's trigger-scope write (`task_update_frontmatter_executor.go`) both go through the typed vault API's field-level `PATCH /tasks/{id}`, which replaces only the keys in the request; the scanner's Empty-to-Named Reset (`vault_scanner.go` `writeCounterReset`) still goes through `AtomicReadModifyWriteAndCommitPush`, whose modify closure re-reads the live file and changes only the two counter fields. The reset must never rewrite the whole frontmatter from its scan-time snapshot — doing so raced the executor's increment and produced the frontmatter conflict git-rest quarantined on 2026-10-19 (merge `622e8c24b0`, `trigger_count: 3` vs `0`).
 
 ## Terminal Task Status (create-task dedup)
 
@@ -133,7 +133,7 @@ All four rows route through the single chokepoint `result.ClearAssigneeIfHumanRe
 | `trigger_count >= max_triggers` | unchanged (lifecycle stage preserved) | `""` | `applyTriggerCap` → `clearAssignee` |
 | `retry_count >= max_retries` | unchanged (lifecycle stage preserved) | `""` | `applyRetryCap` → `clearAssignee` |
 | Agent emits `Result.NextPhase: human_review` (legitimate handoff) | `human_review` (from `resolveNextPhase`) | `""` | `applyRetryCounter` → `ClearAssigneeIfHumanReview` |
-| Agent emits `UpdateFrontmatterCommand` with merged `phase: human_review` (spec 042) | `human_review` | `""` | `buildUpdateModifyFn` → `ClearAssigneeIfHumanReview` |
+| Agent emits `UpdateFrontmatterCommand` with merged `phase: human_review` (spec 042) | `human_review` | `""` | `buildUpdatePatch` → `ClearAssigneeIfHumanReview` |
 
 Once a task is parked (escalation section present, `assignee: ""`), repeated stale agent
 result publishes are idempotent: the escalation section is not duplicated, the lifecycle
@@ -157,9 +157,9 @@ and prompt 075 for the same reorder pattern applied to `applyTriggerCap` on
 
 When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` and `retry_count: 0` back to the file atomically and queues a git commit. The write goes through `AtomicReadModifyWriteAndCommitPush`: its modify closure re-reads the live file and changes only the two counter fields, so a concurrent write to any other field survives. (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
 
-## Atomic Frontmatter Commands
+## Typed Frontmatter Commands
 
-In addition to the `"update"` operation (full result write), the controller handles three atomic frontmatter operations on `agent-task-v1-request`. Each is guarded by `pkg/routing.ShouldProcessFrontmatterCommand` — a non-empty `TargetVault` differing from `VAULT_NAME` is skipped before the task-file lookup (one `glog.V(2)` line, no metric increment, no git write, error wrapping `cdb.ErrCommandObjectSkipped`); an empty `TargetVault` falls through (legacy unstamped commands are attempted by every controller, the owner heals, the non-owner drops). Each write path heals `target_vault` when the key is absent (stamping `VAULT_NAME`, never overriding an existing value).
+In addition to the `"update"` operation (full result write), the controller handles three frontmatter operations on `agent-task-v1-request`. Each is guarded by `pkg/routing.ShouldProcessFrontmatterCommand` — a non-empty `TargetVault` differing from `VAULT_NAME` is skipped before the task read (one `glog.V(2)` line, no metric increment, no write, error wrapping `cdb.ErrCommandObjectSkipped`); an empty `TargetVault` falls through (legacy unstamped commands are attempted by every controller, the owner heals, the non-owner drops). The `increment-frontmatter` and `update-frontmatter` executors address the task by `task_identifier` through the typed vault API and write with a field-level `PATCH`, so they hold no clone, resolve no path, and cannot rewrite a frontmatter key they did not name. Each of them heals `target_vault` when the key is absent (stamping `VAULT_NAME`, never overriding an existing value).
 
 ### `"increment-frontmatter"` (IncrementFrontmatterExecutor)
 
@@ -170,18 +170,14 @@ On agent-task-v1-request (operation: "increment-frontmatter"):
   │
   ├── deserialize IncrementFrontmatterCommand
   ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
-  ├── find task file by task_identifier (WalkDir)
+  ├── ReadTask(task_identifier) through the typed vault API — the identifier is the address
   ├── if not found → log warning, return nil (no error)
-  ├── AtomicReadModifyWriteAndCommitPush:
-  │     ├── read current file bytes (under mutex)
-  │     ├── parse frontmatter, read Field value (default 0 if absent)
-  │     ├── newVal = currentVal + Delta
-  │     ├── set Field = newVal
+  ├── build the patch from the task as read:
+  │     ├── Field = currentValue + Delta (default 0 if absent)
   │     ├── cap escalation: if Field == "trigger_count" AND newVal >= max_triggers
-  │     │     └── clear assignee in the same write (phase unchanged; spec-039 supersedes spec-021 for this row)
-  │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
-  │     ├── write updated file (under mutex)
-  │     └── git commit + push (under mutex)
+  │     │     └── add assignee: "" to the same patch (phase unchanged; spec-039 supersedes spec-021 for this row)
+  │     └── heal-on-write: if target_vault absent → add target_vault: VAULT_NAME (never overrides an existing value)
+  ├── PatchTask(task.ID, patch) — one field-level request, no path, no clone, no commit
   └── increment FrontmatterCommandsTotal{operation, outcome}
 ```
 
@@ -196,18 +192,19 @@ On agent-task-v1-request (operation: "update-frontmatter"):
   │
   ├── deserialize UpdateFrontmatterCommand
   ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
-  ├── if Updates is empty → return nil (no-op, no write)
-  ├── find task file by task_identifier (WalkDir)
+  ├── if Updates is empty AND Body is nil → return nil (no-op, no write)
+  ├── ReadTask(task_identifier) through the typed vault API — the identifier is the address
   ├── if not found → log warning, return nil
-  ├── AtomicReadModifyWriteAndCommitPush:
-  │     ├── read current file bytes (under mutex)
-  │     ├── parse existing frontmatter
-  │     ├── merge only the keys in Updates (all other keys unchanged)
-  │     ├── if Body section provided → append/replace section in body (spec 016)
-  │     ├── if merged phase == "human_review" → result.ClearAssigneeIfHumanReview clears assignee in the same write (spec 042)
+  ├── buildUpdatePatch: merge Updates onto a copy of the task's frontmatter
+  │     ├── if merged phase == "human_review" → result.ClearAssigneeIfHumanReview (spec 042)
   │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
-  │     ├── write updated file (under mutex)
-  │     └── git commit + push (under mutex)
+  │     └── diff the merged copy against the task as read (result.FrontmatterValueEqual)
+  │           → only the changed keys go into the PATCH, so untouched frontmatter is never restated
+  ├── PatchTask(task.ID, patch) — skipped entirely when the diff is empty
+  ├── if Body section provided → PutBody(task.ID, body) with the section appended/replaced (spec 016)
+  │     ⚠️ two requests, not one atomic write: a failure between PATCH and PUT leaves
+  │        frontmatter updated and the body stale. The command is redelivered (the
+  │        offset is not committed) and both halves are idempotent, so the window self-heals.
   └── increment FrontmatterCommandsTotal{operation, outcome}
 ```
 

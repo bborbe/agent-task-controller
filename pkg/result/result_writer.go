@@ -1095,7 +1095,7 @@ func MergeFrontmatter(
 			continue
 		}
 		merged[field] = diskValue
-		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
+		if inIncoming && !FrontmatterValueEqual(diskValue, incomingValue) {
 			decisions = append(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
@@ -1158,7 +1158,7 @@ func applyOperatorPinnedFields(
 			continue
 		}
 		merged[field] = diskValue
-		if !frontmatterValueEqual(diskValue, incomingValue) {
+		if !FrontmatterValueEqual(diskValue, incomingValue) {
 			decisions = append(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
@@ -1192,7 +1192,7 @@ func applyOperatorOwnedFields(
 			// The deliverer's empty-assignee clear is the string "". A non-string
 			// incoming value (malformed payload) must not panic the merge — the
 			// type-assert keeps this comparison panic-free, same doctrine as
-			// frontmatterValueEqual (spec 006).
+			// FrontmatterValueEqual (spec 006).
 			if incomingString, ok := incomingValue.(string); ok && incomingString == "" {
 				merged[field] = incomingValue
 				continue
@@ -1210,7 +1210,7 @@ func applyOperatorOwnedFields(
 			}
 		}
 		merged[field] = diskValue
-		if inIncoming && !frontmatterValueEqual(diskValue, incomingValue) {
+		if inIncoming && !FrontmatterValueEqual(diskValue, incomingValue) {
 			decisions = append(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
@@ -1252,7 +1252,7 @@ func applyStaleRoutingTupleGuard(
 		return decisions
 	}
 	merged["task_type"] = diskValue
-	if !frontmatterValueEqual(diskValue, incomingValue) {
+	if !FrontmatterValueEqual(diskValue, incomingValue) {
 		decisions = append(
 			decisions,
 			GuardDecision{Field: "task_type", Kept: diskValue, Rejected: incomingValue},
@@ -1266,7 +1266,7 @@ func applyStaleRoutingTupleGuard(
 // never lands on disk, so an agent's spawn-time snapshot can never carry one and an
 // incoming declaration is always this run's deliberate write. A non-string or empty
 // declaration is treated as absent, which keeps the check panic-free on a malformed
-// payload — same doctrine as frontmatterValueEqual (spec 006).
+// payload — same doctrine as FrontmatterValueEqual (spec 006).
 func declaresReassignment(incoming lib.TaskFrontmatter) bool {
 	declaration, ok := incoming[reassignmentDeclarationKey].(string)
 	return ok && declaration != ""
@@ -1303,7 +1303,7 @@ func applyAccumulatedCounters(
 			continue
 		}
 		merged[field] = diskValue
-		if !frontmatterValueEqual(diskValue, incomingValue) {
+		if !FrontmatterValueEqual(diskValue, incomingValue) {
 			decisions = append(
 				decisions,
 				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
@@ -1336,11 +1336,11 @@ func isTerminalStatus(s domain.TaskStatus) bool {
 	return false
 }
 
-// frontmatterValueEqual reports whether two frontmatter values compare equal,
+// FrontmatterValueEqual reports whether two frontmatter values compare equal,
 // treating numeric int/float64 pairs as equal so a JSON-decoded incoming counter
 // (float64) equals a YAML-decoded on-disk counter (int) at steady state — equal
 // counters must produce no guard log line (DB 6).
-func frontmatterValueEqual(a, b any) bool {
+func FrontmatterValueEqual(a, b any) bool {
 	// NEVER use `a == b` on two `any` values here. Go panics with
 	// "comparing uncomparable type map[string]interface {}" when both sides hold
 	// the same uncomparable dynamic type, and both sides come from YAML (on disk)
