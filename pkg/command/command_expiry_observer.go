@@ -65,7 +65,7 @@ func NewExpiredCommandBatchHandler(
 					kept = append(kept, msg)
 					continue
 				}
-				observer.ObserveExpired(ctx, decodeDroppedCommand(ctx, msg), msg)
+				observer.ObserveExpired(ctx, decodeDroppedCommand(msg), msg)
 			}
 			if len(kept) == 0 {
 				return nil
@@ -78,7 +78,7 @@ func NewExpiredCommandBatchHandler(
 // decodeDroppedCommand returns the command carried by a message the predicate dropped. A decode
 // failure is logged with the message coordinates and yields a zero command, so the observer still
 // records the drop — losing the observation would be worse than losing its labels.
-func decodeDroppedCommand(ctx context.Context, msg *sarama.ConsumerMessage) base.Command {
+func decodeDroppedCommand(msg *sarama.ConsumerMessage) base.Command {
 	var command base.Command
 	if err := json.Unmarshal(msg.Value, &command); err != nil {
 		glog.Warningf(

@@ -189,10 +189,10 @@ var CommandExpiredTotal = promauto.NewCounterVec(
 	[]string{"operation"},
 )
 
-// AvailableCommandOperations is the closed set of command operations this controller consumes,
+// availableCommandOperations is the closed set of command operations this controller consumes,
 // used for counter pre-initialisation so every operation series exists at 0 before the first drop.
 // An operation missing here still counts on first increment; it just starts at "no data".
-var AvailableCommandOperations = []string{
+var availableCommandOperations = []string{
 	"create-task",
 	"complete-task",
 	"increment-frontmatter",
@@ -316,7 +316,7 @@ func init() {
 		SkippedFilesTotal.WithLabelValues(reason.String()).Add(0)
 	}
 
-	for _, operation := range AvailableCommandOperations {
+	for _, operation := range availableCommandOperations {
 		CommandExpiredTotal.WithLabelValues(operation).Add(0)
 	}
 
