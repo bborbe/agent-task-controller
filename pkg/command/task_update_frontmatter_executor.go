@@ -6,8 +6,6 @@ package command
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
@@ -18,10 +16,10 @@ import (
 	libkv "github.com/bborbe/kv"
 	"github.com/golang/glog"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // frontmatterCommandVaultMismatch applies the frontmatter-command routing guard:
@@ -60,19 +58,24 @@ func frontmatterCommandVaultMismatch(
 // UpdateFrontmatterCommandOperation is the CQRS command operation name for partial frontmatter update.
 const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFrontmatterCommandOperation
 
-// NewUpdateFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that atomically
-// reads the task file, merges only the specified key-value pairs, and commits.
-// All other frontmatter keys are left unchanged. vaultName is the controller's
-// VAULT_NAME; a command whose non-empty TargetVault differs is cross-vault
-// traffic and is skipped before the task-file lookup (no write, no counter,
-// no result event). resolver is the scanner's identifier→path index, consulted
-// by the lookup before it walks the vault.
+// NewUpdateFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that reads the
+// task through the typed vault API by identifier, PATCHes only the frontmatter fields
+// the command names (plus the two doctrines), and PUTs the body when the command
+// carries a body section. All other frontmatter keys are left untouched — the field
+// level PATCH is what guarantees that, so no whole-file merge happens and none of the
+// task's frontmatter is rewritten.
+//
+// It is explicitly NOT atomic: PATCH and PUT are two requests and the typed surface
+// has no combined primitive, so a failure between them leaves frontmatter updated and
+// the body stale. See applyUpdate for the window and why the retry is safe.
+//
+// vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
+// differs is cross-vault traffic and is skipped before the task lookup (no write, no
+// counter, no result event).
 func NewUpdateFrontmatterExecutor(
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
 	vaultName string,
 	m metrics.Metrics,
-	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -100,37 +103,26 @@ func NewUpdateFrontmatterExecutor(
 			if len(cmd.Updates) == 0 && cmd.Body == nil {
 				return nil, nil, nil
 			}
-			matchedRelPath, _, err := result.FindTaskFilePath(
-				ctx,
-				gitClient,
-				taskDir,
-				cmd.TaskIdentifier,
-				resolver,
-			)
-			if err != nil {
-				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
-				return nil, nil, errors.Wrapf(ctx, err, "find task file for update")
-			}
-			if matchedRelPath == "" {
+			// The identifier IS the address: no path lookup, no working copy.
+			task, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
+			if errors.Is(err, vaultapi.ErrNotFound) {
 				glog.Warningf(
-					"update-frontmatter: task file not found for %s, skipping",
+					"update-frontmatter: task not found for %s, skipping",
 					cmd.TaskIdentifier,
 				)
 				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
 				return nil, nil, nil
 			}
-			fullAbsPath := filepath.Join(gitClient.Path(), matchedRelPath)
-			if err := gitClient.AtomicReadModifyWriteAndCommitPush(
-				ctx,
-				fullAbsPath,
-				buildUpdateModifyFn(ctx, cmd.Updates, cmd.Body, vaultName),
-				fmt.Sprintf("[agent-task-controller] update frontmatter for task %s", cmd.TaskIdentifier),
-			); err != nil {
+			if err != nil {
+				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
+				return nil, nil, errors.Wrapf(ctx, err, "read task for update")
+			}
+			if err := applyUpdate(ctx, client, task, cmd, vaultName); err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
 					err,
-					"atomic update for task %s",
+					"update task %s",
 					cmd.TaskIdentifier,
 				)
 			}
@@ -140,38 +132,79 @@ func NewUpdateFrontmatterExecutor(
 	)
 }
 
-func buildUpdateModifyFn(
+// applyUpdate writes the command's two halves. ⚠️ **They are two calls, not one
+// atomic write**, and the difference is real: the old shape read the file,
+// merged frontmatter and body together, and committed once, so a failure left
+// nothing behind. The typed surface has no such primitive — PATCH replaces named
+// frontmatter fields, PUT replaces the body — so a failure between them leaves
+// frontmatter updated and the body stale. The window is one request wide and the
+// caller retries the command, which is idempotent for both halves; it is named
+// here rather than hidden because the method this replaces was called "atomic".
+func applyUpdate(
 	ctx context.Context,
-	updates lib.TaskFrontmatter,
-	bodySection *task.BodySection,
+	client vaultapi.Client,
+	task *vaultapi.Task,
+	cmd task.UpdateFrontmatterCommand,
 	vaultName string,
-) func([]byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		frontmatterStr, err := result.ExtractFrontmatter(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
+) error {
+	if fields := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName); len(fields) > 0 {
+		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
+			return errors.Wrapf(ctx, err, "patch frontmatter")
 		}
-		body, err := result.ExtractBody(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract body")
-		}
-		fm, err := parseTaskFrontmatter(frontmatterStr)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "parse frontmatter")
-		}
-		for k, v := range updates {
-			fm[k] = v
-		}
-		if bodySection != nil {
-			body = delivery.ReplaceOrAppendSection(body, bodySection.Heading, bodySection.Section)
-		}
-		// spec 042: enforce phase: human_review → assignee: "" doctrine on the
-		// merged frontmatter in the same atomic write. No-op when the merge
-		// does not produce phase: human_review.
-		result.ClearAssigneeIfHumanReview(fm)
-		// Heal-on-write: stamp target_vault on legacy files lacking it so the
-		// non-owning controller permanently stops falling through.
-		result.HealTargetVault(fm, vaultName)
-		return marshalFileContent(ctx, fm, body)
 	}
+	if cmd.Body == nil {
+		return nil
+	}
+	body := delivery.ReplaceOrAppendSection(task.Body, cmd.Body.Heading, cmd.Body.Section)
+	if err := client.PutBody(ctx, task.ID, body); err != nil {
+		return errors.Wrapf(ctx, err, "put body")
+	}
+	return nil
+}
+
+// buildUpdatePatch returns the fields to PATCH. It carries the command's own
+// updates plus the two doctrines that used to be applied to the merged file:
+// spec 042's phase:human_review ⇒ assignee:"" and the target_vault heal.
+//
+// The doctrines are computed against a merged COPY so only the fields they
+// actually change are sent — a PATCH that restated every key would rewrite
+// frontmatter the command never touched.
+func buildUpdatePatch(
+	updates lib.TaskFrontmatter,
+	frontmatter map[string]any,
+	vaultName string,
+) map[string]any {
+	// `before` is the task as it stands, snapshotted BEFORE the command's own
+	// updates are merged — otherwise the diff below would exclude them and the
+	// command would patch nothing.
+	before := map[string]any{}
+	merged := lib.TaskFrontmatter{}
+	for key, value := range frontmatter {
+		before[key] = value
+		merged[key] = value
+	}
+	for key, value := range updates {
+		merged[key] = value
+	}
+	// spec 042: phase: human_review ⇒ assignee: "". No-op otherwise.
+	result.ClearAssigneeIfHumanReview(merged)
+	// Heal-on-write: stamp target_vault on legacy tasks lacking it.
+	result.HealTargetVault(merged, vaultName)
+
+	patch := map[string]any{}
+	for key, value := range merged {
+		// NEVER compare the two `any` values with `!=`: frontmatter is
+		// JSON-decoded, so a task carrying `tags:` or any nested field yields
+		// map[string]any / []any on both sides and Go panics with "comparing
+		// uncomparable type []interface {}". This loop runs over EVERY key in the
+		// task's frontmatter, not only the ones the command names, so one list
+		// field would crash the executor for every update command against that
+		// task. result.FrontmatterValueEqual is reflect.DeepEqual-based (plus
+		// int/float64 equivalence) and never panics.
+		if previous, existed := before[key]; !existed ||
+			!result.FrontmatterValueEqual(previous, value) {
+			patch[key] = value
+		}
+	}
+	return patch
 }

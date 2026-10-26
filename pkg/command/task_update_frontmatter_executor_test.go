@@ -28,12 +28,12 @@ import (
 
 var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -45,46 +45,11 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test helper
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
-
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewUpdateFrontmatterExecutor(
-			fakeGit,
-			taskDir,
+			fakeVault,
 			"openclaw",
 			metrics.New(),
-			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -168,7 +133,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 
 			It("returns nil without writing when Updates is empty map", func() {
@@ -182,7 +148,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -197,7 +164,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					}),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -221,6 +189,98 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("done"))
 				Expect(fm["assignee"]).To(Equal("claude"))
 				Expect(fm["custom"]).To(Equal("preserve"))
+			})
+		})
+
+		Context("PATCH payload", func() {
+			It("PATCHes only the fields the command names, not the whole frontmatter", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: payload-uuid\nstatus: in_progress\nphase: ai_review\nassignee: claude\ncustom: preserve\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("payload-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				// The central claim of the typed port: the request carries the
+				// changed field and nothing else. A whole-frontmatter PATCH would
+				// land the same final file through the fake and pass unnoticed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, id, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(id).To(Equal("payload-uuid"))
+				Expect(fields).To(Equal(map[string]any{"phase": "done"}))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+			})
+
+			It("sends no PATCH when the command restates the current value", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: noop3-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("noop3-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "ai_review"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+			})
+
+			It("does not panic on a task carrying a list-valued frontmatter field", func() {
+				// Regression: frontmatter arrives JSON-decoded, so `tags:` is a
+				// []any and comparing two of them with `!=` panics with
+				// "comparing uncomparable type []interface {}" — for EVERY update
+				// command against such a task, not just ones naming the list.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: list-uuid\nstatus: in_progress\nphase: ai_review\ntags:\n  - alpha\n  - beta\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("list-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(Equal(map[string]any{"phase": "done"}))
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["tags"]).To(ConsistOf("alpha", "beta"))
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+
+			It("returns an error when PutBody fails after the PATCH landed", func() {
+				// The documented partial-application window: the two writes are
+				// not atomic, so a body failure leaves frontmatter updated. The
+				// command is redelivered and re-runs both halves.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: partial-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				fakeVault.PutBodyReturns(errors.New("body write failed"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("partial-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "human_review"},
+					Body: &task.BodySection{
+						Heading: "## Failure",
+						Section: "## Failure\n\n- **Reason:** OOMKilled\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("human_review"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).NotTo(ContainSubstring("## Failure"))
 			})
 		})
 
@@ -436,9 +496,10 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmd)
 					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-					// guard fires before the task-file lookup and before any write
-					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					// guard fires before the task read and before any write
+					Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 					Expect(
 						testutil.ToFloat64(
 							metrics.FrontmatterCommandsTotal.WithLabelValues(
@@ -466,7 +527,9 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				// The write is a typed PATCH now, so "wrote exactly once" moves to
+				// that seam. The file content check is what proves it landed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
 				fm := parseFrontmatter(taskFile)
 				Expect(fm["phase"]).To(Equal("done"))
 			})

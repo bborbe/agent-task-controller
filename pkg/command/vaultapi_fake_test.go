@@ -42,8 +42,8 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	fake.CreateTaskStub = func(context.Context, vaultapi.Task) (*vaultapi.Task, error) {
 		panic("newFSTaskClient: CreateTask is not wired for this executor")
 	}
-	fake.PutBodyStub = func(context.Context, string, string) error {
-		panic("newFSTaskClient: PutBody is not wired for this executor")
+	fake.PutBodyStub = func(_ context.Context, id string, body string) error {
+		return putFSBody(dir, id, body)
 	}
 	fake.ListTasksStub = func(context.Context, vaultapi.Filter) ([]vaultapi.Task, error) {
 		panic("newFSTaskClient: ListTasks is not wired for this executor")
@@ -96,6 +96,29 @@ func patchFSTask(dir, id string, fields map[string]any) (*vaultapi.Task, error) 
 		return nil, err
 	}
 	return taskFromFrontmatter(id, fm, body), nil
+}
+
+// putFSBody replaces the task's body, leaving frontmatter untouched — the same
+// split the typed surface makes between PATCH (fields) and PUT (body).
+func putFSBody(dir, id, body string) error {
+	path, ok := findFSTaskPath(dir, id)
+	if !ok {
+		return vaultapi.ErrNotFound
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- test helper
+	if err != nil {
+		return err
+	}
+	fm, _, err := splitTaskFile(string(raw))
+	if err != nil {
+		return err
+	}
+	marshaled, err := yaml.Marshal(fm)
+	if err != nil {
+		return err
+	}
+	updated := "---\n" + string(marshaled) + "---\n" + body
+	return os.WriteFile(path, []byte(updated), 0600) // #nosec G306 -- test helper
 }
 
 // findFSTaskPath returns the file whose task_identifier equals id.

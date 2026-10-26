@@ -84,11 +84,9 @@ var _ = Describe("Frontmatter sequence integration", func() {
 			metrics.New(),
 		)
 		updateExec = command.NewUpdateFrontmatterExecutor(
-			fakeGit,
-			taskDir,
+			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",
 			metrics.New(),
-			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
