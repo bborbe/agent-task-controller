@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // commandExpireDuration is the maximum age of a queued agent-task-v1-request
@@ -48,6 +49,7 @@ func CreateCommandConsumer(
 	resultWriter result.ResultWriter,
 	resolver result.TaskPathResolver,
 	gitClient gitclient.GitClient,
+	vaultClient vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
@@ -66,7 +68,10 @@ func CreateCommandConsumer(
 	)
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
-		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
+		// First executor ported to the typed surface: it addresses the task by
+		// identifier and PATCHes the fields it changes, instead of reading a
+		// vault-relative path, mutating the YAML and re-serialising the file.
+		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, m),
 		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, vaultName, m, resolver),
 		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k, resolver),
 		command.NewCompleteTaskExecutor(

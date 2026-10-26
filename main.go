@@ -37,6 +37,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/publisher"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
 	pkgsync "github.com/bborbe/agent-task-controller/pkg/sync"
@@ -63,6 +64,7 @@ type application struct {
 	DataDir                  string            `required:"true"  arg:"data-dir"                    env:"DATA_DIR"                    usage:"directory for BoltDB offset storage"`
 	NoSync                   bool              `required:"false" arg:"no-sync"                     env:"NO_SYNC"                     usage:"disable BoltDB fsync (for testing only)"`
 	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                        default:"http://vault-obsidian-openclaw:9090"`
+	VaultAPIURL              string            `required:"false" arg:"vault-api-url"               env:"VAULT_API_URL"               usage:"vault-api base URL; the typed surface the executors address tasks through. REQUIRED for any command ported to it, which fails closed at construction rather than falling back to a path-addressed write"`
 	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                        display:"length" default:""`
 	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                          default:"dev"`
 	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                             default:"none"`
@@ -108,6 +110,14 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		return errors.Wrapf(ctx, err, "probe git-rest readiness")
 	}
 	glog.V(1).Infof("using git-rest HTTP API at %s", a.GitRestURL)
+
+	// The typed surface. A command ported to it has no path-addressed fallback,
+	// so an unset URL fails here rather than silently writing through git-rest.
+	if a.VaultAPIURL == "" {
+		return errors.Errorf(ctx, "VAULT_API_URL is required")
+	}
+	vaultClient := vaultapi.NewClient(a.VaultAPIURL, a.GatewaySecret, "agent-task-controller")
+	glog.V(1).Infof("using vault-api at %s", a.VaultAPIURL)
 
 	syncProducer, err := libkafka.NewSyncProducer(
 		ctx,
@@ -208,6 +218,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		resultWriter,
 		vaultScanner,
 		gitClient,
+		vaultClient,
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,
