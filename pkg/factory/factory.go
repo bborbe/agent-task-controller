@@ -96,6 +96,7 @@ func CreateCommandConsumer(
 			batchSize,
 			topicPrefix,
 			handler,
+			command.NewLoggingExpiredCommandObserver(m),
 			currentDateTime,
 		),
 		retryConsumerDelay,

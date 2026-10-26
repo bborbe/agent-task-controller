@@ -44,12 +44,20 @@ func newCommandOffsetManager(
 // for it. A batch whose commands have all expired — the shape every replayed batch takes — then
 // opens no handler transaction at all (the single offset commit after the batch still writes), and
 // a partly expired batch never carries the dead messages into one.
+//
+// The predicate stays NewExpiredCommandSkip, unchanged and pure; the observer sits in the wrapper
+// beside it, because the filter contract forbids side effects inside skip and the wrapper is the
+// only place that sees each dropped message exactly once. A drop therefore leaves a Warning line
+// naming the command and increments CommandExpiredTotal, which is what turns "a published create
+// never reached the controller" from an inference into a reading.
 func newCommandHandler(
 	handler libkafka.MessageHandlerBatch,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	observer command.ExpiredCommandObserver,
 ) libkafka.MessageHandlerBatch {
-	return libkafka.NewMessageHandlerBatchFilter(
+	return command.NewExpiredCommandBatchHandler(
 		command.NewExpiredCommandSkip(commandExpireDuration, currentDateTime),
+		observer,
 		handler,
 	)
 }
@@ -79,6 +87,7 @@ func newCommandConsumerFunc(
 	batchSize libkafka.BatchSize,
 	topicPrefix base.TopicPrefix,
 	handler libkafka.MessageHandlerBatch,
+	observer command.ExpiredCommandObserver,
 	currentDateTime libtime.CurrentDateTimeGetter,
 ) run.Func {
 	return func(ctx context.Context) error {
@@ -90,7 +99,7 @@ func newCommandConsumerFunc(
 			saramaClientProvider,
 			lib.TaskV1SchemaID.CommandTopic(topicPrefix),
 			newCommandOffsetManager(saramaClient, libkafka.NewOffsetStore(db), currentDateTime),
-			newCommandHandler(handler, currentDateTime),
+			newCommandHandler(handler, currentDateTime, observer),
 			batchSize,
 			run.NewTrigger(),
 			log.DefaultSamplerFactory,
