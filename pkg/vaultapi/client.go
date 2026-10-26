@@ -46,13 +46,24 @@ type AlreadyExistsError struct {
 	TaskIdentifier string
 	// Status is the occupant's normalised status, empty when unreadable.
 	Status string
+	// What is the operation that produced the conflict, so a create and a
+	// re-address do not read identically in a log.
+	What string
 }
 
 func (e *AlreadyExistsError) Error() string {
-	if e.TaskIdentifier == "" {
-		return "task already exists"
+	message := "task already exists"
+	if e.What != "" {
+		message = e.What + ": " + message
 	}
-	return "task already exists: " + e.TaskIdentifier + " (" + e.Status + ")"
+	if e.TaskIdentifier == "" {
+		return message
+	}
+	// The status is server-controlled and may be absent; a bare "()" is noise.
+	if e.Status == "" {
+		return message + ": " + e.TaskIdentifier
+	}
+	return message + ": " + e.TaskIdentifier + " (" + e.Status + ")"
 }
 
 // Unwrap keeps errors.Is(err, ErrAlreadyExists) true for the typed form.
@@ -241,6 +252,7 @@ func conflictError(ctx context.Context, raw []byte, what string) error {
 		Code:           envelope.Error,
 		TaskIdentifier: envelope.TaskIdentifier,
 		Status:         envelope.Status,
+		What:           what,
 	}
 }
 

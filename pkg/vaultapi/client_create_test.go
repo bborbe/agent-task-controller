@@ -21,11 +21,18 @@ import (
 // recordingServer answers one canned response and records the request that
 // produced it, so a spec can assert on the wire shape rather than only on the
 // decoded result.
+//
+// ⚠️ It records failures rather than asserting them: Gomega assertions must not
+// run on net/http's handler goroutine, because Ginkgo cannot attribute a failure
+// there — the spec fails with a confusing connection error, or the assertion is
+// swallowed, instead of naming the real cause. Every spec checks err in
+// AfterEach, on the spec goroutine.
 type recordingServer struct {
 	method string
 	path   string
 	body   map[string]any
 	header http.Header
+	err    error
 }
 
 func (r *recordingServer) handler(status int, response string) http.HandlerFunc {
@@ -34,14 +41,23 @@ func (r *recordingServer) handler(status int, response string) http.HandlerFunc 
 		r.path = req.URL.Path
 		r.header = req.Header.Clone()
 		raw, err := io.ReadAll(req.Body)
-		Expect(err).NotTo(HaveOccurred())
+		if err != nil {
+			r.err = err
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if len(raw) > 0 {
-			Expect(json.Unmarshal(raw, &r.body)).To(Succeed())
+			if err := json.Unmarshal(raw, &r.body); err != nil {
+				r.err = err
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_, err = w.Write([]byte(response))
-		Expect(err).NotTo(HaveOccurred())
+		if _, err := w.Write([]byte(response)); err != nil {
+			r.err = err
+		}
 	}
 }
 
@@ -66,6 +82,9 @@ var _ = Describe("CreateTask", func() {
 		if server != nil {
 			server.Close()
 		}
+		// Asserted on the spec goroutine: the handler records rather than asserts,
+		// so a failure inside it surfaces as itself instead of a connection error.
+		Expect(recorder.err).NotTo(HaveOccurred())
 	})
 
 	Context("without ReopenTerminal", func() {
@@ -166,6 +185,9 @@ var _ = Describe("ReaddressTask", func() {
 		if server != nil {
 			server.Close()
 		}
+		// Asserted on the spec goroutine: the handler records rather than asserts,
+		// so a failure inside it surfaces as itself instead of a connection error.
+		Expect(recorder.err).NotTo(HaveOccurred())
 	})
 
 	Context("when the target identifier is free", func() {
