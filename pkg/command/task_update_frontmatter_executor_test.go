@@ -409,6 +409,64 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(parseFrontmatter(taskFile)["phase"]).To(Equal("human_review"))
 			})
 
+			It("addresses the body PUT by the re-read task's id, not the stale one", func() {
+				// The filesystem fake gives both reads the same ID, so without a
+				// stub that makes them differ, reverting fresh.ID to task.ID leaves
+				// the suite green — the hardening would be untested.
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: idmix-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.ID = "stale-id"
+						return &stale, nil
+					}
+					fresh := *found
+					fresh.ID = "fresh-id"
+					return &fresh, nil
+				}
+				// Both writes are addressed by a synthetic id, so stub them rather
+				// than let the fake's identifier lookup fail on it.
+				fakeVault.PatchTaskStub = func(
+					context.Context,
+					string,
+					map[string]any,
+				) (*vaultapi.Task, error) {
+					return &vaultapi.Task{ID: "stale-id"}, nil
+				}
+				var putID string
+				fakeVault.PutBodyStub = func(_ context.Context, id string, _ string) error {
+					putID = id
+					return nil
+				}
+
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("idmix-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+					Body: &task.BodySection{
+						Heading: "## Result",
+						Section: "## Result\n\nfinished\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(1))
+				Expect(putID).To(Equal("fresh-id"))
+			})
+
 			It("surfaces a PATCH failure and counts it as an error", func() {
 				taskFile := writeTaskFile(
 					"task.md",
