@@ -33,9 +33,7 @@ const CompleteTaskCommandOperation base.CommandOperation = task.CompleteCommandO
 // completion does not append a duplicate block, matching the build-fix-close-obsolete-tasks
 // skill's existing guard).
 // vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
-// differs is cross-vault traffic and is skipped before the task-file lookup.
-// resolver is the scanner's identifier→path index, consulted by the lookup before
-// it walks the vault.
+// differs is cross-vault traffic and is skipped before the task read.
 func NewCompleteTaskExecutor(
 	client vaultapi.Client,
 	vaultName string,
@@ -111,6 +109,19 @@ func NewCompleteTaskExecutor(
 // between the two leaves the task marked completed with no Resolution section,
 // and a retry re-runs both halves — the guard reads the BODY, not the status,
 // so the second attempt still writes and still appends exactly one section.
+//
+// ⚠️ That recovery has a bound, and it is the command's expiry, not the guard: a
+// command that expires (commandExpireDuration, 60 min) before a retry leaves the
+// partial state — completed, no Resolution — permanently. PATCH-before-PUT is
+// still the right order: PUT-first would make the body guard skip the PATCH
+// forever, leaving the task open with a Resolution.
+//
+// ⚠️ PUT replaces the WHOLE body, so the section is merged onto a body re-read
+// immediately before the write. Merging onto the body captured at the top of the
+// command would silently drop any edit made in that window — the replaced
+// AtomicReadModifyWriteAndCommitPush re-read inside its modify closure, so it
+// could not. The re-read also re-checks the Resolution guard, so a concurrent
+// close in the same window does not produce a second section.
 func closeTask(
 	ctx context.Context,
 	client vaultapi.Client,
@@ -133,7 +144,18 @@ func closeTask(
 	); err != nil {
 		return errors.Wrapf(ctx, err, "patch frontmatter")
 	}
-	if err := client.PutBody(ctx, found.ID, resolutionBody(found.Body, cmd, ts)); err != nil {
+	fresh, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
+	if err != nil {
+		return errors.Wrapf(ctx, err, "re-read task for resolution body")
+	}
+	if hasResolutionSection(fresh.Body) {
+		glog.V(2).Infof(
+			"complete-task: task %s gained a Resolution concurrently, skipping body write",
+			cmd.TaskIdentifier,
+		)
+		return nil
+	}
+	if err := client.PutBody(ctx, found.ID, resolutionBody(fresh.Body, cmd, ts)); err != nil {
 		return errors.Wrapf(ctx, err, "put resolution body")
 	}
 	return nil

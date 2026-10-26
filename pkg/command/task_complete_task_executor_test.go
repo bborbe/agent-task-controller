@@ -211,9 +211,11 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 
-				// The identifier IS the address now: one read, no path resolution
-				// and no directory listing, because there is no vault to walk.
-				Expect(fakeVault.ReadTaskCallCount()).To(Equal(1))
+				// The identifier IS the address now: no path resolution and no
+				// directory listing, because there is no vault to walk. Two reads,
+				// not one: the body half re-reads immediately before its PUT so a
+				// concurrent body edit is not overwritten.
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
 				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
 				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
 				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
@@ -249,6 +251,77 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 
 				content := readFile(taskFile)
 				Expect(strings.Count(content, "## Resolution")).To(Equal(1))
+			})
+		})
+
+		Context("failure modes", func() {
+			It("surfaces a PATCH failure and leaves the task open", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: patchfail-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				fakeVault.PatchTaskReturns(nil, errors.New("patch rejected"))
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("patchfail-uuid"),
+					}),
+				)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("in_progress"))
+			})
+
+			It("leaves the task completed with no Resolution when the PUT fails", func() {
+				// The documented partial-application window: the guard reads the
+				// BODY, so a retry still writes — which is what makes this
+				// recoverable, and why the guard must not read the status.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: putfail-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				fakeVault.PutBodyReturns(errors.New("body write failed"))
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("putfail-uuid"),
+					}),
+				)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["status"]).To(Equal("completed"))
+				Expect(fm["phase"]).To(Equal("done"))
+				Expect(readFile(taskFile)).NotTo(ContainSubstring("## Resolution"))
+			})
+
+			It("recovers on re-delivery after a partial write, appending one Resolution", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: recover-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				cmd := task.CompleteCommand{TaskIdentifier: lib.TaskIdentifier("recover-uuid")}
+
+				// First delivery: the PATCH lands, the PUT does not.
+				// PutBodyReturns nils the stub, so capture the filesystem-backed
+				// one first and restore it for the retry.
+				realPut := fakeVault.PutBodyStub
+				fakeVault.PutBodyReturns(errors.New("body write failed"))
+				_, _, err := executor.HandleCommand(ctx, nil, buildCmdObj(cmd))
+				Expect(err).To(HaveOccurred())
+
+				// Second delivery: the retry re-runs both halves and appends once.
+				fakeVault.PutBodyStub = realPut
+				_, _, err = executor.HandleCommand(ctx, nil, buildCmdObj(cmd))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(2))
+				content := readFile(taskFile)
+				Expect(strings.Count(content, "## Resolution")).To(Equal(1))
+				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
 			})
 		})
 
