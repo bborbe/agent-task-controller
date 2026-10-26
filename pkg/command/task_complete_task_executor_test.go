@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var _ = Describe("NewCompleteTaskExecutor", func() {
@@ -322,6 +323,131 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				content := readFile(taskFile)
 				Expect(strings.Count(content, "## Resolution")).To(Equal(1))
 				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
+			})
+
+			It("merges the Resolution onto the re-read body, not the first read", func() {
+				// Pins WHICH body the section is merged onto: swapping
+				// resolutionBody(fresh.Body, …) back to resolutionBody(found.Body, …)
+				// must fail this. The first read returns the older body; the
+				// re-read sees the operator's section and must preserve it.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: reread-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n\n## Operator\n\nkeep me\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.Body = "body\n"
+						return &stale, nil
+					}
+					return found, nil
+				}
+
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("reread-uuid"),
+					}),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
+				content := readFile(taskFile)
+				Expect(content).To(ContainSubstring("## Operator"))
+				Expect(content).To(ContainSubstring("keep me"))
+				Expect(strings.Count(content, "## Resolution")).To(Equal(1))
+			})
+
+			It("surfaces a re-read failure after the PATCH landed", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: rereadfail-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("complete-task", "error"),
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					calls++
+					if calls == 2 {
+						return nil, errors.New("vault-api unreachable")
+					}
+					return realRead(c, id)
+				}
+
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("rereadfail-uuid"),
+					}),
+				)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"complete-task",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+				// the PATCH landed, the body did not: the documented partial state
+				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
+				Expect(readFile(taskFile)).NotTo(ContainSubstring("## Resolution"))
+			})
+
+			It("skips the body write when a concurrent close already resolved it", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: raced-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 2 {
+						// the concurrent writer's close, visible only on the re-read
+						raced := *found
+						raced.Body = found.Body + "\n## Resolution\n\n- closed by someone else\n"
+						return &raced, nil
+					}
+					return found, nil
+				}
+
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.CompleteCommand{
+						TaskIdentifier: lib.TaskIdentifier("raced-uuid"),
+					}),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(strings.Count(readFile(taskFile), "## Resolution")).To(Equal(0))
 			})
 		})
 

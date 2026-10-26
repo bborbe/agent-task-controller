@@ -155,7 +155,10 @@ func closeTask(
 		)
 		return nil
 	}
-	if err := client.PutBody(ctx, found.ID, resolutionBody(fresh.Body, cmd, ts)); err != nil {
+	// Addressed by fresh.ID, not found.ID: the body being written is the fresh
+	// read's, so a task deleted and recreated under the same identifier between
+	// the two reads must not have this body written onto the stale record.
+	if err := client.PutBody(ctx, fresh.ID, resolutionBody(fresh.Body, cmd, ts)); err != nil {
 		return errors.Wrapf(ctx, err, "put resolution body")
 	}
 	return nil
