@@ -90,10 +90,16 @@ func NewCreateTaskExecutor(
 			if err != nil {
 				return nil, nil, err
 			}
-			relPath, err := createTaskRelPath(ctx, taskDir, pathTitle, cmd)
-			if err != nil {
-				return nil, nil, err
-			}
+			// No path check here on purpose. Every check that can fail has to run
+			// BEFORE the create, because the file exists server-side the moment it
+			// returns: failing afterwards would leave a materialized task that
+			// recordCreatedTaskPath and the supersede hooks never see, so its
+			// results would be dropped for the pod's life. createTaskTitle already
+			// rejects separators (falling back to the identifier), the
+			// disambiguated title is that title plus a fixed suffix, and ".md" is
+			// appended — so no ".." path segment can form, and a title like
+			// "Wait... what?" stays legal.
+			relPath := filepath.Join(taskDir, pathTitle+".md")
 			if reopened {
 				// Unconditional Infof, not V(n)-gated, by design: a reopen replaces a
 				// task an operator or another agent already closed, so it must be
@@ -212,30 +218,6 @@ func createThroughAPI(
 		return "", false, errors.Wrapf(ctx, err, "disambiguated create at %q", alt)
 	}
 	return alt, reopened, nil
-}
-
-// createTaskRelPath joins the title the create actually used onto the task
-// directory. The title is either the validated request title or that title plus
-// a short-identifier suffix, so it is separator-free by construction — but this
-// join is the last place a traversal could land, and the old path resolver
-// validated before joining, so the check is repeated here rather than assumed.
-func createTaskRelPath(
-	ctx context.Context,
-	taskDir string,
-	pathTitle string,
-	cmd task.CreateCommand,
-) (string, error) {
-	if pathTitle == "" || strings.ContainsAny(pathTitle, "/\\") ||
-		strings.Contains(pathTitle, "..") {
-		return "", errors.Wrapf(
-			ctx,
-			validation.Error,
-			"refusing unsafe task path title %q for task %s",
-			pathTitle,
-			cmd.TaskIdentifier,
-		)
-	}
-	return filepath.Join(taskDir, pathTitle+".md"), nil
 }
 
 // postCreate sends one create and reports whether it replaced a terminal

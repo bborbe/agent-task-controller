@@ -55,9 +55,10 @@ func ShouldProcess(cmd task.CreateCommand, vaultName string) bool {
 
 // ShouldProcessResult returns true iff the controller's vaultName owns this
 // result. The result's frontmatter carries target_vault — stamped by the typed
-// create and echoed back by the agent when it publishes. A result whose target_vault differs from vaultName is cross-vault
-// traffic (both controllers consume the shared topic) and must be skipped
-// before the write scan so the owning vault alone writes it. An absent
+// create and echoed back by the agent when it publishes. A result whose
+// target_vault differs from vaultName is cross-vault traffic (both controllers
+// consume the shared topic) and must be skipped before the write scan so the
+// owning vault alone writes it. An absent
 // target_vault (legacy task created before stamping) falls through to true:
 // the write path's not-found handling covers genuinely-missing tasks.
 func ShouldProcessResult(req lib.Task, vaultName string) bool {

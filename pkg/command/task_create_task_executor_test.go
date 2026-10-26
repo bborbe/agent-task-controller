@@ -790,6 +790,34 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 
+			It(
+				"falls back to the identifier for a title the command rejects, and records it",
+				func() {
+					// createTaskTitle falls back to the identifier when cmd.Validate
+					// fails, and that validation already rejects a ".." title — so no
+					// title reaching the join can form a traversal segment, and a create
+					// can never be left on disk but unindexed.
+					fakeResolver := &mocks.TaskPathResolver{}
+					fakeResolver.ResolveReturns("", false, nil)
+					recordingExecutor := command.NewCreateTaskExecutor(
+						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("ellipsis-id"),
+						Title:          "Wait... what?",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+
+					_, _, err := recordingExecutor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(taskExists("ellipsis-id")).To(BeTrue())
+
+					Expect(fakeResolver.RecordCallCount()).To(Equal(1))
+					_, _, relPath := fakeResolver.RecordArgsForCall(0)
+					Expect(relPath).To(Equal(filepath.Join(taskDir, "ellipsis-id.md")))
+				},
+			)
+
 			It("records the request title's path, not the server's echoed title", func() {
 				// The server may normalise the title it stores. The index and the
 				// supersede back-pointers key off the path this controller asked for,

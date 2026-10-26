@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bborbe/errors"
+	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 )
 
@@ -77,10 +78,18 @@ func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
 // longer represents live work. It mirrors the server's own predicate because the
 // create's conflict answer is only actionable with it: a terminal occupant can
 // be replaced (or, for a recurring instance, must still hold the slot), while a
-// live one must never be touched. These two values are the protocol, not a
-// business rule — the server decides which statuses exist, this only reads them.
+// live one must never be touched.
+//
+// The values come from domain's typed constants rather than being re-spelled, so
+// a rename or an added terminal status reaches this predicate instead of leaving
+// it silently answering "live" — which would map the conflict to
+// ErrTaskAlreadyExists where it should have reopened.
 func IsTerminalStatus(status string) bool {
-	return status == "completed" || status == "aborted"
+	switch domain.TaskStatus(status) {
+	case domain.TaskStatusCompleted, domain.TaskStatusAborted:
+		return true
+	}
+	return false
 }
 
 // CreateOptions carries the create route's opt-in behaviours. The zero value is
