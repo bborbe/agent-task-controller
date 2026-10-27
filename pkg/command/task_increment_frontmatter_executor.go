@@ -13,10 +13,12 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
@@ -25,16 +27,19 @@ const IncrementFrontmatterCommandOperation base.CommandOperation = task.Incremen
 
 // NewIncrementFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that atomically
 // reads the task file, increments the named frontmatter field by delta, and commits.
-// If trigger_count reaches an explicitly-set max_triggers the assignee is cleared and
-// phase is preserved in the same write. An absent max_triggers means no cap: the routing
-// assignee is never stripped on recurring tasks that accumulate trigger_count.
+// When trigger_count reaches the trigger cap — an explicit max_triggers OR a
+// ref-bearing task (the same predicate the executor's checkTriggerBudget refuses
+// on) — the assignee is cleared (captured into previous_assignee) and a
+// ## Trigger Cap Escalation body section is recorded, so an exhausted task lands
+// where a human can find it instead of parking silently with a live assignee. A
+// plain recurring task with neither max_triggers nor a ref is never capped: its
+// routing assignee survives re-dispatch accumulation.
 // vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
-// differs is cross-vault traffic and is skipped before the task-file lookup.
-// resolver is the scanner's identifier→path index, consulted by the lookup before
-// it walks the vault.
+// differs is cross-vault traffic and is skipped before the task read.
 func NewIncrementFrontmatterExecutor(
 	client vaultapi.Client,
 	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
@@ -73,11 +78,32 @@ func NewIncrementFrontmatterExecutor(
 				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "read task for increment")
 			}
-			if _, err := client.PatchTask(
-				ctx,
-				task.ID,
-				buildIncrementPatch(cmd, task.Frontmatter, vaultName),
-			); err != nil {
+			patch, escalation := buildIncrementPatch(cmd, task.Frontmatter, vaultName)
+			// Escalate BEFORE the frontmatter PATCH: the PATCH carries a DELTA
+			// (trigger_count + cmd.Delta), so a failed PATCH that is retried
+			// re-increments exactly once, whereas a failed body PUT *after* a landed
+			// PATCH would re-increment on redelivery. The body write is idempotent
+			// (guarded by the section heading) and re-reads the task immediately
+			// before the PUT so a concurrent body write — e.g. the executor's
+			// ## Failure section on the deadline path — is not clobbered.
+			if escalation != nil {
+				if err := writeTriggerCapEscalation(
+					ctx,
+					client,
+					task.ID,
+					*escalation,
+					currentDateTime.Now(),
+				); err != nil {
+					m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
+					return nil, nil, errors.Wrapf(
+						ctx,
+						err,
+						"escalate trigger cap for task %s",
+						cmd.TaskIdentifier,
+					)
+				}
+			}
+			if _, err := client.PatchTask(ctx, task.ID, patch); err != nil {
 				m.FrontmatterCommandsTotal("increment-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
@@ -93,30 +119,45 @@ func NewIncrementFrontmatterExecutor(
 	)
 }
 
-// buildIncrementPatch computes the fields to PATCH from the task as it stands.
+// triggerCapEscalation carries the values the ## Trigger Cap Escalation section
+// needs, produced when an increment reaches the cap.
+type triggerCapEscalation struct {
+	triggerCount int
+	maxTriggers  int
+	agentName    string
+}
+
+// buildIncrementPatch computes the fields to PATCH from the task as it stands,
+// returning a non-nil escalation when the increment reaches the trigger cap.
 //
 // It replaces a whole-file read-modify-write: the old shape parsed the YAML,
 // mutated it and re-serialised the file, so every unrelated key round-tripped
 // through marshal. The typed surface names the fields, so only the fields this
 // command changes are sent — and the API applies them atomically per task.
+//
+// The trigger cap engages for an explicit max_triggers OR a ref-bearing task
+// (result.TriggerCapEngaged) — the same predicate the executor's refusal uses.
+// A plain recurring task with neither is never capped, so its routing assignee
+// survives re-dispatch accumulation. Only trigger_count drives the cap.
 func buildIncrementPatch(
 	cmd task.IncrementFrontmatterCommand,
 	frontmatter map[string]any,
 	vaultName string,
-) map[string]any {
+) (map[string]any, *triggerCapEscalation) {
 	fm := lib.TaskFrontmatter(frontmatter)
-	currentVal := intFromFrontmatter(fm, cmd.Field)
-	newVal := currentVal + cmd.Delta
+	newVal := intFromFrontmatter(fm, cmd.Field) + cmd.Delta
 	patch := map[string]any{cmd.Field: newVal}
-	// The trigger cap is opt-in: an absent max_triggers means no cap, so a
-	// recurring task that accumulates trigger_count across re-dispatches
-	// never has its routing assignee stripped (the lib default-3 fallback
-	// would silently kill the re-dispatch loop). Only the trigger_count
-	// field drives the cap — never compare another incremented field
-	// against max_triggers.
-	if cmd.Field == "trigger_count" {
-		if _, ok := fm["max_triggers"]; ok && newVal >= fm.MaxTriggers() {
-			patch["assignee"] = ""
+	var escalation *triggerCapEscalation
+	if cmd.Field == "trigger_count" && result.TriggerCapEngaged(fm) && newVal >= fm.MaxTriggers() {
+		agentName := result.ClearAssignee(fm)
+		patch["assignee"] = ""
+		if agentName != "" {
+			patch["previous_assignee"] = agentName
+		}
+		escalation = &triggerCapEscalation{
+			triggerCount: newVal,
+			maxTriggers:  fm.MaxTriggers(),
+			agentName:    agentName,
 		}
 	}
 	// Heal-on-write: stamp target_vault on legacy tasks lacking it so the
@@ -124,7 +165,38 @@ func buildIncrementPatch(
 	if _, ok := fm["target_vault"]; !ok {
 		patch["target_vault"] = vaultName
 	}
-	return patch
+	return patch, escalation
+}
+
+// writeTriggerCapEscalation appends the ## Trigger Cap Escalation section to the
+// task body, if it is not already present. It re-reads the task immediately before
+// the PUT (the body is replaced wholesale) so a body edit made in the window — the
+// executor's ## Failure section on the deadline path — is merged onto rather than
+// dropped, and the duplicate guard is re-checked against that fresh body.
+func writeTriggerCapEscalation(
+	ctx context.Context,
+	client vaultapi.Client,
+	id string,
+	escalation triggerCapEscalation,
+	now libtime.DateTime,
+) error {
+	fresh, err := client.ReadTask(ctx, id)
+	if err != nil {
+		return errors.Wrapf(ctx, err, "re-read task for trigger cap escalation body")
+	}
+	if result.ContainsEscalationSection(fresh.Body, result.TriggerCapEscalationHeader) {
+		return nil
+	}
+	body := fresh.Body + result.TriggerCapEscalationSection(
+		escalation.triggerCount,
+		escalation.maxTriggers,
+		escalation.agentName,
+		now,
+	)
+	if err := client.PutBody(ctx, fresh.ID, body); err != nil {
+		return errors.Wrapf(ctx, err, "put trigger cap escalation body")
+	}
+	return nil
 }
 
 func intFromFrontmatter(fm lib.TaskFrontmatter, field string) int {

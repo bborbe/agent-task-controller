@@ -14,6 +14,7 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -81,6 +82,7 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		incrementExec = command.NewIncrementFrontmatterExecutor(
 			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",
+			libtime.NewCurrentDateTime(),
 			metrics.New(),
 		)
 		updateExec = command.NewUpdateFrontmatterExecutor(

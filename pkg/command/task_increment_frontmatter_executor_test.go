@@ -10,11 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
+	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -82,9 +85,12 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		}
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
+		fakeTime := &libtimemocks.CurrentDateTimeGetter{}
+		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)))
 		executor = command.NewIncrementFrontmatterExecutor(
 			fakeVault,
 			"openclaw",
+			fakeTime,
 			metrics.New(),
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
@@ -275,6 +281,44 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("planning"))
 				Expect(fm["assignee"]).To(Equal("sentry-collector-agent"))
 			})
+
+			It(
+				"escalates a ref-bearing task with no max_triggers at the lib default cap",
+				func() {
+					// The exact production shape of the seven parked pr-review records:
+					// a ref, no max_triggers, trigger_count 2 -> 3. Before the fix the
+					// cap only engaged when max_triggers was present, so this increment
+					// charged the budget silently and the task parked with a live
+					// assignee and no job. It must now clear the assignee, capture it in
+					// previous_assignee, and record the escalation section.
+					taskFile := writeTaskFile(
+						"cap-ref.md",
+						"---\ntask_identifier: cap-ref-uuid\ntrigger_count: 2\nphase: planning\nassignee: pr-reviewer-agent\nref: 43b06f44\n---\n## Failure\n- **Reason:** deadline_exceeded\n",
+					)
+					cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cap-ref-uuid"),
+						Field:          "trigger_count",
+						Delta:          1,
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeNumerically("==", 3))
+					Expect(fm["assignee"]).To(BeEmpty())
+					Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+					Expect(fm["phase"]).To(Equal("planning"))
+
+					content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+					Expect(readErr).NotTo(HaveOccurred())
+					body := string(content)
+					Expect(body).To(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(body).To(ContainSubstring("**Trigger count:** 3"))
+					Expect(body).To(ContainSubstring("**Max triggers:** 3"))
+					// The pre-existing ## Failure section must survive the body PUT.
+					Expect(body).To(ContainSubstring("deadline_exceeded"))
+				},
+			)
 		})
 
 		Context("no escalation below cap", func() {

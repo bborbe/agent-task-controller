@@ -205,6 +205,44 @@ var _ = Describe("resultWriter escalation notification", func() {
 		})
 	})
 
+	Context("trigger cap on a ref-bearing task", func() {
+		// The parked pr-review shape: a ref, no max_triggers, trigger_count 3. Before
+		// the fix the cap only engaged when max_triggers was present, so this record
+		// parked silently with a live assignee and no job. The ref alone must now
+		// engage the cap: assignee cleared, previous_assignee captured, section written.
+		It("escalates a task with a ref and no max_triggers at the lib default cap", func() {
+			writeTaskFile(
+				"my-task.md",
+				"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\n"+
+					"trigger_count: 3\nassignee: pr-reviewer-agent\nref: 43b06f44\n---\n## Result\nStatus: failed\n",
+			)
+			task := lib.Task{
+				TaskIdentifier: identifier,
+				Frontmatter: lib.TaskFrontmatter{
+					"task_identifier": "test-task-uuid-1234",
+					"status":          "in_progress",
+					"phase":           "planning",
+					"trigger_count":   3,
+					"assignee":        "pr-reviewer-agent",
+					"ref":             "43b06f44",
+				},
+				Content: lib.TaskContent("## Result\nStatus: failed\n"),
+			}
+			Expect(writer.WriteResult(ctx, task)).To(Succeed())
+
+			written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
+			Expect(readErr).NotTo(HaveOccurred())
+			s := string(written)
+			Expect(s).To(ContainSubstring("## Trigger Cap Escalation"))
+			Expect(s).To(ContainSubstring("assignee: \"\""))
+			Expect(s).To(ContainSubstring("previous_assignee: pr-reviewer-agent"))
+			Expect(s).To(ContainSubstring("**Trigger count:** 3"))
+			Expect(s).To(ContainSubstring("**Max triggers:** 3"))
+			Expect(published).To(HaveLen(1))
+			Expect(published[0].Metadata["previousAssignee"]).To(Equal("pr-reviewer-agent"))
+		})
+	})
+
 	Context("no escalation", func() {
 		It("publishes nothing when the assignee was already empty", func() {
 			Expect(writer.WriteResult(ctx, retryCapTask(""))).To(Succeed())

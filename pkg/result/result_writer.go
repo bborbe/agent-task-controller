@@ -709,27 +709,44 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 	return body
 }
 
-// applyTriggerCap enforces the trigger-count cap. The cap is opt-in: an absent
-// max_triggers means no cap, so recurring tasks that accumulate trigger_count
-// across re-dispatches are never escalated and never have their routing assignee
-// stripped (the lib default-3 fallback would kill the re-dispatch loop). The
-// triggerCount > 0 guard prevents degenerate escalation of brand-new tasks where
-// trigger_count is absent. When the task is already parked (section present),
-// existing.Phase() restores the on-disk lifecycle phase to prevent stale-result
-// phase clobber (cap stickiness).
+// TriggerCapEngaged reports whether the trigger cap applies to this frontmatter.
+//
+// The cap is engaged when max_triggers is explicitly set OR a ref is present. The
+// ref arm mirrors the executor's refusal predicate (checkTriggerBudget in
+// agent-task-executor), which caps a ref-bearing task at MaxTriggers() — the lib
+// default of 3 — even when max_triggers is absent. Without the ref arm a
+// ref-bearing task is refused by the executor and never escalated by either write
+// site, so it parks silently at its lifecycle phase with a live assignee and no
+// job: the silent-parking defect this predicate closes.
+func TriggerCapEngaged(fm lib.TaskFrontmatter) bool {
+	if _, ok := fm["max_triggers"]; ok {
+		return true
+	}
+	_, hasRef := fm.String("ref")
+	return hasRef
+}
+
+// applyTriggerCap enforces the trigger-count cap. The cap is engaged for an
+// explicit max_triggers or a ref-bearing task (see TriggerCapEngaged); a plain
+// recurring task with neither is never escalated and never has its routing
+// assignee stripped, so it keeps re-dispatching (the lib default-3 fallback would
+// kill the loop). The triggerCount > 0 guard prevents degenerate escalation of
+// brand-new tasks where trigger_count is absent. When the task is already parked
+// (section present), existing.Phase() restores the on-disk lifecycle phase to
+// prevent stale-result phase clobber (cap stickiness).
 func (r *resultWriter) applyTriggerCap(
 	merged, existing lib.TaskFrontmatter,
 	triggerCount int,
 	body string,
 ) string {
-	if _, ok := merged["max_triggers"]; !ok {
+	if !TriggerCapEngaged(merged) {
 		return body
 	}
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return body
 	}
 	agentName := clearAssignee(merged)
-	if containsEscalationSection(body, "## Trigger Cap Escalation") {
+	if containsEscalationSection(body, TriggerCapEscalationHeader) {
 		restoreExistingPhase(existing, merged)
 		return body
 	}
@@ -772,6 +789,14 @@ func clearAssignee(merged lib.TaskFrontmatter) string {
 	return agentName
 }
 
+// ClearAssignee is the exported form of clearAssignee for callers outside this
+// package (the increment executor). It preserves the exact semantics — capture the
+// current assignee into previous_assignee when non-empty, then clear assignee — so
+// the two escalation write sites produce an identical parked state.
+func ClearAssignee(merged lib.TaskFrontmatter) string {
+	return clearAssignee(merged)
+}
+
 // ClearAssigneeIfHumanReview enforces the spec-039 / spec-042 doctrine:
 // when merged frontmatter has phase == "human_review", clear assignee via
 // clearAssignee (which captures the prior assignee into previous_assignee
@@ -805,17 +830,37 @@ func (r *resultWriter) escalationSection(retryCount int, agentName string) strin
 	)
 }
 
+// TriggerCapEscalationHeader is the body heading a trigger-cap escalation writes.
+// Exported so the increment executor can test for and append the identical section.
+const TriggerCapEscalationHeader = "## Trigger Cap Escalation"
+
 func (r *resultWriter) triggerEscalationSection(
 	triggerCount int,
 	agentName string,
 	merged lib.TaskFrontmatter,
 ) string {
-	ts := r.currentDateTime.Now().UTC().Format(time.RFC3339)
-	return fmt.Sprintf(
-		"\n## Trigger Cap Escalation\n\n- **Timestamp:** %s\n- **Trigger count:** %d\n- **Max triggers:** %d\n- **Assignee:** %s\n- **Last agent output:** see `## Result` above\n",
-		ts,
+	return TriggerCapEscalationSection(
 		triggerCount,
 		merged.MaxTriggers(),
+		agentName,
+		r.currentDateTime.Now(),
+	)
+}
+
+// TriggerCapEscalationSection renders the ## Trigger Cap Escalation body section
+// following the established precedent. Exported so the increment executor — the
+// only site the deadline-failure path reaches — writes the same section the result
+// writer does, rather than a second, drifting copy.
+func TriggerCapEscalationSection(
+	triggerCount, maxTriggers int,
+	agentName string,
+	now libtime.DateTime,
+) string {
+	return fmt.Sprintf(
+		"\n"+TriggerCapEscalationHeader+"\n\n- **Timestamp:** %s\n- **Trigger count:** %d\n- **Max triggers:** %d\n- **Assignee:** %s\n- **Last agent output:** see `## Result` above\n",
+		now.UTC().Format(time.RFC3339),
+		triggerCount,
+		maxTriggers,
 		agentName,
 	)
 }
@@ -827,6 +872,12 @@ func (r *resultWriter) triggerEscalationSection(
 // phase: human_review).
 func containsEscalationSection(body, header string) bool {
 	return strings.Contains(body, "\n"+header+"\n")
+}
+
+// ContainsEscalationSection is the exported form of containsEscalationSection so
+// the increment executor shares the same duplicate guard.
+func ContainsEscalationSection(body, header string) bool {
+	return containsEscalationSection(body, header)
 }
 
 // bodySection is one markdown heading and the content that follows it.
