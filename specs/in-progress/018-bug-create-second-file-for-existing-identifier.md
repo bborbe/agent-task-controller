@@ -124,7 +124,7 @@ git log --oneline -5 -- "25 Tasks"
 
 ## Assumptions
 
-- The identifier→path index is populated from a completed scan cycle or the boot build, and `Record` keeps it current for files this controller creates. A stale index costs one missed redirect, not a wrong write, because the server still resolves the occupant by path.
+- The identifier→path index is populated from a completed scan cycle or the boot build, and `Record` keeps it current for files this controller creates. **It is not self-freshening: a stale entry costs a wrong redirect, not a missed one** (see the required guard under Security / Abuse Cases).
 - The identifier→path index contains task files only. If it were ever widened to arbitrary pages, the vault-api#28 class returns and this spec must be revisited.
 - The emitters keep minting deterministic identifiers; a random identifier would make the redirect a no-op and the defect moot, which is not the direction chosen.
 
@@ -133,7 +133,7 @@ git log --oneline -5 -- "25 Tasks"
 | Trigger | Expected behavior | Recovery |
 |---|---|---|
 | The index points at a path that no longer exists | The create posts under that stem and succeeds as a fresh file — the same outcome as today, no worse | None needed; the next scan cycle drops the vanished path. If it persists, restart the controller so the boot build rebuilds the index, then `grep -rl 'task_identifier: <id>' "$TASK_DIR"` must print one path |
-| The index points at a file in another vault | The stem is reused and the create lands in this controller's `TASK_DIR`; the server's 409 reports the occupying identifier, which differs, so the executor returns the benign already-exists outcome rather than overwriting | Check `TASK_DIR` and the vault-scoping of the index; the task is not lost, it simply was not created by this emit |
+| The index points at a file in another vault, or at a path whose file now carries a **different** identifier (stale entry) | **Without the required guard this overwrites that file's terminal record** — the redirect posts under its title and the server reopens any terminal occupant regardless of identifier | Add the guard (read the resolved file, redirect only when its `task_identifier` still equals the command's); if a record was replaced, restore it from git history |
 | The redirect fires on a legitimately new task | Only reachable if an emitter assigned one identifier to two distinct tasks — the defect this spec removes | File the emitter defect separately; the record store now holds one file for the identifier, so no data is lost |
 | The resolver is unavailable at boot | Miss path; behaviour identical to today | None; the index fills on the first completed scan cycle or the boot build |
 | A resolver error (two paths for one identifier) | The create posts under the command's own title and the ambiguity is logged | Run the one-off migration to re-mint the duplicates, then confirm `grep -rl 'task_identifier: <id>' "$TASK_DIR"` prints one path |
@@ -141,7 +141,8 @@ git log --oneline -5 -- "25 Tasks"
 
 ## Security / Abuse Cases
 
-- A poisoned index entry could attempt to steer a create onto a chosen title. The blast radius is bounded to a **filename in `TASK_DIR`**: the create is create-only for live files, and the server reports the occupying identifier, so a mismatch yields an already-exists outcome and never an overwrite of another task.
+- A poisoned index entry could attempt to steer a create onto a chosen title. **The first version of this spec claimed that was bounded to a filename and could never overwrite another task. That claim was false and is retracted (bot review, 2026-10-27).** `postCreate` sends `ReopenTerminal: !isRecurringTaskCommand(cmd)`, and the vault API replaces **any** terminal occupant regardless of the identifier it carries — so a stale entry (`idX → T.md` where `T.md` has since been rewritten to carry `idA`) posts under `T`'s title and **replaces idA's terminal record**. A live occupant with a different identifier is not an already-exists outcome either: it falls through to ` - <id[:8]>` and creates a new file titled from the other task. The index is not self-freshening — `Record` only adds, and `buildIndex` replaces the map only on the next poll, never in a `POLL_INTERVAL=0s` deployment.
+- **Required guard, not yet implemented:** on a resolver hit, read the resolved file and redirect **only if its `task_identifier` still equals `cmd.TaskIdentifier`**; otherwise keep the command's own title and log the mismatch. That closes both the stale-index overwrite and the wrong-title disambiguation with one read, and it must land with a test that redirects onto a terminal occupant of a *different* identifier and asserts no write.
 - No new path is constructed from the index — the redirect returns a `filepath.Base` stem with `.md` trimmed, so a `..` or separator cannot enter the path from the resolver side. `createTaskTitle`'s existing separator rejection is unchanged.
 
 ## Suggested Decomposition
