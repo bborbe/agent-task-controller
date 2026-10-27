@@ -30,14 +30,20 @@ import (
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
 // a new vault task file for the given task_identifier. If cmd.Title passes validation
 // the file is written at tasks/{title}.md; otherwise it falls back to tasks/{task_identifier}.md.
+// The identifier index is consulted before the create: when it already holds a
+// file for the identifier, THAT file's title is the one sent, so a re-emit of one
+// key under a different title cannot mint a second file carrying the same
+// identifier.
 // A file that already exists at the resolved path causes ErrTaskAlreadyExists (a benign
 // Failure on the result topic — no overwrite, no git write) UNLESS the existing file's
-// status is terminal ("completed"/"aborted"), in which case a fresh non-terminal task is
-// materialized at that path.
+// status is terminal ("completed"/"aborted") AND it carries this task's identifier, in
+// which case a fresh non-terminal task is materialized at that path. A terminal file
+// belonging to a DIFFERENT identifier is never replaced.
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
 // Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
 // match vaultName are skipped without side effects (no git write, no error, no result event).
-// resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
+// resolver is the identifier→path index; a nil resolver looks nothing up and records
+// nothing, and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
 	client vaultapi.Client,
@@ -86,6 +92,26 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			title := createTaskTitle(ctx, cmd)
+			if indexedTitle, found, err := indexedTaskTitle(
+				ctx, resolver, taskDir, cmd.TaskIdentifier,
+			); err != nil {
+				return nil, nil, err
+			} else if found {
+				// The index already knows a file for this identifier, so the create
+				// must land on THAT file rather than on a path derived from this
+				// command's title. Sending the occupant's own stem is what makes a
+				// second emit of one key under a different title a no-op instead of a
+				// second file carrying the same identifier (2026-10-27: 16 identifiers
+				// shared across 35 files, and the re-drive streak store is keyed on the
+				// identifier, so two records shared one counter).
+				glog.V(2).Infof(
+					"create-task: identifier %s is indexed at %s; creating there instead of at title %q",
+					cmd.TaskIdentifier,
+					filepath.Join(taskDir, indexedTitle+".md"),
+					title,
+				)
+				title = indexedTitle
+			}
 			pathTitle, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
@@ -144,6 +170,66 @@ func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
 	return cmd.Title
 }
 
+// indexedTaskTitle returns the filename stem of the file the identifier index
+// already holds for id, so a create addresses that file instead of trusting
+// cmd.Title alone.
+//
+// The file path is keyed on the title while the identifier lives in the
+// frontmatter, so nothing about the title path tells a re-emit apart from a new
+// task: a second emit of one key under a different title used to land on a free
+// path and write a second file carrying the same identifier. The re-drive streak
+// store is keyed on the identifier, so the two records then shared one counter
+// and a record that failed three times capped the key and refused its siblings
+// (2026-10-27: 16 identifiers across 35 files).
+//
+// A nil resolver (test-only) and an unknown identifier both report a miss, so
+// the caller keeps the title-derived path. A miss is not evidence of absence —
+// it is the ordinary answer for a genuinely new task.
+//
+// A duplicate identifier is returned as an error, never as a miss. Two files
+// already carry it, so there is no single path to reuse, and picking either
+// would write this create onto a record that may belong to a different task. The
+// create then fails loudly and the vault is left untouched; adding a third file
+// is the one outcome that must not happen. The known duplicate groups are a
+// separate migration, not this lookup's business.
+//
+// A stale hit needs no guard here: the title it returns is re-resolved by the
+// API, whose conflict names the real occupant, so a path since taken by another
+// task reaches the same disambiguation as any other collision.
+func indexedTaskTitle(
+	ctx context.Context,
+	resolver result.TaskPathResolver,
+	taskDir string,
+	id lib.TaskIdentifier,
+) (string, bool, error) {
+	if resolver == nil {
+		return "", false, nil
+	}
+	relPath, found, err := resolver.Resolve(ctx, id)
+	if err != nil {
+		return "", false, errors.Wrapf(ctx, err, "resolve task_identifier %s", id)
+	}
+	if !found || relPath == "" {
+		return "", false, nil
+	}
+	// Only a file directly inside the task directory names a task this executor
+	// may address; anything else is treated as a miss rather than sent as a title.
+	if filepath.Dir(relPath) != filepath.Clean(taskDir) {
+		glog.Warningf(
+			"create-task: identifier %s is indexed at %s, outside %s; keeping the title path",
+			id,
+			relPath,
+			taskDir,
+		)
+		return "", false, nil
+	}
+	stem := strings.TrimSuffix(filepath.Base(relPath), ".md")
+	if stem == "" {
+		return "", false, nil
+	}
+	return stem, true, nil
+}
+
 // createThroughAPI materialises the task and settles the three answers the old
 // title-path pre-check computed: created, reopened, or a collision.
 //
@@ -161,7 +247,7 @@ func createThroughAPI(
 	title string,
 	vaultName string,
 ) (pathTitle string, reopened bool, err error) {
-	reopened, err = postCreate(ctx, client, cmd, title, vaultName)
+	reopened, err = createWithTerminalReopen(ctx, client, cmd, title, vaultName)
 	if err == nil {
 		return title, reopened, nil
 	}
@@ -197,7 +283,7 @@ func createThroughAPI(
 	// A DIFFERENT identifier holds the title: two tasks collided on one filename.
 	// Give the loser its own file, or its results are dropped forever.
 	alt := title + " - " + shortIdentifier(cmd.TaskIdentifier)
-	reopened, err = postCreate(ctx, client, cmd, alt, vaultName)
+	reopened, err = createWithTerminalReopen(ctx, client, cmd, alt, vaultName)
 	if err != nil {
 		var altConflict *vaultapi.AlreadyExistsError
 		if errors.As(err, &altConflict) {
@@ -220,19 +306,60 @@ func createThroughAPI(
 	return alt, reopened, nil
 }
 
+// createWithTerminalReopen creates at title, replacing a terminal occupant ONLY
+// when that occupant is this task (or carries no identifier at all).
+//
+// The reopen is proved from the occupant, never assumed from the command.
+// ReopenTerminal used to be sent up front for every non-recurring create, so a
+// create whose title collided with a CLOSED task of a different identifier
+// replaced that file and stamped its own identifier over the closed record's —
+// the same identity confusion as the title-keyed path itself, one layer down: a
+// closed task's identifier disappears from the vault and its re-drive history is
+// destroyed (2026-10-27). The conflict names the occupant, so the first attempt
+// asks for no reopen at all and a second is issued only when the answer proves
+// the occupant is terminal AND this task's own.
+//
+// A live occupant is never replaced: two attempts must not share an identity. An
+// occupant with no identifier cannot be proved to be another task, so it keeps
+// the reopen it has always had. A recurring command never reopens — the
+// title-path file IS its dedupe state.
+func createWithTerminalReopen(
+	ctx context.Context,
+	client vaultapi.Client,
+	cmd task.CreateCommand,
+	title string,
+	vaultName string,
+) (bool, error) {
+	reopened, err := postCreate(ctx, client, cmd, title, vaultName, false)
+	if err == nil {
+		return reopened, nil
+	}
+	var conflict *vaultapi.AlreadyExistsError
+	if !errors.As(err, &conflict) {
+		return false, err
+	}
+	if isRecurringTaskCommand(cmd) || !vaultapi.IsTerminalStatus(conflict.Status) {
+		return false, err
+	}
+	if conflict.TaskIdentifier != "" && conflict.TaskIdentifier != string(cmd.TaskIdentifier) {
+		return false, err
+	}
+	return postCreate(ctx, client, cmd, title, vaultName, true)
+}
+
 // postCreate sends one create and reports whether it replaced a terminal
 // occupant. It returns no task: the only field the caller could use is the
 // server's echoed title, and the caller deliberately keys off the title it
-// asked for instead. ReopenTerminal is off for a recurring command: a terminal
-// recurring instance holds its slot until the period rolls, because the file IS
-// the dedupe state — so it must land on the conflict branch rather than be
-// replaced.
+// asked for instead. reopen is the caller's proof that the occupant is terminal
+// and this task's own — createWithTerminalReopen is the only caller that decides
+// it, from the conflict rather than from the command.
 func postCreate(
 	ctx context.Context,
 	client vaultapi.Client,
 	cmd task.CreateCommand,
 	title string,
 	vaultName string,
+	reopen bool,
 ) (bool, error) {
 	fm := make(lib.TaskFrontmatter)
 	maps.Copy(fm, cmd.Frontmatter)
@@ -241,7 +368,7 @@ func postCreate(
 	created, err := client.CreateTask(
 		ctx,
 		vaultapi.Task{Title: title, Frontmatter: fm, Body: cmd.Body},
-		vaultapi.CreateOptions{ReopenTerminal: !isRecurringTaskCommand(cmd)},
+		vaultapi.CreateOptions{ReopenTerminal: reopen},
 	)
 	if err != nil {
 		return false, err

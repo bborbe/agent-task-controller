@@ -362,10 +362,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"materializes a fresh non-terminal task over the completed file (AC terminal-completed)",
 				func() {
-					seedRaw("Reopen Completed",
-						"---\ntask_identifier: old-id\nassignee: alice\nstatus: completed\n"+
+					seedRaw(
+						"Reopen Completed",
+						"---\ntask_identifier: reopen-completed\nassignee: alice\nstatus: completed\n"+
 							"phase: done\ncompleted_date: 2026-06-01T10:00:00Z\n---\n"+
-							"premature triage verdict for this alert\n")
+							"premature triage verdict for this alert\n",
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("reopen-completed"),
 						Title:          "Reopen Completed",
@@ -373,7 +375,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					// Two calls: the first asks for no reopen, the conflict proves the
+					// occupant is this task's own terminal file, and the second replaces
+					// it. The reopen is never assumed from the command.
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(2))
+					_, _, firstOpts := fakeVault.CreateTaskArgsForCall(0)
+					Expect(firstOpts.ReopenTerminal).To(BeFalse())
+					_, _, secondOpts := fakeVault.CreateTaskArgsForCall(1)
+					Expect(secondOpts.ReopenTerminal).To(BeTrue())
 
 					// Content equals a first-ever create — nothing carried over from the terminal file.
 					contentStr := writtenTask("Reopen Completed")
@@ -390,7 +399,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"materializes a fresh non-terminal task over the aborted file (AC terminal-aborted)",
 				func() {
 					seedRaw("Reopen Aborted",
-						"---\ntask_identifier: old-id\nassignee: alice\nstatus: aborted\n"+
+						"---\ntask_identifier: reopen-aborted\nassignee: alice\nstatus: aborted\n"+
 							"phase: done\n---\nprior verdict body\n")
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("reopen-aborted"),
@@ -399,7 +408,39 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(2))
+				},
+			)
+		})
+
+		Context("terminal occupant of a DIFFERENT identifier", func() {
+			It(
+				"never overwrites the closed record's identifier (2026-10-27)",
+				func() {
+					// A title whose task was closed long ago, and a create for a
+					// different task that happens to reuse the title. Reopening it
+					// would replace the closed record and stamp this identifier over
+					// its own, so the closed task's identifier vanishes from the vault
+					// and its re-drive history is destroyed.
+					closed := "---\ntask_identifier: closed-task-id\nassignee: alice\n" +
+						"status: completed\nphase: done\n---\nclosed record body\n"
+					seedRaw("Burned Title", closed)
+
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("incoming-task-id"),
+						Title:          "Burned Title",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+
+					// The closed record is untouched — same bytes, same identifier.
+					Expect(writtenTask("Burned Title")).To(Equal(closed))
+
+					// The incoming task gets its own disambiguated file.
+					Expect(taskExists("Burned Title - incoming")).To(BeTrue())
+					Expect(writtenTask("Burned Title - incoming")).
+						To(ContainSubstring("task_identifier: incoming-task-id"))
 				},
 			)
 		})
@@ -458,7 +499,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"reopens over a completed file when the command is not recurring",
 				func() {
 					seedRaw("Analyze Alert",
-						"---\ntask_identifier: old-id\nassignee: alice\nstatus: completed\n"+
+						"---\ntask_identifier: per-alert\nassignee: alice\nstatus: completed\n"+
 							"phase: done\n---\nper-alert prior verdict\n")
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("per-alert"),
@@ -591,9 +632,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"reopens a terminal file once, then holds the path on replay (AC replay-idempotency)",
 				func() {
-					seedRaw("Replay Idempotent",
-						"---\ntask_identifier: replay-old\nassignee: alice\nstatus: completed\n"+
-							"---\nbody\n")
+					seedRaw(
+						"Replay Idempotent",
+						"---\ntask_identifier: replay-idempotent\nassignee: alice\nstatus: completed\n"+
+							"---\nbody\n",
+					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("replay-idempotent"),
 						Title:          "Replay Idempotent",
@@ -719,6 +762,115 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 		})
 
+		Context("identifier index lookup", func() {
+			const taskID = "55555555-5555-4555-8555-555555555555"
+
+			// indexedAt wires an executor whose index answers with the path the test
+			// has recorded, the way recordCreatedTaskPath does in production.
+			indexedAt := func(relPath string) cdb.CommandObjectExecutorTx {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveStub = func(
+					_ context.Context,
+					_ lib.TaskIdentifier,
+				) (string, bool, error) {
+					if relPath == "" {
+						return "", false, nil
+					}
+					return relPath, true, nil
+				}
+				return command.NewCreateTaskExecutor(
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+			}
+
+			createWithTitle := func(title string) cdb.CommandObject {
+				return buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier(taskID),
+					Title:          title,
+					Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+				})
+			}
+
+			mdFiles := func() []string {
+				entries, err := os.ReadDir(filepath.Join(tmpDir, taskDir))
+				Expect(err).NotTo(HaveOccurred())
+				names := make([]string, 0, len(entries))
+				for _, entry := range entries {
+					if strings.HasSuffix(entry.Name(), ".md") {
+						names = append(names, entry.Name())
+					}
+				}
+				return names
+			}
+
+			It("writes ONE file when one key is emitted twice under different titles", func() {
+				// The bug: the path is keyed on the title, so the second emit landed
+				// on a free path and wrote a second file carrying the same identifier.
+				// Two records then shared one re-drive counter.
+				exec := indexedAt("")
+
+				_, _, err := exec.HandleCommand(ctx, nil, createWithTitle("First Title"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(mdFiles()).To(Equal([]string{"First Title.md"}))
+
+				// What recordCreatedTaskPath does after a successful create.
+				exec = indexedAt(filepath.Join(taskDir, "First Title.md"))
+
+				_, _, err = exec.HandleCommand(ctx, nil, createWithTitle("Second Title"))
+				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+
+				Expect(mdFiles()).To(Equal([]string{"First Title.md"}))
+				Expect(writtenTask("First Title")).
+					To(ContainSubstring("task_identifier: " + taskID))
+			})
+
+			It("is a no-op for a re-emit of an existing key under a new title", func() {
+				exec := indexedAt(filepath.Join(taskDir, "First Title.md"))
+				seedRaw("First Title",
+					"---\ntask_identifier: "+taskID+"\nassignee: claude\nstatus: next\n---\nbody\n")
+				before := writtenTask("First Title")
+
+				_, _, err := exec.HandleCommand(ctx, nil, createWithTitle("Renamed Title"))
+				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+
+				// The create addressed the indexed file, never the new title.
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+				_, sent, _ := fakeVault.CreateTaskArgsForCall(0)
+				Expect(sent.Title).To(Equal("First Title"))
+
+				Expect(writtenTask("First Title")).To(Equal(before))
+				Expect(taskExists("Renamed Title")).To(BeFalse())
+			})
+
+			It("reopens the indexed file when its own occupant is terminal", func() {
+				exec := indexedAt(filepath.Join(taskDir, "First Title.md"))
+				seedRaw(
+					"First Title",
+					"---\ntask_identifier: "+taskID+"\nassignee: claude\nstatus: completed\n---\nold\n",
+				)
+
+				_, _, err := exec.HandleCommand(ctx, nil, createWithTitle("Renamed Title"))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(2))
+				_, reopenedTask, reopenedOpts := fakeVault.CreateTaskArgsForCall(1)
+				Expect(reopenedTask.Title).To(Equal("First Title"))
+				Expect(reopenedOpts.ReopenTerminal).To(BeTrue())
+				Expect(mdFiles()).To(Equal([]string{"First Title.md"}))
+				Expect(writtenTask("First Title")).To(ContainSubstring("status: next"))
+			})
+
+			It("ignores an index hit outside the task directory", func() {
+				exec := indexedAt(filepath.Join("elsewhere", "Foreign.md"))
+
+				_, _, err := exec.HandleCommand(ctx, nil, createWithTitle("Title Kept"))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(taskExists("Title Kept")).To(BeTrue())
+				Expect(mdFiles()).To(Equal([]string{"Title Kept.md"}))
+			})
+		})
+
 		Context("index recording", func() {
 			const createdID = "44444444-4444-4444-8444-444444444444"
 
@@ -762,7 +914,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 
-			It("does not record when the resolver reports a duplicate", func() {
+			It("fails the create without writing when the resolver reports a duplicate", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
 				recordingExecutor := command.NewCreateTaskExecutor(
@@ -770,12 +922,17 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("duplicate"))
 
+				// A duplicate identifier means two files already carry it. There is no
+				// path to reuse and no safe one to add, so nothing is written.
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
+				Expect(taskExists("Recorded Task")).To(BeFalse())
 			})
 
-			It("does not resolve or record when the create fails as already existing", func() {
+			It("does not record when the create fails as already existing", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				seedRaw("Recorded Task",
 					"---\ntask_identifier: "+createdID+"\nstatus: in_progress\n---\nbody\n")
@@ -786,7 +943,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
 
-				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
+				// One resolve is the pre-create lookup; the failed create returns
+				// before recordCreatedTaskPath's own resolve-and-record.
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 
