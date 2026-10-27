@@ -23,7 +23,7 @@ Two facts combine badly.
 
 First, the identifier is **deterministic by design**. `github-update-go-watcher` mints `uuid5(ns, "update-go-<owner>-<repo>-<goVersion>-<headSHA>")` (`pkg/taskid.go:16,26-29`) and `github-pr-watcher` mints `uuid5(ns, "<owner>/<repo>#<number>@<sha>")` (`pkg/taskid.go:15,21-22`). Both are *meant* to reproduce on a re-emit — that is their documented dedup contract.
 
-Second, the record is **not keyed on that identifier**. `NewCreateTaskExecutor` validates the command, computes a filename stem from the command's title (`createTaskTitle`, `pkg/command/task_create_task_executor.go:129-145`), posts it, and consults the resolver only *afterwards*, to record what it wrote (`:116`, `recordCreatedTaskPath`, `:270-283`). Nothing reads the identifier before creating.
+Second, the record is **not keyed on that identifier**. `NewCreateTaskExecutor` validates the command, computes a filename stem from the command's title (`createTaskTitle`, `pkg/command/task_create_task_executor.go:136-152`), posts it, and consults the resolver only *afterwards*, to record what it wrote (`:123`, `recordCreatedTaskPath`, `:376-389`). Nothing reads the identifier before creating.
 
 So a re-emit of the same key under a different title finds a **free** title path and creates a second file. Two triggers, both present in the live store:
 
@@ -72,13 +72,14 @@ A `task_identifier` resolves to at most one record file, so no two records can s
 
 ## Acceptance Criteria
 
-- [ ] **A re-emit under a different title does not create a second file.** Evidence: a new case `ExistingIdentifierTitleIsReused` passes — resolver returns `("tasks/Existing Title.md", true, nil)`, command carries `Title: "A Different Title"` and identifier `X`; the test asserts the create was posted with stem `Existing Title`, that no create was posted with `A Different Title`, and that the executor returns the already-exists outcome.
-- [ ] **A genuine miss still creates.** Evidence: the existing clean-miss case passes unchanged in the same `go test` run (resolver returns `("", false, nil)` → create posted with the command's own title).
-- [ ] **A resolver error never redirects.** Evidence: a case with `Resolve` returning `("", false, errors.New("duplicate"))` asserts the create is posted with the command's own title — a known-duplicate index entry must not be used to choose a path.
-- [ ] **A nil resolver is unchanged.** Evidence: the existing nil-resolver cases pass unchanged.
-- [ ] **Two identifiers on one title still disambiguate.** Evidence: the existing different-identifier-collision case passes unchanged — the redirect must not suppress the ` - <id[:8]>` fallback.
-- [ ] **The package suite is green.** Evidence: `go test -count=1 ./pkg/command/...` exits 0.
-- [ ] **The full gate is green.** Evidence: `make precommit` exits 0.
+- [x] **A re-emit under a different title does not create a second file.** Evidence: a new case `ExistingIdentifierTitleIsReused` passes — resolver returns `("tasks/Existing Title.md", true, nil)`, command carries `Title: "A Different Title"` and identifier `X`; the test asserts the create was posted with stem `Existing Title`, that no create was posted with `A Different Title`, and that the executor returns the already-exists outcome.
+- [x] **A genuine miss still creates.** Evidence: the existing clean-miss case passes unchanged in the same `go test` run (resolver returns `("", false, nil)` → create posted with the command's own title).
+- [x] **A resolver error never redirects.** Evidence: a case with `Resolve` returning `("", false, errors.New("duplicate"))` asserts the create is posted with the command's own title — a known-duplicate index entry must not be used to choose a path.
+- [x] **A nil resolver is unchanged.** Evidence: the existing nil-resolver cases pass unchanged.
+- [x] **Two identifiers on one title still disambiguate.** Evidence: the existing different-identifier-collision case passes unchanged — the redirect must not suppress the ` - <id[:8]>` fallback.
+- [x] **A stale index entry never redirects onto another task's record.** Evidence: `StaleIndexDoesNotOverwriteAnotherTerminalTask` passes — the resolver returns a path whose file carries a *different* identifier and `status: completed`; the create posts under the command's own title and the occupant's bytes are unchanged. `UnreadableResolvedFileIsNotRedirectedOnto` passes in the same run — a read failure falls back to the command's own title.
+- [x] **The package suite is green.** Evidence: `go test -count=1 ./pkg/command/...` exits 0.
+- [x] **The full gate is green.** Evidence: `make precommit` exits 0.
 - [ ] **Post-Deploy (Rung-3):** two emits of one identifier under two titles leave one file.
   - deploy_target: `v0.22.1`
   - deploy_check: `kubectlnukeprod -n prod get sts/agent-task-controller-personal -o jsonpath='{.spec.template.spec.containers[0].image}'`
@@ -86,7 +87,7 @@ A `task_identifier` resolves to at most one record file, so no two records can s
 
 ## Verification
 
-Rationale: AC1 and AC2 are deliberately opposite — AC1 would pass trivially if the redirect always fired, and AC2 would pass on today's build. Together they pin the behaviour to "redirect only on a clean hit". AC3 and AC4 are over-correction guards for the two ways the resolver can fail to be authoritative, and AC5 guards the fallback the redirect could suppress.
+Rationale: AC1 and AC2 are deliberately opposite — AC1 would pass trivially if the redirect always fired, and AC2 would pass on today's build. Together they pin the behaviour to "redirect only on a clean hit". AC3 and AC4 are over-correction guards for the two ways the resolver can fail to be authoritative; AC5 guards the fallback the redirect could suppress; AC6 pins the verify-before-redirect rule that stops a stale entry from overwriting another task's terminal record.
 
 **Rung 1 — container-executable (the pipeline runs these):**
 
@@ -98,7 +99,7 @@ go test -count=1 ./pkg/command/...
 make precommit
 ```
 
-**Rung 3 — operator-executable (after the fix is deployed, AC8):**
+**Rung 3 — operator-executable (after the fix is deployed, AC9):**
 
 ```bash
 grep -rl 'task_identifier: <id>' "25 Tasks"
@@ -116,7 +117,7 @@ git log --oneline -5 -- "25 Tasks"
 
 ## Constraints
 
-- **Must not reintroduce the pre-check removed for vault-api#28.** `task_create_task_executor.go:150-153` records that an identifier pre-check was removed because it keyed on the index's shared identifier/name/slug space, letting a page elsewhere shadow a live task and destroy it. This change is narrower by construction and must stay so: it reads the **identifier→path index only** (which holds task files alone, never arbitrary pages), and it returns a **title stem** rather than a path, so the write can only ever address the file that carries this very identifier.
+- **Must not reintroduce the pre-check removed for vault-api#28.** `task_create_task_executor.go:256-262` records that an identifier pre-check was removed because it keyed on the index's shared identifier/name/slug space, letting a page elsewhere shadow a live task and destroy it. This change is narrower by construction and must stay so: it reads the **identifier→path index only** (which holds task files alone, never arbitrary pages), it **verifies the resolved file still carries this identifier** before using it, and it returns a **title stem** rather than a path, so the write can only ever address the file that carries this very identifier.
 - The resolver is already a constructor parameter and may be nil (tests, and any wiring that has no index); the change must not make it mandatory.
 - The server remains the authority on the filename: it still answers with the path title it actually used, and the resolver is still recorded from that answer.
 - No signature change to `createThroughAPI` or `createTaskTitle`.
@@ -124,7 +125,7 @@ git log --oneline -5 -- "25 Tasks"
 
 ## Assumptions
 
-- The identifier→path index is populated from a completed scan cycle or the boot build, and `Record` keeps it current for files this controller creates. **It is not self-freshening: a stale entry costs a wrong redirect, not a missed one** (see the required guard under Security / Abuse Cases).
+- The identifier→path index is populated from a completed scan cycle or the boot build, and `Record` keeps it current for files this controller creates. **It is not self-freshening: `Record` only adds and `buildIndex` replaces the map only on the next poll, so a stale entry survives a rewrite that changed a file's identifier** — the redirect is therefore verified against the file's own frontmatter before it is used (see Security / Abuse Cases). A rejected redirect costs the command's own title, never a wrong one.
 - The identifier→path index contains task files only. If it were ever widened to arbitrary pages, the vault-api#28 class returns and this spec must be revisited.
 - The emitters keep minting deterministic identifiers; a random identifier would make the redirect a no-op and the defect moot, which is not the direction chosen.
 
@@ -142,16 +143,16 @@ git log --oneline -5 -- "25 Tasks"
 ## Security / Abuse Cases
 
 - A poisoned index entry could attempt to steer a create onto a chosen title. **The first version of this spec claimed that was bounded to a filename and could never overwrite another task. That claim was false and is retracted (bot review, 2026-10-27).** `postCreate` sends `ReopenTerminal: !isRecurringTaskCommand(cmd)`, and the vault API replaces **any** terminal occupant regardless of the identifier it carries — so a stale entry (`idX → T.md` where `T.md` has since been rewritten to carry `idA`) posts under `T`'s title and **replaces idA's terminal record**. A live occupant with a different identifier is not an already-exists outcome either: it falls through to ` - <id[:8]>` and creates a new file titled from the other task. The index is not self-freshening — `Record` only adds, and `buildIndex` replaces the map only on the next poll, never in a `POLL_INTERVAL=0s` deployment.
-- **Required guard, not yet implemented:** on a resolver hit, read the resolved file and redirect **only if its `task_identifier` still equals `cmd.TaskIdentifier`**; otherwise keep the command's own title and log the mismatch. That closes both the stale-index overwrite and the wrong-title disambiguation with one read, and it must land with a test that redirects onto a terminal occupant of a *different* identifier and asserts no write.
+- **The guard that closes it:** on a resolver hit, the resolved file is read and the redirect happens **only if its `task_identifier` still equals `cmd.TaskIdentifier`** (`fileCarriesIdentifier`); otherwise the create keeps the command's own title and the mismatch is logged. A read or parse failure answers "does not match", because an unverifiable redirect is the overwrite path itself. That closes both the stale-index overwrite and the wrong-title disambiguation with one read, and it lands with the case `StaleIndexDoesNotOverwriteAnotherTerminalTask`, which redirects onto a terminal occupant of a *different* identifier and asserts the occupant's bytes are unchanged.
 - No new path is constructed from the index — the redirect returns a `filepath.Base` stem with `.md` trimmed, so a `..` or separator cannot enter the path from the resolver side. `createTaskTitle`'s existing separator rejection is unchanged.
 
 ## Suggested Decomposition
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | Add `reuseExistingIdentifierTitle` (resolver → title stem, with miss / resolver-error / nil passthrough) and call it on the result of `createTaskTitle` before `createThroughAPI`; add `ExistingIdentifierTitleIsReused` plus the resolver-error and nil-resolver guards | DB1–DB6 | AC1–AC7 | — |
+| 1 | Add `reuseExistingIdentifierTitle` (resolver → verify the resolved file's `task_identifier` → title stem, with miss / resolver-error / nil / unreadable / mismatched passthrough) and call it on the result of `createTaskTitle` before `createThroughAPI`; add `ExistingIdentifierTitleIsReused` plus the resolver-error, nil-resolver, stale-entry and unreadable-file guards | DB1–DB6 | AC1–AC8 | — |
 
-Single layer, single file pair (`pkg/command/task_create_task_executor.go`, `pkg/command/task_create_task_executor_test.go`), no wiring change, no new dependency. AC8 is the post-deploy gate and is not covered by a prompt.
+Single layer, single file pair (`pkg/command/task_create_task_executor.go`, `pkg/command/task_create_task_executor_test.go`), no wiring change, no new dependency. AC9 is the post-deploy gate and is not covered by a prompt.
 
 ## Do-Nothing Option
 
