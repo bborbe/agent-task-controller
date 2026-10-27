@@ -135,6 +135,19 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		return err == nil
 	}
 
+	// stubReadFileFromDisk makes the fake git client read seeded files from
+	// tmpDir instead of the default 404 stub, so a code path that verifies an
+	// on-disk occupant (rather than trusting the resolver) sees real content.
+	stubReadFileFromDisk := func(git *mocks.GitClient, root string) {
+		git.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+			content, err := os.ReadFile(filepath.Join(root, relPath))
+			if err != nil {
+				return nil, errors.New("GET " + relPath + " returned 404: not found")
+			}
+			return content, nil
+		}
+	}
+
 	Describe("CommandOperation", func() {
 		It("returns create-task", func() {
 			Expect(executor.CommandOperation()).To(Equal(base.CommandOperation("create-task")))
@@ -281,6 +294,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						"Existing Title",
 						"---\ntask_identifier: "+existingID+"\nassignee: alice\nstatus: in_progress\n---\nbody\n",
 					)
+					stubReadFileFromDisk(fakeGit, tmpDir)
 					fakeResolver := &mocks.TaskPathResolver{}
 					fakeResolver.ResolveReturns("tasks/Existing Title.md", true, nil)
 					redirectingExecutor := command.NewCreateTaskExecutor(
@@ -301,6 +315,70 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Expect(
 						writtenTask("Existing Title"),
 					).To(ContainSubstring("status: in_progress"))
+				},
+			)
+
+			It(
+				"StaleIndexDoesNotOverwriteAnotherTerminalTask: a resolved file carrying a DIFFERENT identifier is not redirected onto",
+				func() {
+					// The index is not self-freshening: idX -> "Renamed Away.md" can
+					// survive a rewrite that made that file carry idA instead. The
+					// server replaces ANY terminal occupant regardless of identifier,
+					// so redirecting would destroy idA's completed record.
+					const staleID = "aaaaaaaa-1111-5111-8111-111111111111"
+					const occupantID = "bbbbbbbb-2222-5222-8222-222222222222"
+					seedRaw(
+						"Renamed Away",
+						"---\ntask_identifier: "+occupantID+"\nassignee: alice\nstatus: completed\n---\nbody\n",
+					)
+					stubReadFileFromDisk(fakeGit, tmpDir)
+					fakeResolver := &mocks.TaskPathResolver{}
+					fakeResolver.ResolveReturns("tasks/Renamed Away.md", true, nil)
+					redirectingExecutor := command.NewCreateTaskExecutor(
+						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier(staleID),
+						Title:          "My Own Title",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+
+					_, _, err := redirectingExecutor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+
+					// The redirect did not fire: the create used the command's title.
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+					Expect(posted.Title).To(Equal("My Own Title"))
+					// The other task's completed record is byte-identical.
+					Expect(writtenTask("Renamed Away")).To(Equal(
+						"---\ntask_identifier: " + occupantID + "\nassignee: alice\nstatus: completed\n---\nbody\n",
+					))
+				},
+			)
+
+			It(
+				"UnreadableResolvedFileIsNotRedirectedOnto: a read failure falls back to the command title",
+				func() {
+					// Cannot verify the occupant => cannot redirect: an unverified
+					// redirect is the overwrite path itself.
+					fakeGit.ReadFileReturns(nil, errors.New("GET tasks/Gone.md returned 500: boom"))
+					fakeResolver := &mocks.TaskPathResolver{}
+					fakeResolver.ResolveReturns("tasks/Gone.md", true, nil)
+					redirectingExecutor := command.NewCreateTaskExecutor(
+						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier("cccccccc-3333-5333-8333-333333333333"),
+						Title:          "Own Title Again",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+
+					_, _, err := redirectingExecutor.HandleCommand(ctx, nil, cmdObj)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+					Expect(posted.Title).To(Equal("Own Title Again"))
 				},
 			)
 
@@ -817,6 +895,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+				// The index hit points at a file that does not carry this
+				// identifier, so the redirect must not fire: the create posts under
+				// the command's own title, not "other".
+				_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+				Expect(posted.Title).To(Equal("Recorded Task"))
 			})
 
 			It("does not record when the resolver reports a duplicate", func() {

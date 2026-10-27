@@ -86,7 +86,13 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			title := createTaskTitle(ctx, cmd)
-			title = reuseExistingIdentifierTitle(ctx, resolver, cmd.TaskIdentifier, title)
+			title = reuseExistingIdentifierTitle(
+				ctx,
+				gitClient,
+				resolver,
+				cmd.TaskIdentifier,
+				title,
+			)
 			pathTitle, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
@@ -146,14 +152,27 @@ func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
 }
 
 // reuseExistingIdentifierTitle returns the title stem of the file that already
-// carries id, or fallbackTitle when the identifier has no single known file.
-// It returns a STEM, never a path: the create still lands in TASK_DIR and the
-// server still owns the filename. It reads the identifier->path index only, so
-// it can never be steered by the index's shared identifier/name/slug space
-// (the vault-api#28 shadowing class). A nil resolver, a miss, a resolver error
-// and an unusable stem all fall through to fallbackTitle.
+// carries id, or fallbackTitle when the identifier has no single, verifiably
+// matching file. It returns a STEM, never a path: the create still lands in
+// TASK_DIR and the server still owns the filename. It reads the
+// identifier->path index only, so it can never be steered by the index's shared
+// identifier/name/slug space (the vault-api#28 shadowing class).
+//
+// A resolver hit is not trusted on its own. The index is not self-freshening —
+// Record only adds, and buildIndex replaces the map only on the next completed
+// poll — so an entry can point at a file that has since been rewritten to carry
+// a DIFFERENT identifier. Redirecting there would post under that file's title,
+// and postCreate sends ReopenTerminal for a non-recurring command, so the server
+// would replace that unrelated task's terminal record. The resolved file is
+// therefore read and the redirect happens only when its task_identifier still
+// equals id.
+//
+// A nil resolver, a miss, a resolver error, an unusable stem, an unreadable
+// file, unparseable frontmatter and a mismatched identifier all fall through to
+// fallbackTitle.
 func reuseExistingIdentifierTitle(
 	ctx context.Context,
+	gitClient gitclient.GitClient,
 	resolver result.TaskPathResolver,
 	id lib.TaskIdentifier,
 	fallbackTitle string,
@@ -178,11 +197,57 @@ func reuseExistingIdentifierTitle(
 	if stem == "" || stem == "." || stem == ".." {
 		return fallbackTitle
 	}
+	if !fileCarriesIdentifier(ctx, gitClient, relPath, id) {
+		glog.Warningf(
+			"create-task: index entry for %s points at %s, which does not carry that identifier; using the command title %q",
+			id,
+			relPath,
+			fallbackTitle,
+		)
+		return fallbackTitle
+	}
 	glog.V(2).Infof(
 		"create-task: identifier %s resolves to %s; using title %q instead of %q",
 		id, relPath, stem, fallbackTitle,
 	)
 	return stem
+}
+
+// fileCarriesIdentifier reports whether the task file at relPath still declares
+// id in its frontmatter. Every read or parse failure answers false: a redirect
+// that cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
+// exists to close, so the caller must fall back to its own title.
+func fileCarriesIdentifier(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	id lib.TaskIdentifier,
+) bool {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		glog.Warningf(
+			"create-task: read resolved file %s for %s failed: %v", relPath, id, err,
+		)
+		return false
+	}
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		glog.Warningf(
+			"create-task: extract frontmatter from resolved file %s for %s failed: %v",
+			relPath, id, err,
+		)
+		return false
+	}
+	fm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		glog.Warningf(
+			"create-task: parse frontmatter of resolved file %s for %s failed: %v",
+			relPath, id, err,
+		)
+		return false
+	}
+	actual, _ := fm.String("task_identifier")
+	return actual == string(id)
 }
 
 // createThroughAPI materialises the task and settles the three answers the old
