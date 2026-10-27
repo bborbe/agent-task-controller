@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-10-27T21:45:09Z"
 generating: "2026-10-27T21:48:53Z"
 prompted: "2026-10-27T21:55:52Z"
+verifying: "2026-10-27T22:10:49Z"
 branch: dark-factory/bug-create-second-file-for-existing-identifier
 ---
 
