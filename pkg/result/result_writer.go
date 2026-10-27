@@ -746,7 +746,7 @@ func (r *resultWriter) applyTriggerCap(
 		return body
 	}
 	agentName := clearAssignee(merged)
-	if containsEscalationSection(body, TriggerCapEscalationHeader) {
+	if ContainsTriggerCapEscalation(body) {
 		restoreExistingPhase(existing, merged)
 		return body
 	}
@@ -830,10 +830,6 @@ func (r *resultWriter) escalationSection(retryCount int, agentName string) strin
 	)
 }
 
-// TriggerCapEscalationHeader is the body heading a trigger-cap escalation writes.
-// Exported so the increment executor can test for and append the identical section.
-const TriggerCapEscalationHeader = "## Trigger Cap Escalation"
-
 func (r *resultWriter) triggerEscalationSection(
 	triggerCount int,
 	agentName string,
@@ -857,7 +853,7 @@ func TriggerCapEscalationSection(
 	now libtime.DateTime,
 ) string {
 	return fmt.Sprintf(
-		"\n"+TriggerCapEscalationHeader+"\n\n- **Timestamp:** %s\n- **Trigger count:** %d\n- **Max triggers:** %d\n- **Assignee:** %s\n- **Last agent output:** see `## Result` above\n",
+		"\n## Trigger Cap Escalation\n\n- **Timestamp:** %s\n- **Trigger count:** %d\n- **Max triggers:** %d\n- **Assignee:** %s\n- **Last agent output:** see `## Result` above\n",
 		now.UTC().Format(time.RFC3339),
 		triggerCount,
 		maxTriggers,
@@ -874,10 +870,11 @@ func containsEscalationSection(body, header string) bool {
 	return strings.Contains(body, "\n"+header+"\n")
 }
 
-// ContainsEscalationSection is the exported form of containsEscalationSection so
-// the increment executor shares the same duplicate guard.
-func ContainsEscalationSection(body, header string) bool {
-	return containsEscalationSection(body, header)
+// ContainsTriggerCapEscalation reports whether body already carries the
+// ## Trigger Cap Escalation section. Exported so the increment executor shares the
+// duplicate guard without re-spelling the heading.
+func ContainsTriggerCapEscalation(body string) bool {
+	return containsEscalationSection(body, "## Trigger Cap Escalation")
 }
 
 // bodySection is one markdown heading and the content that follows it.

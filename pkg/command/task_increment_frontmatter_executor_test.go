@@ -10,14 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	libtime "github.com/bborbe/time"
-	libtimemocks "github.com/bborbe/time/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -85,12 +83,10 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		}
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
-		fakeTime := &libtimemocks.CurrentDateTimeGetter{}
-		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)))
 		executor = command.NewIncrementFrontmatterExecutor(
 			fakeVault,
 			"openclaw",
-			fakeTime,
+			libtime.NewCurrentDateTime(),
 			metrics.New(),
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}

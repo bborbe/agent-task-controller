@@ -184,7 +184,7 @@ func writeTriggerCapEscalation(
 	if err != nil {
 		return errors.Wrapf(ctx, err, "re-read task for trigger cap escalation body")
 	}
-	if result.ContainsEscalationSection(fresh.Body, result.TriggerCapEscalationHeader) {
+	if result.ContainsTriggerCapEscalation(fresh.Body) {
 		return nil
 	}
 	body := fresh.Body + result.TriggerCapEscalationSection(
