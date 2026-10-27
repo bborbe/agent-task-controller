@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a re-emit under a new title no longer creates a second file for the same task_identifier.** Before posting a create, the executor resolves the command's identifier against the identifier→path index and, on a clean hit, posts the create under the title stem of the file that already carries it — so a retitled PR or a diverged title SHA lands on the occupied path and receives the server's existing conflict/reopen answer instead of materializing a second file that shares one identity. A miss, a nil resolver and a resolver error keep the command's own title; the ambiguity is logged and never redirects. Measured 2026-10-27 in the prod task store: 16 identifiers across 35 files, and all five stuck `github-update-go` records were members of such a group.
+
 ## v0.22.0
 
 - refactor: **the create executor writes through the typed API, and the git-based create path is deleted.** `createThroughAPI` sends one create and settles the three outcomes from the answer: created, reopened, or a 409 naming the occupant. The title-path pre-check, the create-only/upsert split, the disambiguation re-check and the file-content builder are gone — the server owns the filename, the write and the commit message, so the controller no longer reads the vault to decide what to write. The recurring carve-out survives as one branch: a terminal recurring instance holds its slot, because the title-path file *is* the dedupe state, and that branch now runs before disambiguation — without it the next hourly tick would create a second file next to every completed instance (the v0.6.0 regression). `vaultapi.IsTerminalStatus` exposes the two protocol values that conflict answer needs.

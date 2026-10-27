@@ -86,6 +86,7 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			title := createTaskTitle(ctx, cmd)
+			title = reuseExistingIdentifierTitle(ctx, resolver, cmd.TaskIdentifier, title)
 			pathTitle, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
@@ -142,6 +143,46 @@ func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
 		return string(cmd.TaskIdentifier)
 	}
 	return cmd.Title
+}
+
+// reuseExistingIdentifierTitle returns the title stem of the file that already
+// carries id, or fallbackTitle when the identifier has no single known file.
+// It returns a STEM, never a path: the create still lands in TASK_DIR and the
+// server still owns the filename. It reads the identifier->path index only, so
+// it can never be steered by the index's shared identifier/name/slug space
+// (the vault-api#28 shadowing class). A nil resolver, a miss, a resolver error
+// and an unusable stem all fall through to fallbackTitle.
+func reuseExistingIdentifierTitle(
+	ctx context.Context,
+	resolver result.TaskPathResolver,
+	id lib.TaskIdentifier,
+	fallbackTitle string,
+) string {
+	if resolver == nil {
+		return fallbackTitle
+	}
+	relPath, found, err := resolver.Resolve(ctx, id)
+	if err != nil {
+		// A known-duplicate index entry must never choose a path, so the create
+		// keeps the title the command asked for.
+		glog.Warningf(
+			"create-task: identifier %s resolves ambiguously (%v); using the command title %q",
+			id, err, fallbackTitle,
+		)
+		return fallbackTitle
+	}
+	if !found {
+		return fallbackTitle
+	}
+	stem := strings.TrimSuffix(filepath.Base(relPath), ".md")
+	if stem == "" || stem == "." || stem == ".." {
+		return fallbackTitle
+	}
+	glog.V(2).Infof(
+		"create-task: identifier %s resolves to %s; using title %q instead of %q",
+		id, relPath, stem, fallbackTitle,
+	)
+	return stem
 }
 
 // createThroughAPI materialises the task and settles the three answers the old

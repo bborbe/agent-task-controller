@@ -272,6 +272,63 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 		})
 
+		Context("identifier already has a file under a different title (regression)", func() {
+			It(
+				"ExistingIdentifierTitleIsReused: posts the create under the existing file's title stem",
+				func() {
+					const existingID = "09f1f349-bf09-5610-9cf2-bb79cf0383be"
+					seedRaw(
+						"Existing Title",
+						"---\ntask_identifier: "+existingID+"\nassignee: alice\nstatus: in_progress\n---\nbody\n",
+					)
+					fakeResolver := &mocks.TaskPathResolver{}
+					fakeResolver.ResolveReturns("tasks/Existing Title.md", true, nil)
+					redirectingExecutor := command.NewCreateTaskExecutor(
+						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					)
+					cmdObj := buildCmdObj(task.CreateCommand{
+						TaskIdentifier: lib.TaskIdentifier(existingID),
+						Title:          "A Different Title",
+						Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+					})
+
+					_, _, err := redirectingExecutor.HandleCommand(ctx, nil, cmdObj)
+					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+					Expect(posted.Title).To(Equal("Existing Title"))
+					Expect(taskExists("A Different Title")).To(BeFalse())
+					Expect(
+						writtenTask("Existing Title"),
+					).To(ContainSubstring("status: in_progress"))
+				},
+			)
+
+			It("does not redirect when the resolver reports an ambiguous identifier", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns(
+					"",
+					false,
+					errors.New("duplicate: tasks/a.md, tasks/b.md"),
+				)
+				redirectingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("ambiguous-id"),
+					Title:          "Own Title",
+					Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+				})
+
+				_, _, err := redirectingExecutor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+				_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+				Expect(posted.Title).To(Equal("Own Title"))
+				Expect(taskExists("Own Title")).To(BeTrue())
+			})
+		})
+
 		Context("two identifiers targeting one title path (regression)", func() {
 			It(
 				"materializes both tasks — the loser at a disambiguated path, never dropped",
@@ -786,7 +843,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
 
-				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
+				// One resolve chooses the create title; none is made for recording
+				// because the create failed as already-existing.
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 
