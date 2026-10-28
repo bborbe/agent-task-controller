@@ -760,6 +760,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+				// The index hit points at a file that does not carry this
+				// identifier, so the redirect must not fire: the create posts under
+				// the command's own title, not "other".
+				_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
+				Expect(posted.Title).To(Equal("Recorded Task"))
 			})
 
 			It("does not record when the resolver reports a duplicate", func() {
@@ -786,7 +791,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
 
-				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
+				// One resolve chooses the create title; none is made for recording
+				// because the create failed as already-existing.
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 
