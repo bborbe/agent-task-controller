@@ -89,6 +89,7 @@ var _ = Describe("Frontmatter sequence integration", func() {
 			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",
 			metrics.New(),
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})

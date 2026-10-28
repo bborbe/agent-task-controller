@@ -134,8 +134,26 @@ All four rows route through the single chokepoint `result.ClearAssigneeIfHumanRe
 |---|---|---|---|
 | `trigger_count >= max_triggers` | unchanged (lifecycle stage preserved) | `""` | `applyTriggerCap` → `clearAssignee` |
 | `retry_count >= max_retries` | unchanged (lifecycle stage preserved) | `""` | `applyRetryCap` → `clearAssignee` |
-| Agent emits `Result.NextPhase: human_review` (legitimate handoff) | `human_review` (from `resolveNextPhase`) | `""` | `applyRetryCounter` → `ClearAssigneeIfHumanReview` |
-| Agent emits `UpdateFrontmatterCommand` with merged `phase: human_review` (spec 042) | `human_review` | `""` | `buildUpdatePatch` → `ClearAssigneeIfHumanReview` |
+| Agent emits `Result.NextPhase: human_review` (legitimate handoff) | `human_review` (from `resolveNextPhase`) | `""`, unless the assignee is a configured human owner | `applyRetryCounter` → `ClearAssigneeIfHumanReview` |
+| Agent emits `UpdateFrontmatterCommand` with merged `phase: human_review` (spec 042) | `human_review` | `""`, unless the assignee is a configured human owner | `buildUpdatePatch` → `ClearAssigneeIfHumanReview` |
+
+**The human-owner exception (`HUMAN_ASSIGNEES`).** The two `human_review` rows above
+retain the assignee when it is one of the values in `HUMAN_ASSIGNEES` (comma-separated,
+parsed once at startup). The doctrine's purpose is that an *agent* must not keep a record
+it parked; clearing a human's owner instead removes the record from that human's queue,
+which is the failure the routing stamp writes the owner to prevent. The set is
+configuration rather than inference because this package cannot tell a human name from an
+agent name — every assignee is a free-form string and the controller holds no Config
+lister, so the identities an agent answers to (a Config's `spec.assignee`) are not
+readable here. An **empty** set retains nothing and reproduces the pre-existing behaviour
+exactly; that default is deliberate — no person's name is hard-coded in this repository —
+and `main` logs the effective set at startup, warning when it is empty, so an
+unconfigured deployment is visible in the log rather than inferred later from records
+that lost their owner. ⚠️ Membership is exact string equality: an assignee not in the
+set is treated as an agent and cleared, so a typo in `HUMAN_ASSIGNEES` silently removes a
+human's record from their queue. The cap rows above are unaffected — they clear
+unconditionally, and they fire only on a dispatched record, which a human-owned record
+never is (no Config carries a human assignee).
 
 Once a task is parked (escalation section present, `assignee: ""`), repeated stale agent
 result publishes are idempotent: the escalation section is not duplicated, the lifecycle

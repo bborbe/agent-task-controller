@@ -56,6 +56,7 @@ var _ = Describe("PlanningRetryGate", func() {
 			fakeCommenter,
 			metrics.New(),
 			nil,
+			nil,
 		)
 	})
 

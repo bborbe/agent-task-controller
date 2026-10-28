@@ -76,6 +76,7 @@ func NewUpdateFrontmatterExecutor(
 	client vaultapi.Client,
 	vaultName string,
 	m metrics.Metrics,
+	humans result.HumanAssignees,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -117,7 +118,7 @@ func NewUpdateFrontmatterExecutor(
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "read task for update")
 			}
-			if err := applyUpdate(ctx, client, task, cmd, vaultName); err != nil {
+			if err := applyUpdate(ctx, client, task, cmd, vaultName, humans); err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
@@ -146,8 +147,11 @@ func applyUpdate(
 	task *vaultapi.Task,
 	cmd task.UpdateFrontmatterCommand,
 	vaultName string,
+	humans result.HumanAssignees,
 ) error {
-	if fields := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName); len(fields) > 0 {
+	if fields := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName, humans); len(
+		fields,
+	) > 0 {
 		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
 			return errors.Wrapf(ctx, err, "patch frontmatter")
 		}
@@ -187,6 +191,7 @@ func buildUpdatePatch(
 	updates lib.TaskFrontmatter,
 	frontmatter map[string]any,
 	vaultName string,
+	humans result.HumanAssignees,
 ) map[string]any {
 	// `before` is the task as it stands, snapshotted BEFORE the command's own
 	// updates are merged — otherwise the diff below would exclude them and the
@@ -200,8 +205,9 @@ func buildUpdatePatch(
 	for key, value := range updates {
 		merged[key] = value
 	}
-	// spec 042: phase: human_review ⇒ assignee: "". No-op otherwise.
-	result.ClearAssigneeIfHumanReview(merged)
+	// spec 042: phase: human_review ⇒ assignee: "", except a configured human owner.
+	// No-op otherwise.
+	result.ClearAssigneeIfHumanReview(merged, humans)
 	// Heal-on-write: stamp target_vault on legacy tasks lacking it.
 	result.HealTargetVault(merged, vaultName)
 

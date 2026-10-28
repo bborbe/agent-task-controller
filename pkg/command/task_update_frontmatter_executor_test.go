@@ -51,6 +51,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			fakeVault,
 			"openclaw",
 			metrics.New(),
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})

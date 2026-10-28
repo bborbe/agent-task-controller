@@ -66,6 +66,7 @@ var _ = Describe("ResultWriter task-file miss outcome", func() {
 			fakeWaiter,
 			nil,
 			nil,
+			nil,
 		)
 	})
 
