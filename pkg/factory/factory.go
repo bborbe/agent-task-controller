@@ -71,7 +71,7 @@ func CreateCommandConsumer(
 		// First executor ported to the typed surface: it addresses the task by
 		// identifier and PATCHes the fields it changes, instead of reading a
 		// vault-relative path, mutating the YAML and re-serialising the file.
-		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, m),
+		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
 		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, m),
 		command.NewCreateTaskExecutor(
 			gitClient,
