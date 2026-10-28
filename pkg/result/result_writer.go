@@ -1010,9 +1010,20 @@ type GuardDecision struct {
 // controllerOwnedFields lists frontmatter keys whose on-disk value always wins:
 // the result writer never lets the agent's incoming value overwrite them, and an
 // incoming value can never introduce a controller-owned key that is absent on disk.
+//
+// trigger_scope belongs here with trigger_count: the executor charges one spawn by
+// writing BOTH (triggerBudgetWrite's !hasScope arm), so a stale snapshot that drops
+// trigger_scope does not merely lose a label — it makes the next spawn take the
+// scope-write arm again and re-derive the count, which is how the budget drifts.
+//
+// max_triggers belongs here because it is the cap's DEFINITION, not a measurement:
+// the cap predicate reads it, so a snapshot that raises it in the same write
+// suppresses the escalation. Nothing but a task's own create sets it.
 var controllerOwnedFields = []string{
 	"trigger_count",
+	"trigger_scope",
 	"retry_count",
+	"max_triggers",
 }
 
 // operatorOwnedFields lists frontmatter keys that are the operator's routing
