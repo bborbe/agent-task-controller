@@ -53,6 +53,9 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 
 		failReadMutex sync.Mutex
 		failReadOnce  string
+		// failReadAlwaysPath fails every read of that path, modelling a git-rest
+		// that stays unavailable instead of answering once.
+		failReadAlwaysPath string
 	)
 
 	oldPath := func() string { return filepath.Join(taskDir, oldTitle+".md") }
@@ -75,6 +78,7 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 		)).To(Succeed())
 
 		failReadOnce = ""
+		failReadAlwaysPath = ""
 		fakeGit = &mocks.GitClient{}
 		fakeGit.PathReturns(tmpDir)
 		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
@@ -94,8 +98,8 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 		}
 		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
 			failReadMutex.Lock()
-			fail := failReadOnce == relPath
-			if fail {
+			fail := failReadOnce == relPath || failReadAlwaysPath == relPath
+			if failReadOnce == relPath {
 				failReadOnce = ""
 			}
 			failReadMutex.Unlock()
@@ -188,6 +192,35 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 			Expect(writePath).To(Equal(""))
 		},
 	)
+
+	It("keeps the index entry when the indexed file cannot be read", func() {
+		// A read failure is not evidence that the indexed file stopped carrying
+		// the identifier. Replacing the entry on it would restore the silent
+		// misroute this index bookkeeping exists to close, and would do it on
+		// exactly the transient-error case that motivated the fix — so the entry
+		// is kept and no duplicate is recorded on a guess.
+		failReadMutex.Lock()
+		failReadAlwaysPath = oldPath()
+		failReadMutex.Unlock()
+		executor := command.NewCreateTaskExecutor(
+			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, resolver,
+		)
+
+		_, _, err := executor.HandleCommand(ctx, nil, createCmd())
+		Expect(err).NotTo(HaveOccurred())
+
+		// The create still materialised its own file, because an unverifiable
+		// occupant is not a verified one.
+		_, statErr := os.Stat(filepath.Join(tmpDir, newPath()))
+		Expect(statErr).NotTo(HaveOccurred())
+
+		// The index still points at the indexed path: not replaced, and not
+		// widened into a guessed duplicate.
+		path, found, resolveErr := resolver.Resolve(ctx, lib.TaskIdentifier(duplicatedID))
+		Expect(resolveErr).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal(oldPath()))
+	})
 
 	It("replaces an index entry whose file no longer carries the identifier", func() {
 		// The indexed file was rewritten to carry another identifier after the boot

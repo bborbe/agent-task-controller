@@ -213,41 +213,68 @@ func reuseExistingIdentifierTitle(
 	return stem
 }
 
+// identifierPresence reports whether the task file at relPath declares id.
+//
+// A nil error means the answer is definitive: either the file carries id, or it
+// definitively does not — including when it no longer exists (git-rest answers
+// 404). A non-nil error means the question could not be answered: the read
+// failed for a reason other than absence, or the frontmatter could not be
+// parsed. A caller choosing between "stale index entry" and "duplicate" must
+// treat that as unknown, never as absence: replacing the entry on a transient
+// 503 silently drops the duplicate detection this index exists to keep, which
+// is the very failure mode the duplicate recording was added for.
+func identifierPresence(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	id lib.TaskIdentifier,
+) (bool, error) {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		if isNotFoundReadError(err) {
+			return false, nil
+		}
+		return false, errors.Wrapf(
+			ctx, err, "read resolved file %s for %s", relPath, id,
+		)
+	}
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "extract frontmatter from resolved file %s for %s", relPath, id,
+		)
+	}
+	fm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "parse frontmatter of resolved file %s for %s", relPath, id,
+		)
+	}
+	actual, _ := fm.String("task_identifier")
+	return actual == string(id), nil
+}
+
 // fileCarriesIdentifier reports whether the task file at relPath still declares
-// id in its frontmatter. Every read or parse failure answers false: a redirect
-// that cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
-// exists to close, so the caller must fall back to its own title.
+// id in its frontmatter. Every failure to answer answers false: a redirect that
+// cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
+// exists to close, so the caller must fall back to its own title. A caller that
+// must tell an unverifiable occupant from an absent one uses identifierPresence
+// directly.
 func fileCarriesIdentifier(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	id lib.TaskIdentifier,
 ) bool {
-	content, err := gitClient.ReadFile(ctx, relPath)
+	carries, err := identifierPresence(ctx, gitClient, relPath, id)
 	if err != nil {
 		glog.Warningf(
-			"create-task: read resolved file %s for %s failed: %v", relPath, id, err,
+			"create-task: cannot verify identifier %s in resolved file %s: %v",
+			id, relPath, err,
 		)
 		return false
 	}
-	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
-	if err != nil {
-		glog.Warningf(
-			"create-task: extract frontmatter from resolved file %s for %s failed: %v",
-			relPath, id, err,
-		)
-		return false
-	}
-	fm, err := parseTaskFrontmatter(frontmatterStr)
-	if err != nil {
-		glog.Warningf(
-			"create-task: parse frontmatter of resolved file %s for %s failed: %v",
-			relPath, id, err,
-		)
-		return false
-	}
-	actual, _ := fm.String("task_identifier")
-	return actual == string(id)
+	return carries
 }
 
 // createThroughAPI materialises the task and settles the three answers the old
@@ -404,7 +431,18 @@ func recordCreatedTaskPath(
 	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
 		return
 	}
-	if fileCarriesIdentifier(ctx, gitClient, knownPath, id) {
+	carries, presenceErr := identifierPresence(ctx, gitClient, knownPath, id)
+	if presenceErr != nil {
+		glog.Warningf(
+			"create-task: cannot tell whether index entry %s still carries %s (%v); keeping it rather than replacing it with %s",
+			knownPath,
+			id,
+			presenceErr,
+			relPath,
+		)
+		return
+	}
+	if carries {
 		glog.Warningf(
 			"create-task: task_identifier %s is now carried by both %s and %s; recording both so later writes refuse instead of landing on %s",
 			id,
