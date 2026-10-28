@@ -751,7 +751,7 @@ func (r *resultWriter) applyTriggerCap(
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return body
 	}
-	agentName := clearAssignee(merged)
+	agentName := r.clearAssigneeUnlessHuman(merged)
 	if ContainsTriggerCapEscalation(body) {
 		restoreExistingPhase(existing, merged)
 		return body
@@ -775,12 +775,33 @@ func (r *resultWriter) applyRetryCap(
 	if retryCount < merged.MaxRetries() {
 		return body
 	}
-	agentName := clearAssignee(merged)
+	agentName := r.clearAssigneeUnlessHuman(merged)
 	if containsEscalationSection(body, "## Retry Escalation") {
 		restoreExistingPhase(existing, merged)
 		return body
 	}
 	return body + r.escalationSection(retryCount, agentName)
+}
+
+// clearAssigneeUnlessHuman is the cap-path counterpart of ClearAssigneeIfHumanReview:
+// it captures the current assignee for the escalation body, but leaves a configured
+// human owner in place.
+//
+// The cap paths need the same exception for the same reason. They run inside the same
+// result write as the human_review chokepoint — applyTriggerCap before it and
+// applyRetryCap after it — so without this a human-owned record whose trigger or retry
+// cap is engaged loses its owner on that write, silently undoing the chokepoint's
+// retention. A cap escalation exists to park a runaway *agent* task in the operator
+// inbox; a record a human already owns is already in a queue, so clearing the owner
+// removes it from that queue without putting it anywhere else.
+//
+// Returns the name the escalation body should report: the human's own, unchanged.
+func (r *resultWriter) clearAssigneeUnlessHuman(merged lib.TaskFrontmatter) string {
+	assignee := string(merged.Assignee())
+	if r.humanAssignees.Contains(assignee) {
+		return assignee
+	}
+	return clearAssignee(merged)
 }
 
 // clearAssignee sets previous_assignee to the current assignee value (if non-empty),

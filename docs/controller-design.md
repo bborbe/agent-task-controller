@@ -151,9 +151,16 @@ and `main` logs the effective set at startup, warning when it is empty, so an
 unconfigured deployment is visible in the log rather than inferred later from records
 that lost their owner. ⚠️ Membership is exact string equality: an assignee not in the
 set is treated as an agent and cleared, so a typo in `HUMAN_ASSIGNEES` silently removes a
-human's record from their queue. The cap rows above are unaffected — they clear
-unconditionally, and they fire only on a dispatched record, which a human-owned record
-never is (no Config carries a human assignee).
+human's record from their queue.
+
+**The cap rows carry the same exception, and they must.** `applyTriggerCap` runs *before*
+the `human_review` chokepoint inside one `applyRetryCounter` call and `applyRetryCap`
+runs *after* it, so a record that is human-owned **and** at its trigger or retry cap
+would lose its owner on that same write — the chokepoint's retention silently undone.
+Both now call `clearAssigneeUnlessHuman`, which captures the name for the escalation body
+and clears only a non-human assignee. The escalation section is still appended: a cap
+escalation parks a runaway *agent* task in the operator inbox, and a record a human
+already owns is already in a queue.
 
 Once a task is parked (escalation section present, `assignee: ""`), repeated stale agent
 result publishes are idempotent: the escalation section is not duplicated, the lifecycle

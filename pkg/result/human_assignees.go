@@ -4,7 +4,10 @@
 
 package result
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // HumanAssignees is the configured set of assignee values that name a human owner.
 //
@@ -54,4 +57,16 @@ func (h HumanAssignees) Contains(name string) bool {
 // IsEmpty reports whether no human assignee is configured.
 func (h HumanAssignees) IsEmpty() bool {
 	return len(h) == 0
+}
+
+// Names returns the configured assignees, sorted, so a startup log reports the
+// EFFECTIVE set — what the predicate will actually match — rather than the raw
+// configuration string, which can differ by whitespace and empty entries.
+func (h HumanAssignees) Names() []string {
+	names := make([]string, 0, len(h))
+	for name := range h {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

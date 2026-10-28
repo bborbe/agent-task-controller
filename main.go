@@ -103,11 +103,13 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	// so an empty set is a warning rather than a silent default.
 	if humanAssignees.IsEmpty() {
 		glog.Warningf(
-			"HUMAN_ASSIGNEES is unset: every human_review record has its assignee cleared, " +
-				"so a record parked there belongs to no human's queue",
+			"HUMAN_ASSIGNEES parsed to an empty set (raw value %q): every human_review "+
+				"record has its assignee cleared, so a record parked there belongs to no "+
+				"human's queue",
+			a.HumanAssignees,
 		)
 	} else {
-		glog.V(1).Infof("HUMAN_ASSIGNEES effective set: %q", a.HumanAssignees)
+		glog.V(1).Infof("HUMAN_ASSIGNEES effective set: %q", humanAssignees.Names())
 	}
 	libmetrics.NewBuildInfoMetrics().SetBuildInfo(a.BuildGitVersion, a.BuildGitCommit, a.BuildDate)
 	glog.V(1).
