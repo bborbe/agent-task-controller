@@ -1614,16 +1614,19 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					}
 				},
 				Entry(
+					// trigger_scope rides with trigger_count on every charge write, so
+					// it is pinned by the same rule.
 					"keeps on-disk trigger_count over a stale incoming value",
-					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 5\n",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 5\ntrigger_scope: planning\n",
 					lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "in_progress",
 						"phase":           "ai_review",
 						"trigger_count":   1,
+						"trigger_scope":   "execution",
 					},
-					[]string{"trigger_count: 5"},
-					[]string{"trigger_count: 1"},
+					[]string{"trigger_count: 5", "trigger_scope: planning"},
+					[]string{"trigger_count: 1", "trigger_scope: execution"},
 				),
 				Entry(
 					"keeps on-disk retry_count over a stale incoming value",
@@ -1638,19 +1641,18 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					[]string{"retry_count: 0"},
 				),
 				Entry(
-					// trigger_scope is written by the executor's spawn charge together
-					// with trigger_count, so an agent's snapshot must not move it.
-					"keeps on-disk trigger_scope over a stale incoming value",
-					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_scope: planning\ntrigger_count: 2\n",
+					// max_triggers is the cap's DEFINITION, not a measurement: a snapshot
+					// that raises it in the same write suppresses the escalation.
+					"keeps on-disk max_triggers over a stale incoming value",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nmax_triggers: 3\n",
 					lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "in_progress",
 						"phase":           "ai_review",
-						"trigger_scope":   "execution",
-						"trigger_count":   2,
+						"max_triggers":    99,
 					},
-					[]string{"trigger_scope: planning"},
-					[]string{"trigger_scope: execution"},
+					[]string{"max_triggers: 3"},
+					[]string{"max_triggers: 99"},
 				),
 				Entry(
 					"incoming counters absent on disk are never written",

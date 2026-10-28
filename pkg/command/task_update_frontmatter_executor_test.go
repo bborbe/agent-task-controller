@@ -124,12 +124,14 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			})
 		})
 
-		Context("controller-owned budget counters", func() {
-			It("keeps the on-disk trigger_count when the command carries a stale one", func() {
-				// The agent authors frontmatter from its spawn-time snapshot, so its
-				// echo carries the count as it was BEFORE the spawn charge landed.
-				// Letting it win refunds the charge and the cap is never reached
-				// (observed live on dev 2026-10-28, task 3a6501ec).
+		Context("controller-owned frontmatter", func() {
+			It("applies a count the command names, even a lower one", func() {
+				// ⚠️ Deliberately NOT guarded. The executor's triggerBudgetWrite has
+				// a scopeChanged arm that writes trigger_count: 1 to grant a fresh
+				// budget when the scope moves, and it arrives through this executor.
+				// A "lower count loses" rule would cap a task that had legitimately
+				// earned a new budget, so the count is left command-writable and the
+				// stale-echo risk is documented rather than half-defended.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: guard-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 3\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
@@ -145,7 +147,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				fm := parseFrontmatter(taskFile)
-				Expect(fm["trigger_count"]).To(BeEquivalentTo(3))
+				Expect(fm["trigger_count"]).To(BeEquivalentTo(2))
 				Expect(fm["trigger_scope"]).To(Equal("planning"))
 				Expect(fm["phase"]).To(Equal("human_review"))
 			})
@@ -178,6 +180,103 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(parseFrontmatter(taskFile)["trigger_scope"]).To(Equal("planning"))
+			})
+
+			It(
+				"lets the FIRST charge land both count and scope on a task with no stored count",
+				func() {
+					// The blocking case: triggerBudgetWrite's !hasScope arm writes the
+					// pair together, and it is the write this fix exists to escalate.
+					// Treating "no on-disk count" as "no accepted count" stripped the
+					// scope, which re-arms the scope-write arm on every later spawn.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: first-charge-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("first-charge-uuid"),
+						Updates: lib.TaskFrontmatter{
+							"trigger_count": 1,
+							"trigger_scope": "planning",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeEquivalentTo(1))
+					Expect(fm["trigger_scope"]).To(Equal("planning"))
+					// 1 is below the lib default cap of 3, so nothing escalates yet.
+					Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
+				},
+			)
+
+			It(
+				"accepts a scope reset that lowers the count, because the scope moves with it",
+				func() {
+					// triggerBudgetWrite's scopeChanged arm writes trigger_count: 1 to
+					// grant a fresh budget when the task's scope moves. The count floor
+					// alone would reject it; the paired scope change is the signal.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: scope-reset-uuid\nstatus: in_progress\nphase: execution\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\ntrigger_scope: planning\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("scope-reset-uuid"),
+						Updates: lib.TaskFrontmatter{
+							"trigger_count": 1,
+							"trigger_scope": "execution",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeEquivalentTo(1))
+					Expect(fm["trigger_scope"]).To(Equal("execution"))
+				},
+			)
+
+			It("does not let a snapshot raise max_triggers out from under the cap", func() {
+				// max_triggers is the cap's definition. A snapshot that raises it in
+				// the same write would suppress the escalation, so the on-disk value
+				// wins and an absent one stays absent.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: raise-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nmax_triggers: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("raise-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 99},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(3))
+				Expect(fm["assignee"]).To(Equal(""))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not let a snapshot introduce max_triggers on a ref-only task", func() {
+				// A ref-bearing task has no max_triggers and falls back to the lib
+				// default 3. An incoming max_triggers would raise that default.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: intro-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("intro-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 99},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm).NotTo(HaveKey("max_triggers"))
+				Expect(fm["assignee"]).To(Equal(""))
 			})
 
 			It("lets a command that names the counter win — that is how the charge lands", func() {

@@ -204,8 +204,14 @@ func applyUpdate(
 	// Addressed by fresh.ID, not task.ID: the body being written is the fresh
 	// read's, so a task deleted and recreated under the same identifier between
 	// the two reads must not have this body written onto the stale record.
-	if err := client.PutBody(ctx, fresh.ID, body); err != nil {
-		return errors.Wrapf(ctx, err, "put body")
+	//
+	// Skipped when nothing changed: a capped task re-enters this branch on every
+	// once-a-minute reconcile tick, and the heading guard only suppresses the
+	// append — an unconditional PUT would rewrite the whole body forever.
+	if body != fresh.Body {
+		if err := client.PutBody(ctx, fresh.ID, body); err != nil {
+			return errors.Wrapf(ctx, err, "put body")
+		}
 	}
 	if len(fields) > 0 {
 		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
@@ -271,79 +277,58 @@ func buildUpdatePatch(
 	return patch, escalation
 }
 
-// applyControllerOwnedGuard keeps the on-disk value of the controller's budget
-// counters over a stale one the command carries.
+// capDefinitionFields are the operator's definition of the cap itself. An agent
+// snapshot may neither raise one nor introduce one where the task has none:
+// `applyUpdateTriggerCap` reads the merged map, so a snapshot that raises
+// max_triggers in the same write would suppress the very escalation this path
+// exists to produce. Only a task's own create sets it.
+var capDefinitionFields = []string{"max_triggers"}
+
+// applyControllerOwnedGuard keeps the controller's frontmatter keys over a stale
+// value the command carries.
 //
-// The counters are monotonic — a spawn charge adds one, nothing subtracts — so a
-// command naming a LOWER value is a snapshot taken before the charge landed, and it
-// loses. That is the shape an echo takes: an agent authors its frontmatter when it
-// is spawned and publishes it afterwards. A higher or equal value wins, because that
-// IS the charge (the executor's scope write) and the executor's own retry_count bump.
+// ⚠️ **The budget counters themselves are deliberately NOT guarded here.** A
+// monotonic "a lower count loses" rule reads well and is wrong: `triggerBudgetWrite`
+// has a `scopeChanged` arm that writes `trigger_count: 1` on purpose, to grant a
+// fresh budget when the task's scope moves (planning → execution), and that write
+// arrives through this executor. Guarding the count would cap a task that had
+// legitimately earned a new budget. The guard therefore covers only what an agent
+// has no business writing at all — the cap's definition, and a scope without the
+// count that always travels with it.
 //
-// `trigger_scope` is not a counter and has no ordering, so it is accepted only
-// alongside a `trigger_count` the guard accepted — the charge writes the pair
-// together (triggerBudgetWrite's !hasScope arm), and an agent has no business
-// writing the scope at all. A command naming the scope without the count is
-// therefore treated as stale, and one that omits both simply leaves the on-disk
-// values alone through the base merge.
+// The consequence is stated rather than hidden: an agent echo that names a lower
+// trigger_count still lands, so this path does not defend the counter against a
+// stale snapshot. Doing that needs a discriminator the controller does not have —
+// the legitimate reset and the stale echo are the same shape on the wire.
 func applyControllerOwnedGuard(
 	updates lib.TaskFrontmatter,
 	frontmatter map[string]any,
 	merged lib.TaskFrontmatter,
 ) {
-	countAccepted := false
-	for _, field := range result.ControllerOwnedFields {
-		if field == "trigger_scope" {
+	for _, field := range capDefinitionFields {
+		if _, named := updates[field]; !named {
 			continue
 		}
-		incoming, named := updates[field]
-		if !named {
-			continue
-		}
-		onDisk, ok := frontmatter[field]
-		if !ok {
-			continue
-		}
-		incomingInt, incomingOK := frontmatterInt(incoming)
-		onDiskInt, onDiskOK := frontmatterInt(onDisk)
-		if !incomingOK || !onDiskOK {
-			continue
-		}
-		if incomingInt < onDiskInt {
+		if onDisk, ok := frontmatter[field]; ok {
 			merged[field] = onDisk
 			continue
 		}
-		if field == "trigger_count" {
-			countAccepted = true
-		}
+		delete(merged, field)
 	}
-	if countAccepted {
+
+	// trigger_scope travels only with a trigger_count: `triggerBudgetWrite` writes
+	// the pair together on both of its arms, and nothing else writes the scope. A
+	// scope arriving alone is stale, whether or not the task has one on disk.
+	if _, named := updates["trigger_scope"]; !named {
 		return
 	}
-	// No accepted count advance on this write: the scope it may carry is stale.
-	if _, named := updates["trigger_scope"]; !named {
+	if _, namedCount := updates["trigger_count"]; namedCount {
 		return
 	}
 	if onDiskScope, ok := frontmatter["trigger_scope"]; ok {
 		merged["trigger_scope"] = onDiskScope
 	} else {
 		delete(merged, "trigger_scope")
-	}
-}
-
-// frontmatterInt reads a frontmatter value as an int. Frontmatter is JSON-decoded,
-// so a number arrives as float64; yaml-decoded fixtures give int. Anything else is
-// not a counter value and reports false.
-func frontmatterInt(value any) (int, bool) {
-	switch n := value.(type) {
-	case int:
-		return n, true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	default:
-		return 0, false
 	}
 }
 
