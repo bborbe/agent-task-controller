@@ -64,6 +64,12 @@ type fileEntry struct {
 	hash           [32]byte
 	taskIdentifier lib.TaskIdentifier
 	assignee       lib.TaskAssignee
+	// capped records that the file's frontmatter is at or past its trigger cap
+	// (see isCappedIdle). It is populated whenever the file is parsed, which for a
+	// stable capped record is the last time it changed — exactly what the sweep
+	// needs, because a capped record stops changing precisely when the executor
+	// stops writing to it.
+	capped bool
 }
 
 // fileOps holds pluggable file I/O functions so the scanner can operate over
@@ -282,6 +288,17 @@ func (v *vaultScanner) scanFiles(
 		if task != nil {
 			changed = append(changed, *task)
 		}
+	}
+	// Runs after the per-file loop so the index it walks is this cycle's. Escalating
+	// here, rather than inside processFile, is what reaches a record the executor has
+	// stopped touching: processFile returns early on an unchanged hash, so a stable
+	// capped record would otherwise never be looked at again.
+	escalated, escalateError := v.escalateCappedIdleTasks(ctx)
+	if escalateError {
+		writeError = true
+	}
+	if escalated > 0 {
+		glog.Infof("escalateCappedIdle: escalated %d capped task(s)", escalated)
 	}
 	v.metrics.UpdateGoStuckPlanningTasks().
 		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
@@ -603,6 +620,7 @@ func (v *vaultScanner) processFile(
 		hash:           hash,
 		taskIdentifier: lib.TaskIdentifier(taskID),
 		assignee:       currentFMAssignee,
+		capped:         isCappedIdle(frontmatter),
 	}
 	if frontmatter.Status() == "" {
 		glog.Errorf("skipping %s: invalid frontmatter: status is empty", relPath)
