@@ -77,12 +77,31 @@ func isCappedIdle(fm lib.TaskFrontmatter) bool {
 // reported rather than fatal: the next scan retries, and one unwritable file must not
 // stop the others.
 func (v *vaultScanner) escalateCappedIdleTasks(ctx context.Context) (int, bool) {
-	escalated := 0
-	writeError := false
+	var paths []string
 	for relPath, entry := range v.hashes {
 		if !entry.capped || entry.assignee == "" {
 			continue
 		}
+		paths = append(paths, relPath)
+	}
+	return v.escalateCappedPaths(ctx, paths)
+}
+
+// escalateCappedPaths escalates the given files. Split out from the index walk
+// because there are TWO entry points and only one of them is a scan cycle: the
+// periodic scanner keeps its candidates in `hashes`, while a trigger-only
+// controller (`POLL_INTERVAL=0s`, which is what prod runs) never scans at all —
+// it builds its index once at startup and then only consumes commands. Hanging the
+// sweep off the scan cycle alone made it dead code on prod, which is where it was
+// needed.
+//
+// Every clause is re-checked inside escalateCappedContent against the on-disk file,
+// so a path list computed from a startup snapshot is safe: a record that changed
+// since, or that another writer already escalated, is a no-op here.
+func (v *vaultScanner) escalateCappedPaths(ctx context.Context, paths []string) (int, bool) {
+	escalated := 0
+	writeError := false
+	for _, relPath := range paths {
 		select {
 		case <-ctx.Done():
 			return escalated, writeError
@@ -98,13 +117,16 @@ func (v *vaultScanner) escalateCappedIdleTasks(ctx context.Context) (int, bool) 
 			continue
 		}
 		escalated++
-		// Zero-hash sentinel so the next cycle re-processes the file and publishes
+		// Zero-hash sentinel so a later cycle re-processes the file and publishes
 		// the change, with the cleared assignee recorded so the sweep does not
-		// re-escalate it before that cycle runs.
-		v.hashes[relPath] = fileEntry{
-			hash:           [32]byte{},
-			taskIdentifier: entry.taskIdentifier,
-			assignee:       "",
+		// re-escalate it before that cycle runs. Only touches an entry that exists:
+		// in trigger-only mode the caller's candidates never came from `hashes`.
+		if entry, ok := v.hashes[relPath]; ok {
+			v.hashes[relPath] = fileEntry{
+				hash:           [32]byte{},
+				taskIdentifier: entry.taskIdentifier,
+				assignee:       "",
+			}
 		}
 	}
 	return escalated, writeError
