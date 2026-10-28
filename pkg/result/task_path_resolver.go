@@ -37,4 +37,12 @@ type TaskPathResolver interface {
 	// relPath is ignored. A resolver that already knows of two or more paths for id
 	// keeps them, so a known duplicate is never hidden.
 	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
+	// RecordDuplicate adds relPath alongside the path(s) already known for id,
+	// where Record would replace them. The caller must have just established that
+	// relPath carries id AND that the path already known still carries it too — so
+	// a different known path makes id a known duplicate that Resolve reports as an
+	// error, and every later write refuses instead of landing on one of the two
+	// files. Without a known path it records relPath alone, like Record. An empty id
+	// or empty relPath is ignored, and a relPath already known for id is a no-op.
+	RecordDuplicate(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }

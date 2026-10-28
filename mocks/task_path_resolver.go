@@ -17,6 +17,13 @@ type TaskPathResolver struct {
 		arg2 lib.TaskIdentifier
 		arg3 string
 	}
+	RecordDuplicateStub        func(context.Context, lib.TaskIdentifier, string)
+	recordDuplicateMutex       sync.RWMutex
+	recordDuplicateArgsForCall []struct {
+		arg1 context.Context
+		arg2 lib.TaskIdentifier
+		arg3 string
+	}
 	ResolveStub        func(context.Context, lib.TaskIdentifier) (string, bool, error)
 	resolveMutex       sync.RWMutex
 	resolveArgsForCall []struct {
@@ -68,6 +75,40 @@ func (fake *TaskPathResolver) RecordArgsForCall(i int) (context.Context, lib.Tas
 	fake.recordMutex.RLock()
 	defer fake.recordMutex.RUnlock()
 	argsForCall := fake.recordArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *TaskPathResolver) RecordDuplicate(arg1 context.Context, arg2 lib.TaskIdentifier, arg3 string) {
+	fake.recordDuplicateMutex.Lock()
+	fake.recordDuplicateArgsForCall = append(fake.recordDuplicateArgsForCall, struct {
+		arg1 context.Context
+		arg2 lib.TaskIdentifier
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RecordDuplicateStub
+	fake.recordInvocation("RecordDuplicate", []interface{}{arg1, arg2, arg3})
+	fake.recordDuplicateMutex.Unlock()
+	if stub != nil {
+		fake.RecordDuplicateStub(arg1, arg2, arg3)
+	}
+}
+
+func (fake *TaskPathResolver) RecordDuplicateCallCount() int {
+	fake.recordDuplicateMutex.RLock()
+	defer fake.recordDuplicateMutex.RUnlock()
+	return len(fake.recordDuplicateArgsForCall)
+}
+
+func (fake *TaskPathResolver) RecordDuplicateCalls(stub func(context.Context, lib.TaskIdentifier, string)) {
+	fake.recordDuplicateMutex.Lock()
+	defer fake.recordDuplicateMutex.Unlock()
+	fake.RecordDuplicateStub = stub
+}
+
+func (fake *TaskPathResolver) RecordDuplicateArgsForCall(i int) (context.Context, lib.TaskIdentifier, string) {
+	fake.recordDuplicateMutex.RLock()
+	defer fake.recordDuplicateMutex.RUnlock()
+	argsForCall := fake.recordDuplicateArgsForCall[i]
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 

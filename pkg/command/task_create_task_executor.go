@@ -120,7 +120,7 @@ func NewCreateTaskExecutor(
 					relPath,
 				)
 			}
-			recordCreatedTaskPath(ctx, resolver, cmd.TaskIdentifier, relPath)
+			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
@@ -370,11 +370,22 @@ func shortIdentifier(id lib.TaskIdentifier) string {
 // instead of a full-vault walk. A trigger-only controller builds its index once at
 // pod start, so without this every task created afterwards missed for the pod's
 // whole life (2026-10-25: 155 of 159 walked identifiers, consumer 60 min behind,
-// commands dropped as expired). It records only when the resolver reports a clean
-// miss: a hit means the index already knows a file for this identifier, and a
-// resolver error means a known duplicate — neither may be overwritten.
+// commands dropped as expired).
+//
+// A resolver error means a known duplicate, which stays as it is; a miss records
+// relPath; a hit at relPath itself needs nothing. A hit at a DIFFERENT path means
+// this create wrote a second file for an identifier the index already maps
+// elsewhere. Skipping the record there hid the new file: a trigger-only controller
+// never rebuilds its index, so every later write resolved to the old file
+// (2026-10-27, identifier 9371a3d2: the executor's spawn write landed on an aborted
+// file while the live one stayed unrecorded). When the known file still carries the
+// identifier both paths are recorded, so Resolve reports the duplicate and later
+// writes refuse loudly. When it no longer does, the entry is stale and relPath
+// replaces it — recording a stale entry beside it would be a false duplicate that
+// blocks every write for the pod's life.
 func recordCreatedTaskPath(
 	ctx context.Context,
+	gitClient gitclient.GitClient,
 	resolver result.TaskPathResolver,
 	id lib.TaskIdentifier,
 	relPath string,
@@ -382,9 +393,34 @@ func recordCreatedTaskPath(
 	if resolver == nil {
 		return
 	}
-	if _, found, err := resolver.Resolve(ctx, id); err != nil || found {
+	knownPath, found, err := resolver.Resolve(ctx, id)
+	if err != nil {
 		return
 	}
+	if !found {
+		resolver.Record(ctx, id, relPath)
+		return
+	}
+	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
+		return
+	}
+	if fileCarriesIdentifier(ctx, gitClient, knownPath, id) {
+		glog.Warningf(
+			"create-task: task_identifier %s is now carried by both %s and %s; recording both so later writes refuse instead of landing on %s",
+			id,
+			knownPath,
+			relPath,
+			knownPath,
+		)
+		resolver.RecordDuplicate(ctx, id, relPath)
+		return
+	}
+	glog.V(2).Infof(
+		"create-task: index entry %s no longer carries %s; replacing it with %s",
+		knownPath,
+		id,
+		relPath,
+	)
 	resolver.Record(ctx, id, relPath)
 }
 
