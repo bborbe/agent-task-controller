@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.22.4
 
 - fix: **record both paths when a create writes a second file carrying an identifier the index already maps elsewhere, so later writes refuse instead of landing on the old file.** `recordCreatedTaskPath` skipped recording on any index hit, and a trigger-only controller (`POLL_INTERVAL=0s`) never rebuilds its index, so the new file stayed invisible for the pod's life and every result and frontmatter write resolved to the old one — measured 2026-10-27 on identifier 9371a3d2, where the executor's spawn write landed on an aborted file while the live one was unrecorded. A hit at a different path now re-reads the indexed file: if it still carries the identifier, the new `TaskPathResolver.RecordDuplicate` adds the second path beside it so `Resolve` reports the duplicate and `FindTaskFilePath` refuses, with a warning naming both paths; if it no longer does, the stale entry is replaced, because a false duplicate in a never-rebuilt index would block every write for that identifier. An occupant that cannot be read or parsed is *not* treated as absent: a transient git-rest error keeps the existing entry, because replacing on a failed read would restore the exact misroute this change closes. `Record` keeps its replace semantics for the walk path.
 
