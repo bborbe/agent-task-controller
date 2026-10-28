@@ -107,7 +107,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 				"so a record parked there belongs to no human's queue",
 		)
 	} else {
-		glog.Infof("HUMAN_ASSIGNEES effective set: %q", a.HumanAssignees)
+		glog.V(1).Infof("HUMAN_ASSIGNEES effective set: %q", a.HumanAssignees)
 	}
 	libmetrics.NewBuildInfoMetrics().SetBuildInfo(a.BuildGitVersion, a.BuildGitCommit, a.BuildDate)
 	glog.V(1).
