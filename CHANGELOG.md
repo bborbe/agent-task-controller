@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.22.1
 
 - fix: **a re-emit under a new title no longer creates a second file for the same task_identifier.** Before posting a create, the executor resolves the command's identifier against the identifier→path index and, on a clean hit, posts the create under the title stem of the file that already carries it — so a retitled PR or a diverged title SHA lands on the occupied path and receives the server's existing conflict/reopen answer instead of materializing a second file that shares one identity. A miss, a nil resolver and a resolver error keep the command's own title; the ambiguity is logged and never redirects. Measured 2026-10-27 in the prod task store: 16 identifiers across 35 files, and all five stuck `github-update-go` records were members of such a group.
 
