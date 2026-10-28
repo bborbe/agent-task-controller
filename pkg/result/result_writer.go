@@ -701,8 +701,10 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 		return body
 	}
 
-	// retry_count is authoritative in the task file — the executor bumped it
-	// at spawn time (spec 011). The writer only applies escalation.
+	// retry_count is retired — no deployed component writes it any more, so it is
+	// no longer controller-owned and an incoming value is not discarded. The writer
+	// still applies escalation to legacy records that already carry the counter
+	// alongside an explicit max_retries, so those parks keep surfacing.
 	retryCount := merged.RetryCount()
 	body = r.applyRetryCap(merged, existing, retryCount, body)
 
@@ -1012,7 +1014,6 @@ type GuardDecision struct {
 // incoming value can never introduce a controller-owned key that is absent on disk.
 var controllerOwnedFields = []string{
 	"trigger_count",
-	"retry_count",
 }
 
 // operatorOwnedFields lists frontmatter keys that are the operator's routing

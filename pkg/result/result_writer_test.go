@@ -1626,7 +1626,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					[]string{"trigger_count: 1"},
 				),
 				Entry(
-					"keeps on-disk retry_count over a stale incoming value",
+					"an incoming retry_count is applied, not discarded, because the retired field is no longer controller-owned",
 					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nretry_count: 4\n",
 					lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
@@ -1634,21 +1634,20 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						"phase":           "ai_review",
 						"retry_count":     0,
 					},
-					[]string{"retry_count: 4"},
 					[]string{"retry_count: 0"},
+					[]string{"retry_count: 4"},
 				),
 				Entry(
-					"incoming counters absent on disk are never written",
+					"an incoming trigger_count absent on disk is never written",
 					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n",
 					lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "in_progress",
 						"phase":           "ai_review",
 						"trigger_count":   1,
-						"retry_count":     0,
 					},
 					[]string{},
-					[]string{"trigger_count", "retry_count"},
+					[]string{"trigger_count"},
 				),
 			)
 

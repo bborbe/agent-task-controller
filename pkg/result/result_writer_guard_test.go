@@ -99,16 +99,16 @@ var _ = Describe("MergeFrontmatter", func() {
 		"does not panic when both counters hold the same uncomparable type (slice)",
 		func() {
 			existing := lib.TaskFrontmatter{
-				"status":      "in_progress",
-				"retry_count": []interface{}{1, 2},
+				"status":        "in_progress",
+				"trigger_count": []interface{}{1, 2},
 			}
 			incoming := lib.TaskFrontmatter{
-				"status":      "in_progress",
-				"retry_count": []interface{}{3},
+				"status":        "in_progress",
+				"trigger_count": []interface{}{3},
 			}
 			merged, decisions := result.MergeFrontmatter(existing, incoming)
 			Expect(decisions).To(HaveLen(1))
-			Expect(merged["retry_count"]).To(Equal([]interface{}{1, 2}))
+			Expect(merged["trigger_count"]).To(Equal([]interface{}{1, 2}))
 		},
 	)
 
