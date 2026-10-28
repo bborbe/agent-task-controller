@@ -370,6 +370,10 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 		return
 	}
 	index := make(map[lib.TaskIdentifier][]string, len(paths))
+	// Records already at their trigger cap with a live assignee, collected during
+	// the same parse this pass already does for task_identifier. This is the ONLY
+	// place the sweep can see them on a trigger-only controller.
+	var cappedAssigned []string
 	skipped := 0
 	for _, relPath := range paths {
 		select {
@@ -387,19 +391,21 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 			skipped++
 			continue
 		}
-		var fm struct {
-			TaskIdentifier string `yaml:"task_identifier"`
-		}
-		if umErr := yaml.Unmarshal([]byte(fmYAML), &fm); umErr != nil {
+		var fmMap map[string]interface{}
+		if umErr := yaml.Unmarshal([]byte(fmYAML), &fmMap); umErr != nil {
 			skipped++
 			continue
 		}
-		if fm.TaskIdentifier == "" || !isValidUUID(fm.TaskIdentifier) {
+		taskID, _ := fmMap["task_identifier"].(string)
+		if taskID == "" || !isValidUUID(taskID) {
 			skipped++
 			continue
 		}
-		id := lib.TaskIdentifier(fm.TaskIdentifier)
+		id := lib.TaskIdentifier(taskID)
 		index[id] = append(index[id], relPath)
+		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) && fm.Assignee() != "" {
+			cappedAssigned = append(cappedAssigned, relPath)
+		}
 	}
 	v.indexMutex.Lock()
 	v.index = index
@@ -411,6 +417,16 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 		time.Since(start),
 		skipped,
 	)
+	// A trigger-only controller never scans, so without this the sweep would never
+	// run where it is needed most. This pass has already read and parsed every file,
+	// so the candidate list costs nothing extra.
+	if escalated, werr := v.escalateCappedPaths(ctx, cappedAssigned); escalated > 0 || werr {
+		glog.Infof(
+			"escalateCappedIdle: escalated %d capped task(s) during index build (%d candidate(s))",
+			escalated,
+			len(cappedAssigned),
+		)
+	}
 }
 
 // Resolve returns the vault-relative path of the task file carrying id, from the
