@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.22.6
 
 - fix: **run the capped-and-idle sweep during the boot index build, because a trigger-only controller never scans — so v0.22.5's sweep was dead code on prod.** The sweep added in v0.22.5 hangs off `scanFiles`, which only runs inside `RunCycle`; a trigger-only controller (`POLL_INTERVAL=0s`) builds its index once at startup and then only consumes commands, so `RunCycle` never runs and the sweep never executed. Measured on nuke prod 2026-10-28 immediately after the v0.22.5 apply: all three controllers `1/1 Running`, `buildIndex: 9139 identifier(s)`, and **zero** `escalateCappedIdle` lines, with the same 15 capped records still holding their assignees. `buildIndex` already reads and parses every file to collect `task_identifier`, so the candidate list — capped, still assigned — costs nothing extra there; the sweep now runs over it after the index swap, and the per-path clauses are re-checked against the on-disk file so a stale candidate is a no-op. `escalateCappedIdleTasks` is split so both entry points share `escalateCappedPaths`. ⚠️ **Residual, stated rather than hidden:** in trigger-only mode the candidate set is a startup snapshot, so a record that reaches its cap *after* boot is swept on the next pod restart, not within a cycle. Closing that needs a periodic sweep ticker independent of the poll interval, which is a separate change.
 
