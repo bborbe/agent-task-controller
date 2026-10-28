@@ -14,6 +14,7 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
@@ -60,14 +61,23 @@ const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFront
 
 // NewUpdateFrontmatterExecutor creates a cdb.CommandObjectExecutorTx that reads the
 // task through the typed vault API by identifier, PATCHes only the frontmatter fields
-// the command names (plus the two doctrines), and PUTs the body when the command
-// carries a body section. All other frontmatter keys are left untouched — the field
-// level PATCH is what guarantees that, so no whole-file merge happens and none of the
-// task's frontmatter is rewritten.
+// the command names (plus the doctrines), and PUTs the body when the command
+// carries a body section or the trigger cap escalates. All other frontmatter keys
+// are left untouched — the field level PATCH is what guarantees that, so no
+// whole-file merge happens and none of the task's frontmatter is rewritten.
 //
 // It is explicitly NOT atomic: PATCH and PUT are two requests and the typed surface
-// has no combined primitive, so a failure between them leaves frontmatter updated and
-// the body stale. See applyUpdate for the window and why the retry is safe.
+// has no combined primitive, so a failure between them leaves the body updated and
+// the frontmatter stale. See applyUpdate for the window and why the retry is safe.
+//
+// ⚠️ This executor is the ONLY write a capped task receives. A task at the trigger
+// cap is refused by the executor's checkTriggerBudget, so it never spawns, never
+// produces a WriteResult, and never gets an IncrementFrontmatterCommand — the two
+// sites the trigger-cap fix originally guarded. What it does get is this executor's
+// once-a-minute restore-assignee write from the reconcile loop. Without the cap
+// check here the escalation is unreachable for exactly the population it exists for
+// (observed live on dev 2026-10-28, task 3a6501ec: the spawn charge reached
+// trigger_count 3 through an update-frontmatter command and escalated nothing).
 //
 // vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
 // differs is cross-vault traffic and is skipped before the task lookup (no write, no
@@ -75,6 +85,7 @@ const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFront
 func NewUpdateFrontmatterExecutor(
 	client vaultapi.Client,
 	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
@@ -117,7 +128,7 @@ func NewUpdateFrontmatterExecutor(
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "read task for update")
 			}
-			if err := applyUpdate(ctx, client, task, cmd, vaultName); err != nil {
+			if err := applyUpdate(ctx, client, task, cmd, vaultName, currentDateTime); err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
@@ -137,22 +148,32 @@ func NewUpdateFrontmatterExecutor(
 // merged frontmatter and body together, and committed once, so a failure left
 // nothing behind. The typed surface has no such primitive — PATCH replaces named
 // frontmatter fields, PUT replaces the body — so a failure between them leaves
-// frontmatter updated and the body stale. The window is one request wide and the
-// caller retries the command, which is idempotent for both halves; it is named
-// here rather than hidden because the method this replaces was called "atomic".
+// one half applied. The window is one request wide and the caller retries the
+// command, which is idempotent for both halves; it is named here rather than
+// hidden because the method this replaces was called "atomic".
+//
+// ⚠️ **The body is written BEFORE the frontmatter PATCH, and the order is
+// load-bearing.** The escalation section records the assignee the cap cleared. If
+// the PATCH landed first and the body PUT then failed, the retry would recompute
+// the escalation from a task whose assignee is already empty and render the section
+// with a blank Assignee — a permanently wrong record. Body-first inverts that: a
+// failed PATCH retries against unchanged frontmatter, so the captured name is still
+// there, and the section's own heading guard makes the second PUT a no-op.
 func applyUpdate(
 	ctx context.Context,
 	client vaultapi.Client,
 	task *vaultapi.Task,
 	cmd task.UpdateFrontmatterCommand,
 	vaultName string,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) error {
-	if fields := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName); len(fields) > 0 {
-		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
-			return errors.Wrapf(ctx, err, "patch frontmatter")
+	fields, escalation := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName)
+	if cmd.Body == nil && escalation == nil {
+		if len(fields) > 0 {
+			if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
+				return errors.Wrapf(ctx, err, "patch frontmatter")
+			}
 		}
-	}
-	if cmd.Body == nil {
 		return nil
 	}
 	// Re-read before the PUT: PUT replaces the WHOLE body, so merging the section
@@ -166,19 +187,41 @@ func applyUpdate(
 	if err != nil {
 		return errors.Wrapf(ctx, err, "re-read task for body merge")
 	}
-	body := delivery.ReplaceOrAppendSection(fresh.Body, cmd.Body.Heading, cmd.Body.Section)
+	body := fresh.Body
+	if cmd.Body != nil {
+		body = delivery.ReplaceOrAppendSection(body, cmd.Body.Heading, cmd.Body.Section)
+	}
+	// Duplicate guard checked against the FRESH body, not the one captured above:
+	// a concurrent write may have already appended the section.
+	if escalation != nil && !result.ContainsTriggerCapEscalation(body) {
+		body += result.TriggerCapEscalationSection(
+			escalation.triggerCount,
+			escalation.maxTriggers,
+			escalation.agentName,
+			currentDateTime.Now(),
+		)
+	}
 	// Addressed by fresh.ID, not task.ID: the body being written is the fresh
 	// read's, so a task deleted and recreated under the same identifier between
 	// the two reads must not have this body written onto the stale record.
 	if err := client.PutBody(ctx, fresh.ID, body); err != nil {
 		return errors.Wrapf(ctx, err, "put body")
 	}
+	if len(fields) > 0 {
+		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
+			return errors.Wrapf(ctx, err, "patch frontmatter")
+		}
+	}
 	return nil
 }
 
-// buildUpdatePatch returns the fields to PATCH. It carries the command's own
-// updates plus the two doctrines that used to be applied to the merged file:
-// spec 042's phase:human_review ⇒ assignee:"" and the target_vault heal.
+// buildUpdatePatch returns the fields to PATCH and, when this write takes the task
+// to its trigger cap, the escalation to record in the body.
+//
+// It carries the command's own updates, the controller-owned budget guard, the
+// trigger-cap escalation, and the two doctrines that used to be applied to the
+// merged file: spec 042's phase:human_review ⇒ assignee:"" and the target_vault
+// heal.
 //
 // The doctrines are computed against a merged COPY so only the fields they
 // actually change are sent — a PATCH that restated every key would rewrite
@@ -187,7 +230,7 @@ func buildUpdatePatch(
 	updates lib.TaskFrontmatter,
 	frontmatter map[string]any,
 	vaultName string,
-) map[string]any {
+) (map[string]any, *triggerCapEscalation) {
 	// `before` is the task as it stands, snapshotted BEFORE the command's own
 	// updates are merged — otherwise the diff below would exclude them and the
 	// command would patch nothing.
@@ -200,6 +243,11 @@ func buildUpdatePatch(
 	for key, value := range updates {
 		merged[key] = value
 	}
+	applyControllerOwnedGuard(updates, frontmatter, merged)
+	// Evaluated BEFORE the human-review doctrine, and that order is load-bearing:
+	// the cap captures the current assignee into previous_assignee, so running it
+	// after ClearAssigneeIfHumanReview would capture "" and lose the name.
+	escalation := applyUpdateTriggerCap(merged)
 	// spec 042: phase: human_review ⇒ assignee: "". No-op otherwise.
 	result.ClearAssigneeIfHumanReview(merged)
 	// Heal-on-write: stamp target_vault on legacy tasks lacking it.
@@ -220,5 +268,105 @@ func buildUpdatePatch(
 			patch[key] = value
 		}
 	}
-	return patch
+	return patch, escalation
+}
+
+// applyControllerOwnedGuard keeps the on-disk value of the controller's budget
+// counters over a stale one the command carries.
+//
+// The counters are monotonic — a spawn charge adds one, nothing subtracts — so a
+// command naming a LOWER value is a snapshot taken before the charge landed, and it
+// loses. That is the shape an echo takes: an agent authors its frontmatter when it
+// is spawned and publishes it afterwards. A higher or equal value wins, because that
+// IS the charge (the executor's scope write) and the executor's own retry_count bump.
+//
+// `trigger_scope` is not a counter and has no ordering, so it is accepted only
+// alongside a `trigger_count` the guard accepted — the charge writes the pair
+// together (triggerBudgetWrite's !hasScope arm), and an agent has no business
+// writing the scope at all. A command naming the scope without the count is
+// therefore treated as stale, and one that omits both simply leaves the on-disk
+// values alone through the base merge.
+func applyControllerOwnedGuard(
+	updates lib.TaskFrontmatter,
+	frontmatter map[string]any,
+	merged lib.TaskFrontmatter,
+) {
+	countAccepted := false
+	for _, field := range result.ControllerOwnedFields {
+		if field == "trigger_scope" {
+			continue
+		}
+		incoming, named := updates[field]
+		if !named {
+			continue
+		}
+		onDisk, ok := frontmatter[field]
+		if !ok {
+			continue
+		}
+		incomingInt, incomingOK := frontmatterInt(incoming)
+		onDiskInt, onDiskOK := frontmatterInt(onDisk)
+		if !incomingOK || !onDiskOK {
+			continue
+		}
+		if incomingInt < onDiskInt {
+			merged[field] = onDisk
+			continue
+		}
+		if field == "trigger_count" {
+			countAccepted = true
+		}
+	}
+	if countAccepted {
+		return
+	}
+	// No accepted count advance on this write: the scope it may carry is stale.
+	if _, named := updates["trigger_scope"]; !named {
+		return
+	}
+	if onDiskScope, ok := frontmatter["trigger_scope"]; ok {
+		merged["trigger_scope"] = onDiskScope
+	} else {
+		delete(merged, "trigger_scope")
+	}
+}
+
+// frontmatterInt reads a frontmatter value as an int. Frontmatter is JSON-decoded,
+// so a number arrives as float64; yaml-decoded fixtures give int. Anything else is
+// not a counter value and reports false.
+func frontmatterInt(value any) (int, bool) {
+	switch n := value.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+// applyUpdateTriggerCap enforces the trigger-count cap on this write path, using
+// the same predicate as the result writer and the increment executor
+// (result.TriggerCapEngaged: an explicit max_triggers OR a ref-bearing task).
+//
+// The `triggerCount == 0` guard is the result writer's, kept for the same reason:
+// a brand-new task with no count must not be escalated degenerately.
+//
+// Returns nil when the cap does not engage, so the caller writes no body section.
+func applyUpdateTriggerCap(merged lib.TaskFrontmatter) *triggerCapEscalation {
+	if !result.TriggerCapEngaged(merged) {
+		return nil
+	}
+	triggerCount := merged.TriggerCount()
+	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
+		return nil
+	}
+	agentName := result.ClearAssignee(merged)
+	return &triggerCapEscalation{
+		triggerCount: triggerCount,
+		maxTriggers:  merged.MaxTriggers(),
+		agentName:    agentName,
+	}
 }

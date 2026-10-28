@@ -72,7 +72,7 @@ func CreateCommandConsumer(
 		// identifier and PATCHes the fields it changes, instead of reading a
 		// vault-relative path, mutating the YAML and re-serialising the file.
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
-		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, m),
+		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
 		command.NewCreateTaskExecutor(
 			gitClient,
 			vaultClient,

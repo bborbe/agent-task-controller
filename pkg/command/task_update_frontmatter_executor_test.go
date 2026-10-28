@@ -15,6 +15,7 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -50,6 +51,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 		executor = command.NewUpdateFrontmatterExecutor(
 			fakeVault,
 			"openclaw",
+			libtime.NewCurrentDateTime(),
 			metrics.New(),
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
@@ -119,6 +121,178 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("done"))
 				Expect(fm["status"]).To(Equal("in_progress"))
 				Expect(fm["assignee"]).To(Equal("claude"))
+			})
+		})
+
+		Context("controller-owned budget counters", func() {
+			It("keeps the on-disk trigger_count when the command carries a stale one", func() {
+				// The agent authors frontmatter from its spawn-time snapshot, so its
+				// echo carries the count as it was BEFORE the spawn charge landed.
+				// Letting it win refunds the charge and the cap is never reached
+				// (observed live on dev 2026-10-28, task 3a6501ec).
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 3\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 2,
+						"phase":         "human_review",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(BeEquivalentTo(3))
+				Expect(fm["trigger_scope"]).To(Equal("planning"))
+				Expect(fm["phase"]).To(Equal("human_review"))
+			})
+
+			It("keeps the on-disk trigger_scope when the command omits it", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-scope-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 1\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-scope-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["trigger_scope"]).To(Equal("planning"))
+			})
+
+			It("rejects a scope that arrives without a count advance", func() {
+				// Only the charge writes the pair together; a scope on its own is
+				// an agent echo and must not move the budget's phase key.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-scope-only-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 1\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-scope-only-uuid"),
+					Updates:        lib.TaskFrontmatter{"trigger_scope": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["trigger_scope"]).To(Equal("planning"))
+			})
+
+			It("lets a command that names the counter win — that is how the charge lands", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: charge-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 2\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("charge-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 3,
+						"trigger_scope": "planning",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(BeEquivalentTo(3))
+				Expect(fm["trigger_scope"]).To(Equal("planning"))
+			})
+		})
+
+		Context("trigger cap", func() {
+			It(
+				"escalates a ref-bearing task at the cap: assignee cleared, section appended",
+				func() {
+					// The case the whole fix exists for, on the ONLY write a capped task
+					// receives. ref present + no max_triggers ⇒ MaxTriggers() falls back
+					// to the lib default 3.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cap-uuid"),
+						Updates:        lib.TaskFrontmatter{"assignee": "pr-reviewer-agent"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["assignee"]).To(Equal(""))
+					Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+
+					content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+					Expect(readErr).NotTo(HaveOccurred())
+					Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(string(content)).To(ContainSubstring("- **Trigger count:** 3"))
+					Expect(string(content)).To(ContainSubstring("- **Max triggers:** 3"))
+					Expect(
+						string(content),
+					).To(ContainSubstring("- **Assignee:** pr-reviewer-agent"))
+				},
+			)
+
+			It("escalates on the charge write itself, which names trigger_count", func() {
+				// The executor charges a spawn by writing trigger_count and
+				// trigger_scope together (triggerBudgetWrite's !hasScope arm). That
+				// write is the one that reaches the cap in practice, so it must
+				// escalate rather than relying on a later write that never comes.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: charge-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 2\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("charge-cap-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 3,
+						"trigger_scope": "planning",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["assignee"]).To(Equal(""))
+				Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not escalate a task with neither max_triggers nor a ref", func() {
+				// A plain recurring task keeps re-dispatching: the cap is engaged
+				// only by an explicit max_triggers or a ref-bearing task.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: recurring-uuid\nstatus: in_progress\nphase: planning\nassignee: trading-hypothesis-agent\ntrigger_count: 9\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("recurring-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["assignee"]).To(Equal("trading-hypothesis-agent"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not append a second escalation section on a repeat write", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: cap-twice-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nprevious_assignee: pr-reviewer-agent\n---\nbody\n\n## Trigger Cap Escalation\n\n- **Timestamp:** 2026-01-01T00:00:00Z\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("cap-twice-uuid"),
+					Updates:        lib.TaskFrontmatter{"assignee": "pr-reviewer-agent"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(strings.Count(string(content), "## Trigger Cap Escalation")).To(Equal(1))
 			})
 		})
 
@@ -256,10 +430,13 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("done"))
 			})
 
-			It("returns an error when PutBody fails after the PATCH landed", func() {
-				// The documented partial-application window: the two writes are
-				// not atomic, so a body failure leaves frontmatter updated. The
-				// command is redelivered and re-runs both halves.
+			It("returns an error when PutBody fails, before the PATCH is attempted", func() {
+				// The documented partial-application window, in the order the writer
+				// uses: body first, frontmatter second. A body failure therefore
+				// leaves frontmatter untouched — which is what makes the escalation
+				// section safe to render from the pre-patch assignee (see
+				// applyUpdate's ordering note). The command is redelivered and
+				// re-runs both halves.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: partial-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
@@ -275,10 +452,10 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).To(HaveOccurred())
-				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 
 				fm := parseFrontmatter(taskFile)
-				Expect(fm["phase"]).To(Equal("human_review"))
+				Expect(fm["phase"]).To(Equal("ai_review"))
 				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
 				Expect(readErr).NotTo(HaveOccurred())
 				Expect(string(content)).NotTo(ContainSubstring("## Failure"))
@@ -361,7 +538,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				).To(Equal(before + 1))
 			})
 
-			It("surfaces a re-read failure that happens after the PATCH landed", func() {
+			It("surfaces a re-read failure that happens before the PATCH is attempted", func() {
 				// The top-of-executor read must succeed, so only the SECOND read is
 				// stubbed to fail — the one applyUpdate makes before its PUT. This
 				// is the branch the re-read added; stubbing every read would fail
@@ -403,10 +580,10 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 						),
 					),
 				).To(Equal(before + 1))
-				// the PATCH landed before the re-read failed; the body write did not
-				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				// body first: the re-read failed, so neither write landed
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
-				Expect(parseFrontmatter(taskFile)["phase"]).To(Equal("human_review"))
+				Expect(parseFrontmatter(taskFile)["phase"]).To(Equal("ai_review"))
 			})
 
 			It("addresses the body PUT by the re-read task's id, not the stale one", func() {

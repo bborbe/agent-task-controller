@@ -1638,6 +1638,21 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					[]string{"retry_count: 0"},
 				),
 				Entry(
+					// trigger_scope is written by the executor's spawn charge together
+					// with trigger_count, so an agent's snapshot must not move it.
+					"keeps on-disk trigger_scope over a stale incoming value",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_scope: planning\ntrigger_count: 2\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"trigger_scope":   "execution",
+						"trigger_count":   2,
+					},
+					[]string{"trigger_scope: planning"},
+					[]string{"trigger_scope: execution"},
+				),
+				Entry(
 					"incoming counters absent on disk are never written",
 					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n",
 					lib.TaskFrontmatter{

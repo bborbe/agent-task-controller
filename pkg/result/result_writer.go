@@ -1007,18 +1007,27 @@ type GuardDecision struct {
 	Rejected any
 }
 
-// controllerOwnedFields lists frontmatter keys whose on-disk value always wins:
+// ControllerOwnedFields lists frontmatter keys whose on-disk value always wins:
 // the result writer never lets the agent's incoming value overwrite them, and an
 // incoming value can never introduce a controller-owned key that is absent on disk.
-var controllerOwnedFields = []string{
+//
+// Exported so the partial-update executor applies the same list — it is the second
+// surface an agent's frontmatter snapshot reaches, and it had no guard at all.
+//
+// trigger_scope belongs here with trigger_count: the executor charges one spawn by
+// writing BOTH (triggerBudgetWrite's !hasScope arm), so a stale snapshot that drops
+// trigger_scope does not merely lose a label — it makes the next spawn take the
+// scope-write arm again and re-derive the count, which is how the budget drifts.
+var ControllerOwnedFields = []string{
 	"trigger_count",
+	"trigger_scope",
 	"retry_count",
 }
 
 // operatorOwnedFields lists frontmatter keys that are the operator's routing
 // surface: the result writer keeps the on-disk value over a differing incoming
 // snapshot (the agent authors these keys from its spawn-time snapshot, not live
-// state), but — unlike controllerOwnedFields — an incoming value may introduce
+// state), but — unlike ControllerOwnedFields — an incoming value may introduce
 // an operator-owned key that is absent on disk (a spawn/claim names an assignee
 // on a task that never carried one). Two exceptions, both for "assignee" only and
 // both producing no guard decision because each applies the incoming value rather
@@ -1047,7 +1056,7 @@ var operatorOwnedFields = []string{
 // later, and the job's result write restored cluster: sun — 27 tasks were
 // re-tagged onto a cluster that was being shut down.
 //
-// Unlike controllerOwnedFields, a discarded incoming value is reported as a
+// Unlike ControllerOwnedFields, a discarded incoming value is reported as a
 // guard decision even when the key is absent on disk (Kept: nil), so every
 // dropped echo shows up in the ownership-guard log line.
 var operatorPinnedFields = []string{
@@ -1133,7 +1142,7 @@ func MergeFrontmatter(
 	// Controller-owned counters: the on-disk value always wins when the key exists
 	// on disk (kept verbatim, whatever its type); a key absent on disk stays absent
 	// even if the incoming payload carries it.
-	for _, field := range controllerOwnedFields {
+	for _, field := range ControllerOwnedFields {
 		diskValue, onDisk := existing[field]
 		incomingValue, inIncoming := incoming[field]
 		if !onDisk {
