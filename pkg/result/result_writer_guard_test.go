@@ -79,7 +79,7 @@ var _ = Describe("MergeFrontmatter", func() {
 	)
 
 	It(
-		"does not panic when both counters hold the same uncomparable type (map)",
+		"does not panic when trigger_count holds an uncomparable type on both sides (map)",
 		func() {
 			existing := lib.TaskFrontmatter{
 				"status":        "in_progress",
@@ -96,7 +96,7 @@ var _ = Describe("MergeFrontmatter", func() {
 	)
 
 	It(
-		"does not panic when both counters hold the same uncomparable type (slice)",
+		"does not panic when trigger_count holds an uncomparable type on both sides (slice)",
 		func() {
 			existing := lib.TaskFrontmatter{
 				"status":        "in_progress",

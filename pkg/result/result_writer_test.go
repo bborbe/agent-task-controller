@@ -1649,6 +1649,18 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					[]string{},
 					[]string{"trigger_count"},
 				),
+				Entry(
+					"an incoming retry_count introduces the retired key when it is absent on disk",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"retry_count":     2,
+					},
+					[]string{"retry_count: 2"},
+					[]string{},
+				),
 			)
 
 			DescribeTable(

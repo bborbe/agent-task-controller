@@ -701,11 +701,14 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 		return body
 	}
 
-	// retry_count is retired — no deployed component writes it any more, so it is
-	// no longer controller-owned and an incoming value is not discarded. The writer
-	// still applies escalation to legacy records that already carry the counter
-	// alongside an explicit max_retries, so those parks keep surfacing.
-	retryCount := merged.RetryCount()
+	// retry_count is retired — no deployed component writes it any more, so it is no
+	// longer controller-owned and an incoming value is applied rather than discarded.
+	// The cap therefore reads the counter from the ON-DISK frontmatter, not from the
+	// merge: the merge is incoming-wins now, so a stale echo carrying retry_count: 0
+	// would otherwise suppress the escalation a legacy record had already earned.
+	// Reading the disk value keeps the cap's meaning exactly what it was before the
+	// retirement, when the ownership guard pinned the same value.
+	retryCount := existing.RetryCount()
 	body = r.applyRetryCap(merged, existing, retryCount, body)
 
 	return body
@@ -755,11 +758,14 @@ func (r *resultWriter) applyTriggerCap(
 	return body + r.triggerEscalationSection(triggerCount, agentName, merged)
 }
 
-// applyRetryCap enforces the retry-count cap. The cap is opt-in: an absent max_retries
-// means no cap, so tasks that accumulate retry_count across re-dispatches are never
-// escalated and never have their routing assignee stripped (the lib default-3 fallback
-// would kill the re-dispatch loop). When the task is already parked (section present),
-// existing.Phase() restores the on-disk lifecycle phase (cap stickiness).
+// applyRetryCap enforces the retry-count cap for records that still carry the counter.
+// The cap is opt-in: an absent max_retries means no cap, so a record is never escalated
+// and never has its routing assignee stripped (the lib default-3 fallback would kill the
+// re-dispatch loop). retry_count is retired — no deployed component increments it — so
+// this applies only to legacy records that already carry a counter beside an explicit
+// max_retries; the caller passes the on-disk value, never the merged one. When the task
+// is already parked (section present), existing.Phase() restores the on-disk lifecycle
+// phase (cap stickiness).
 func (r *resultWriter) applyRetryCap(
 	merged, existing lib.TaskFrontmatter,
 	retryCount int,

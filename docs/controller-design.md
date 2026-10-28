@@ -42,7 +42,7 @@ On agent-task-v1-request (operation: "update"):
   │
   ├── resolve task_identifier → task file path (index hit: one read, no listing; miss: full directory walk as before)
   ├── merge frontmatter + apply escalation check (counter set by executor, not incremented here)
-  │     ├── read retry_count from merged frontmatter (legacy records only — no deployed component writes the field since its retirement)
+  │     ├── read retry_count from the ON-DISK frontmatter (legacy records only — no deployed component writes the field since its retirement, so the merge is incoming-wins and a stale echo must not suppress an earned escalation)
   │     ├── if trigger_count >= max_triggers → clear assignee: "", preserve lifecycle phase, append ## Trigger Cap Escalation (once)
   │     ├── if retry_count >= max_retries   → clear assignee: "", preserve lifecycle phase, append ## Retry Escalation (once)
   │     └── if agent emits needs_input → clear assignee: "" (phase unchanged; spec-039 supersedes spec-021 for this row)
