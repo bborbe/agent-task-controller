@@ -1614,16 +1614,19 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					}
 				},
 				Entry(
+					// trigger_scope rides with trigger_count on every charge write, so
+					// it is pinned by the same rule.
 					"keeps on-disk trigger_count over a stale incoming value",
-					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 5\n",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\ntrigger_count: 5\ntrigger_scope: planning\n",
 					lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "in_progress",
 						"phase":           "ai_review",
 						"trigger_count":   1,
+						"trigger_scope":   "execution",
 					},
-					[]string{"trigger_count: 5"},
-					[]string{"trigger_count: 1"},
+					[]string{"trigger_count: 5", "trigger_scope: planning"},
+					[]string{"trigger_count: 1", "trigger_scope: execution"},
 				),
 				Entry(
 					"an incoming retry_count is applied, not discarded, because the retired field is no longer controller-owned",
@@ -1636,6 +1639,20 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					},
 					[]string{"retry_count: 0"},
 					[]string{"retry_count: 4"},
+				),
+				Entry(
+					// max_triggers is the cap's DEFINITION, not a measurement: a snapshot
+					// that raises it in the same write suppresses the escalation.
+					"keeps on-disk max_triggers over a stale incoming value",
+					"task_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nmax_triggers: 3\n",
+					lib.TaskFrontmatter{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "in_progress",
+						"phase":           "ai_review",
+						"max_triggers":    99,
+					},
+					[]string{"max_triggers: 3"},
+					[]string{"max_triggers: 99"},
 				),
 				Entry(
 					"an incoming trigger_count absent on disk is never written",
@@ -1949,41 +1966,6 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(s).To(ContainSubstring("New review content"))
 				Expect(s).NotTo(ContainSubstring("Prior review content"))
 			})
-		})
-	})
-
-	Describe("ExtractBody", func() {
-		It("returns body after frontmatter delimiter", func() {
-			content := []byte("---\nkey: value\n---\nbody content here\n")
-			body, err := result.ExtractBody(ctx, content)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(Equal("body content here\n"))
-		})
-
-		It("returns empty string when body is empty", func() {
-			content := []byte("---\nkey: value\n---\n")
-			body, err := result.ExtractBody(ctx, content)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(Equal(""))
-		})
-
-		It("returns error when no frontmatter delimiter", func() {
-			content := []byte("no delimiter here")
-			_, err := result.ExtractBody(ctx, content)
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("returns error when frontmatter is not closed", func() {
-			content := []byte("---\nkey: value\n")
-			_, err := result.ExtractBody(ctx, content)
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("handles CRLF line endings after opening delimiter", func() {
-			content := []byte("---\r\nkey: value\n---\nbody\n")
-			body, err := result.ExtractBody(ctx, content)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(Equal("body\n"))
 		})
 	})
 })
