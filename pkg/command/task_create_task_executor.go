@@ -120,7 +120,7 @@ func NewCreateTaskExecutor(
 					relPath,
 				)
 			}
-			recordCreatedTaskPath(ctx, resolver, cmd.TaskIdentifier, relPath)
+			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
@@ -213,41 +213,68 @@ func reuseExistingIdentifierTitle(
 	return stem
 }
 
+// identifierPresence reports whether the task file at relPath declares id.
+//
+// A nil error means the answer is definitive: either the file carries id, or it
+// definitively does not — including when it no longer exists (git-rest answers
+// 404). A non-nil error means the question could not be answered: the read
+// failed for a reason other than absence, or the frontmatter could not be
+// parsed. A caller choosing between "stale index entry" and "duplicate" must
+// treat that as unknown, never as absence: replacing the entry on a transient
+// 503 silently drops the duplicate detection this index exists to keep, which
+// is the very failure mode the duplicate recording was added for.
+func identifierPresence(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	id lib.TaskIdentifier,
+) (bool, error) {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		if isNotFoundReadError(err) {
+			return false, nil
+		}
+		return false, errors.Wrapf(
+			ctx, err, "read resolved file %s for %s", relPath, id,
+		)
+	}
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "extract frontmatter from resolved file %s for %s", relPath, id,
+		)
+	}
+	fm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "parse frontmatter of resolved file %s for %s", relPath, id,
+		)
+	}
+	actual, _ := fm.String("task_identifier")
+	return actual == string(id), nil
+}
+
 // fileCarriesIdentifier reports whether the task file at relPath still declares
-// id in its frontmatter. Every read or parse failure answers false: a redirect
-// that cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
-// exists to close, so the caller must fall back to its own title.
+// id in its frontmatter. Every failure to answer answers false: a redirect that
+// cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
+// exists to close, so the caller must fall back to its own title. A caller that
+// must tell an unverifiable occupant from an absent one uses identifierPresence
+// directly.
 func fileCarriesIdentifier(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
 	id lib.TaskIdentifier,
 ) bool {
-	content, err := gitClient.ReadFile(ctx, relPath)
+	carries, err := identifierPresence(ctx, gitClient, relPath, id)
 	if err != nil {
 		glog.Warningf(
-			"create-task: read resolved file %s for %s failed: %v", relPath, id, err,
+			"create-task: cannot verify identifier %s in resolved file %s: %v",
+			id, relPath, err,
 		)
 		return false
 	}
-	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
-	if err != nil {
-		glog.Warningf(
-			"create-task: extract frontmatter from resolved file %s for %s failed: %v",
-			relPath, id, err,
-		)
-		return false
-	}
-	fm, err := parseTaskFrontmatter(frontmatterStr)
-	if err != nil {
-		glog.Warningf(
-			"create-task: parse frontmatter of resolved file %s for %s failed: %v",
-			relPath, id, err,
-		)
-		return false
-	}
-	actual, _ := fm.String("task_identifier")
-	return actual == string(id)
+	return carries
 }
 
 // createThroughAPI materialises the task and settles the three answers the old
@@ -370,11 +397,22 @@ func shortIdentifier(id lib.TaskIdentifier) string {
 // instead of a full-vault walk. A trigger-only controller builds its index once at
 // pod start, so without this every task created afterwards missed for the pod's
 // whole life (2026-10-25: 155 of 159 walked identifiers, consumer 60 min behind,
-// commands dropped as expired). It records only when the resolver reports a clean
-// miss: a hit means the index already knows a file for this identifier, and a
-// resolver error means a known duplicate — neither may be overwritten.
+// commands dropped as expired).
+//
+// A resolver error means a known duplicate, which stays as it is; a miss records
+// relPath; a hit at relPath itself needs nothing. A hit at a DIFFERENT path means
+// this create wrote a second file for an identifier the index already maps
+// elsewhere. Skipping the record there hid the new file: a trigger-only controller
+// never rebuilds its index, so every later write resolved to the old file
+// (2026-10-27, identifier 9371a3d2: the executor's spawn write landed on an aborted
+// file while the live one stayed unrecorded). When the known file still carries the
+// identifier both paths are recorded, so Resolve reports the duplicate and later
+// writes refuse loudly. When it no longer does, the entry is stale and relPath
+// replaces it — recording a stale entry beside it would be a false duplicate that
+// blocks every write for the pod's life.
 func recordCreatedTaskPath(
 	ctx context.Context,
+	gitClient gitclient.GitClient,
 	resolver result.TaskPathResolver,
 	id lib.TaskIdentifier,
 	relPath string,
@@ -382,9 +420,45 @@ func recordCreatedTaskPath(
 	if resolver == nil {
 		return
 	}
-	if _, found, err := resolver.Resolve(ctx, id); err != nil || found {
+	knownPath, found, err := resolver.Resolve(ctx, id)
+	if err != nil {
 		return
 	}
+	if !found {
+		resolver.Record(ctx, id, relPath)
+		return
+	}
+	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
+		return
+	}
+	carries, presenceErr := identifierPresence(ctx, gitClient, knownPath, id)
+	if presenceErr != nil {
+		glog.Warningf(
+			"create-task: cannot tell whether index entry %s still carries %s (%v); keeping it rather than replacing it with %s",
+			knownPath,
+			id,
+			presenceErr,
+			relPath,
+		)
+		return
+	}
+	if carries {
+		glog.Warningf(
+			"create-task: task_identifier %s is now carried by both %s and %s; recording both so later writes refuse instead of landing on %s",
+			id,
+			knownPath,
+			relPath,
+			knownPath,
+		)
+		resolver.RecordDuplicate(ctx, id, relPath)
+		return
+	}
+	glog.V(2).Infof(
+		"create-task: index entry %s no longer carries %s; replacing it with %s",
+		knownPath,
+		id,
+		relPath,
+	)
 	resolver.Record(ctx, id, relPath)
 }
 

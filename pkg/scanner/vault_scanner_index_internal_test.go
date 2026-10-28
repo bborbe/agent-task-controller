@@ -217,6 +217,87 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(path).To(Equal("renamed.md"))
 	})
 
+	Context("RecordDuplicate", func() {
+		It("reports a second path beside a known one as a duplicate naming both", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(path).To(Equal(""))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+			Expect(err.Error()).To(ContainSubstring("first.md"))
+			Expect(err.Error()).To(ContainSubstring("second.md"))
+		})
+
+		It("keeps the duplicate when a later Record would replace it", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+			s.Record(ctx, lib.TaskIdentifier(dupID), "first.md")
+
+			_, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("is a no-op for a path already known for the identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "alpha.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("records the path alone for an unknown identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+		})
+
+		It("ignores an empty identifier or path", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, "", "x.md")
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "")
+
+			Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("never mutates the slice a reader already holds", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+			held := s.index[lib.TaskIdentifier(dupID)]
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			recorded := s.index[lib.TaskIdentifier(dupID)]
+			Expect(held).To(Equal([]string{"first.md"}))
+			Expect(recorded).To(Equal([]string{"first.md", "second.md"}))
+			// A new backing array, not an append into the held one.
+			Expect(&recorded[0]).NotTo(BeIdenticalTo(&held[0]))
+		})
+	})
+
 	It("rebuilds the index per cycle instead of accumulating stale entries", func() {
 		write("mover.md", taskFile(alphaID))
 		cycle()

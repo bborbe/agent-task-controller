@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -52,6 +53,11 @@ type VaultScanner interface {
 	// relPath is ignored. A resolver that already knows of two or more paths for id
 	// keeps them, so a known duplicate is never hidden.
 	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
+	// RecordDuplicate adds relPath alongside the path(s) already known for id, where
+	// Record would replace them, so a second file carrying id makes Resolve report
+	// the duplicate as an error. See result.TaskPathResolver.RecordDuplicate for the
+	// contract.
+	RecordDuplicate(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }
 
 type fileEntry struct {
@@ -89,8 +95,9 @@ type vaultScanner struct {
 	// slice is a multimap entry on purpose: collapsing a duplicate to one path is
 	// the 2026-08-31 incident (a result landing on the wrong task file). Rebuilt
 	// wholesale once per completed scan cycle (or once by buildIndex in trigger-only
-	// mode); between rebuilds a single entry is replaced by Record — always with a
-	// new slice, never mutated in place, because Resolve uses the slice it read after
+	// mode); between rebuilds a single entry is replaced by Record, or extended by
+	// RecordDuplicate when a create proves a second file carries the identifier —
+	// always with a new slice, never mutated in place, because Resolve uses the slice it read after
 	// releasing the read lock. A Record that lands just before a publishIndex or
 	// buildIndex swap is lost with the old map, which costs at most one later walk.
 	index map[lib.TaskIdentifier][]string
@@ -440,6 +447,36 @@ func (v *vaultScanner) Record(ctx context.Context, id lib.TaskIdentifier, relPat
 	// read lock, so an existing slice must never be modified in place.
 	v.index[id] = []string{relPath}
 	glog.V(2).Infof("index: recorded %s for task %s", relPath, id)
+}
+
+// RecordDuplicate adds relPath beside the path(s) the index already holds for id.
+// Record replaces a single entry, which is right after a walk proves a file unique
+// but hides a second file a create writes for an identifier already indexed
+// elsewhere: a trigger-only controller never rebuilds, so later writes for id would
+// keep landing on the old file (2026-10-27, identifier 9371a3d2: the spawn write hit
+// an aborted file while the live one stayed invisible). See
+// result.TaskPathResolver.RecordDuplicate for the contract.
+func (v *vaultScanner) RecordDuplicate(
+	ctx context.Context,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if id == "" || relPath == "" {
+		return
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	known := v.index[id]
+	if slices.Contains(known, relPath) {
+		return
+	}
+	// Store a NEW slice, as Record does: Resolve uses the slice it read after
+	// releasing the read lock, so an existing slice must never be modified in place.
+	paths := make([]string, 0, len(known)+1)
+	paths = append(paths, known...)
+	paths = append(paths, relPath)
+	v.index[id] = paths
+	glog.V(2).Infof("index: recorded %s beside %v for task %s", relPath, known, id)
 }
 
 // processFile handles a single .md file during a scan cycle.
