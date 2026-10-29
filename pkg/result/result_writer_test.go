@@ -584,7 +584,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(
 					s,
 				).To(ContainSubstring("retry_count: 1"))
-				// unchanged — executor owns the counter
+				// on-disk value survives — the incoming snapshot does not carry retry_count
 				Expect(s).To(ContainSubstring("phase: ai_review"))
 				Expect(s).NotTo(ContainSubstring("human_review"))
 			})
@@ -610,7 +610,8 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					Expect(writer.WriteResult(ctx, taskFile)).To(Succeed())
 					written, _ := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
 					s := string(written)
-					Expect(s).To(ContainSubstring("retry_count: 3")) // unchanged — executor set it
+					// on-disk value survives — the incoming snapshot omits the key
+					Expect(s).To(ContainSubstring("retry_count: 3"))
 					// phase preserved at lifecycle stage where cap fired (not overwritten to human_review)
 					Expect(s).To(ContainSubstring("phase: ai_review"))
 					Expect(s).NotTo(ContainSubstring("phase: human_review"))
@@ -872,7 +873,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(
 					s,
 				).To(ContainSubstring("retry_count: 0"))
-				// unchanged — executor owns the counter
+				// on-disk value survives — the incoming snapshot does not carry retry_count
 			})
 		})
 
