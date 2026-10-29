@@ -111,6 +111,7 @@ var _ = Describe("ResultWriter", func() {
 			libtime.NewWaiterDuration(),
 			nil,
 			nil,
+			nil,
 		)
 	})
 

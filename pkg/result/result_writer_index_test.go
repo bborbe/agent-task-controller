@@ -105,6 +105,7 @@ var _ = Describe("ResultWriter identifier index", func() {
 			libtime.NewWaiterDuration(),
 			nil,
 			r,
+			nil,
 		)
 	}
 

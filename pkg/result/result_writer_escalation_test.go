@@ -121,6 +121,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 				},
 			),
 			nil,
+			nil,
 		)
 	})
 
@@ -482,6 +483,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 						return nil
 					},
 				),
+				nil,
 				nil,
 			)
 

@@ -57,6 +57,7 @@ func NewPlanningRetryGate(
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
 	resolver result.TaskPathResolver,
+	humans result.HumanAssignees,
 ) PlanningRetryGate {
 	return &planningRetryGate{
 		gitClient:       gitClient,
@@ -66,6 +67,7 @@ func NewPlanningRetryGate(
 		prCommenter:     prCommenter,
 		metrics:         m,
 		resolver:        resolver,
+		humanAssignees:  humans,
 	}
 }
 
@@ -77,6 +79,9 @@ type planningRetryGate struct {
 	prCommenter     prcomment.PRCommenter
 	metrics         metrics.Metrics
 	resolver        result.TaskPathResolver
+	// humanAssignees names the assignee values that are human owners, so the
+	// human_review chokepoint retains them instead of clearing them.
+	humanAssignees result.HumanAssignees
 }
 
 func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled bool, err error) {
@@ -339,7 +344,7 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 		}
 
 		fm["phase"] = "human_review"
-		result.ClearAssigneeIfHumanReview(fm)
+		result.ClearAssigneeIfHumanReview(fm, g.humanAssignees)
 
 		// Heal-on-write: stamp target_vault on legacy files lacking it (same
 		// rationale as buildRetryModifyFn — the gate's handled=true return

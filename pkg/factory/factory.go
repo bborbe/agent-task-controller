@@ -56,6 +56,7 @@ func CreateCommandConsumer(
 	k int,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
+	humans result.HumanAssignees,
 ) run.Func {
 	retryGate := command.NewPlanningRetryGate(
 		gitClient,
@@ -65,6 +66,7 @@ func CreateCommandConsumer(
 		prCommenter,
 		m,
 		resolver,
+		humans,
 	)
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
@@ -72,7 +74,7 @@ func CreateCommandConsumer(
 		// identifier and PATCHes the fields it changes, instead of reading a
 		// vault-relative path, mutating the YAML and re-serialising the file.
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
-		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
+		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m, humans),
 		command.NewCreateTaskExecutor(
 			gitClient,
 			vaultClient,

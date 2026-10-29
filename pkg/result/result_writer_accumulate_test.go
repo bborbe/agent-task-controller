@@ -96,6 +96,7 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 			libtime.NewWaiterDuration(),
 			nil,
 			nil,
+			nil,
 		)
 	})
 

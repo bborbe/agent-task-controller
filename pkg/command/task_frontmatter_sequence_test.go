@@ -90,6 +90,7 @@ var _ = Describe("Frontmatter sequence integration", func() {
 			"openclaw",
 			libtime.NewCurrentDateTime(),
 			metrics.New(),
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
