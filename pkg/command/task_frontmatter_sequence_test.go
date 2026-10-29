@@ -88,6 +88,7 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		updateExec = command.NewUpdateFrontmatterExecutor(
 			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",
+			libtime.NewCurrentDateTime(),
 			metrics.New(),
 			nil,
 		)

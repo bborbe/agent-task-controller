@@ -66,6 +66,30 @@ func (c *indexGitClient) WriteFile(_ context.Context, relPath string, content []
 	) // #nosec G306 -- test-only file
 }
 
+// AtomicReadModifyWriteAndCommitPush performs the real read-modify-write against
+// the temp dir. The embedded convergenceGitClient's version is a no-op stub, which
+// is fine for specs that only build the index but would make the boot-sweep spec
+// pass against a write that never happened.
+func (c *indexGitClient) AtomicReadModifyWriteAndCommitPush(
+	_ context.Context,
+	absPath string,
+	modify func([]byte) ([]byte, error),
+	_ string,
+) error {
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	next, err := modify(current)
+	if err != nil {
+		return err
+	}
+	if string(next) == string(current) {
+		return nil
+	}
+	return os.WriteFile(absPath, next, 0600) // #nosec G306 -- test-only file
+}
+
 const (
 	alphaID = "11111111-1111-4111-8111-111111111111"
 	betaID  = "22222222-2222-4222-8222-222222222222"
@@ -217,6 +241,87 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(path).To(Equal("renamed.md"))
 	})
 
+	Context("RecordDuplicate", func() {
+		It("reports a second path beside a known one as a duplicate naming both", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(path).To(Equal(""))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+			Expect(err.Error()).To(ContainSubstring("first.md"))
+			Expect(err.Error()).To(ContainSubstring("second.md"))
+		})
+
+		It("keeps the duplicate when a later Record would replace it", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+			s.Record(ctx, lib.TaskIdentifier(dupID), "first.md")
+
+			_, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("is a no-op for a path already known for the identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "alpha.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("records the path alone for an unknown identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+		})
+
+		It("ignores an empty identifier or path", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, "", "x.md")
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "")
+
+			Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("never mutates the slice a reader already holds", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+			held := s.index[lib.TaskIdentifier(dupID)]
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			recorded := s.index[lib.TaskIdentifier(dupID)]
+			Expect(held).To(Equal([]string{"first.md"}))
+			Expect(recorded).To(Equal([]string{"first.md", "second.md"}))
+			// A new backing array, not an append into the held one.
+			Expect(&recorded[0]).NotTo(BeIdenticalTo(&held[0]))
+		})
+	})
+
 	It("rebuilds the index per cycle instead of accumulating stale entries", func() {
 		write("mover.md", taskFile(alphaID))
 		cycle()
@@ -305,6 +410,27 @@ var _ = Describe("vaultScanner identifier index", func() {
 			Expect(ok).To(BeTrue())
 			return built
 		}
+
+		// The sweep has to run here because a trigger-only controller never scans:
+		// hanging it off the scan cycle alone made it dead code in exactly the
+		// deployment that needed it (measured on prod 2026-10-28, POLL_INTERVAL=0s,
+		// 15 capped records and no escalation).
+		It("escalates a capped record during the boot index build", func() {
+			const cappedID = "44444444-4444-4444-8444-444444444444"
+			write("capped.md", "---\ntask_identifier: "+cappedID+
+				"\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent"+
+				"\nref: \"0000000000000000000000000000000000000000\"\ntrigger_count: 3"+
+				"\n---\n\nBody prose.\n")
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			content, readErr := os.ReadFile(filepath.Join(dir, "capped.md"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			Expect(string(content)).To(ContainSubstring("status: hold"))
+			Expect(string(content)).To(ContainSubstring("previous_assignee: pr-reviewer-agent"))
+		})
 
 		It("builds the index at start without running a scan cycle", func() {
 			write("alpha.md", taskFile(alphaID))

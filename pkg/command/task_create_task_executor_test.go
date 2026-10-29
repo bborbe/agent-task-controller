@@ -749,7 +749,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
 			})
 
-			It("does not record when the index already holds the identifier", func() {
+			It("replaces an index entry whose file no longer carries the identifier", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
@@ -759,12 +759,66 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 				// The index hit points at a file that does not carry this
 				// identifier, so the redirect must not fire: the create posts under
 				// the command's own title, not "other".
 				_, posted, _ := fakeVault.CreateTaskArgsForCall(0)
 				Expect(posted.Title).To(Equal("Recorded Task"))
+				// The stale entry is replaced, never kept beside the new path: a
+				// trigger-only index is never rebuilt, so a false duplicate would
+				// block every later write for this identifier.
+				Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(0))
+				Expect(fakeResolver.RecordCallCount()).To(Equal(1))
+				_, id, relPath := fakeResolver.RecordArgsForCall(0)
+				Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
+				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
+			})
+
+			It(
+				"records both paths when the indexed file still carries the identifier",
+				func() {
+					// The redirect's read of the indexed file fails once, so the create
+					// lands on a second file; the bookkeeping read then sees the old
+					// file still carrying the identifier (2026-10-27, id 9371a3d2).
+					fakeGit.ReadFileReturnsOnCall(
+						0,
+						nil,
+						errors.New("GET returned 503: unavailable"),
+					)
+					fakeGit.ReadFileReturnsOnCall(
+						1,
+						[]byte("---\ntask_identifier: "+createdID+"\nstatus: aborted\n---\nbody\n"),
+						nil,
+					)
+					fakeResolver := &mocks.TaskPathResolver{}
+					fakeResolver.ResolveReturns("tasks/other.md", true, nil)
+					recordingExecutor := command.NewCreateTaskExecutor(
+						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					)
+
+					_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+					Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(1))
+					_, id, relPath := fakeResolver.RecordDuplicateArgsForCall(0)
+					Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
+					Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
+				},
+			)
+
+			It("records nothing when the index already holds the written path", func() {
+				fakeResolver := &mocks.TaskPathResolver{}
+				fakeResolver.ResolveReturns(filepath.Join(taskDir, "Recorded Task.md"), true, nil)
+				recordingExecutor := command.NewCreateTaskExecutor(
+					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				)
+
+				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+				Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(0))
 			})
 
 			It("does not record when the resolver reports a duplicate", func() {
@@ -778,6 +832,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
+				Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(0))
 			})
 
 			It("does not resolve or record when the create fails as already existing", func() {

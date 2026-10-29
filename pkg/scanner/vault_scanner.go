@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -52,12 +53,23 @@ type VaultScanner interface {
 	// relPath is ignored. A resolver that already knows of two or more paths for id
 	// keeps them, so a known duplicate is never hidden.
 	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
+	// RecordDuplicate adds relPath alongside the path(s) already known for id, where
+	// Record would replace them, so a second file carrying id makes Resolve report
+	// the duplicate as an error. See result.TaskPathResolver.RecordDuplicate for the
+	// contract.
+	RecordDuplicate(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }
 
 type fileEntry struct {
 	hash           [32]byte
 	taskIdentifier lib.TaskIdentifier
 	assignee       lib.TaskAssignee
+	// capped records that the file's frontmatter is at or past its trigger cap
+	// (see isCappedIdle). It is populated whenever the file is parsed, which for a
+	// stable capped record is the last time it changed — exactly what the sweep
+	// needs, because a capped record stops changing precisely when the executor
+	// stops writing to it.
+	capped bool
 }
 
 // fileOps holds pluggable file I/O functions so the scanner can operate over
@@ -89,8 +101,9 @@ type vaultScanner struct {
 	// slice is a multimap entry on purpose: collapsing a duplicate to one path is
 	// the 2026-08-31 incident (a result landing on the wrong task file). Rebuilt
 	// wholesale once per completed scan cycle (or once by buildIndex in trigger-only
-	// mode); between rebuilds a single entry is replaced by Record — always with a
-	// new slice, never mutated in place, because Resolve uses the slice it read after
+	// mode); between rebuilds a single entry is replaced by Record, or extended by
+	// RecordDuplicate when a create proves a second file carries the identifier —
+	// always with a new slice, never mutated in place, because Resolve uses the slice it read after
 	// releasing the read lock. A Record that lands just before a publishIndex or
 	// buildIndex swap is lost with the old map, which costs at most one later walk.
 	index map[lib.TaskIdentifier][]string
@@ -276,6 +289,17 @@ func (v *vaultScanner) scanFiles(
 			changed = append(changed, *task)
 		}
 	}
+	// Runs after the per-file loop so the index it walks is this cycle's. Escalating
+	// here, rather than inside processFile, is what reaches a record the executor has
+	// stopped touching: processFile returns early on an unchanged hash, so a stable
+	// capped record would otherwise never be looked at again.
+	escalated, escalateError := v.escalateCappedIdleTasks(ctx)
+	if escalateError {
+		writeError = true
+	}
+	if escalated > 0 {
+		glog.Infof("escalateCappedIdle: escalated %d capped task(s)", escalated)
+	}
 	v.metrics.UpdateGoStuckPlanningTasks().
 		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
 	v.publishIndex()
@@ -346,6 +370,10 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 		return
 	}
 	index := make(map[lib.TaskIdentifier][]string, len(paths))
+	// Records already at their trigger cap with a live assignee, collected during
+	// the same parse this pass already does for task_identifier. This is the ONLY
+	// place the sweep can see them on a trigger-only controller.
+	var cappedAssigned []string
 	skipped := 0
 	for _, relPath := range paths {
 		select {
@@ -363,19 +391,21 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 			skipped++
 			continue
 		}
-		var fm struct {
-			TaskIdentifier string `yaml:"task_identifier"`
-		}
-		if umErr := yaml.Unmarshal([]byte(fmYAML), &fm); umErr != nil {
+		var fmMap map[string]interface{}
+		if umErr := yaml.Unmarshal([]byte(fmYAML), &fmMap); umErr != nil {
 			skipped++
 			continue
 		}
-		if fm.TaskIdentifier == "" || !isValidUUID(fm.TaskIdentifier) {
+		taskID, _ := fmMap["task_identifier"].(string)
+		if taskID == "" || !isValidUUID(taskID) {
 			skipped++
 			continue
 		}
-		id := lib.TaskIdentifier(fm.TaskIdentifier)
+		id := lib.TaskIdentifier(taskID)
 		index[id] = append(index[id], relPath)
+		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) && fm.Assignee() != "" {
+			cappedAssigned = append(cappedAssigned, relPath)
+		}
 	}
 	v.indexMutex.Lock()
 	v.index = index
@@ -387,6 +417,16 @@ func (v *vaultScanner) buildIndex(ctx context.Context) {
 		time.Since(start),
 		skipped,
 	)
+	// A trigger-only controller never scans, so without this the sweep would never
+	// run where it is needed most. This pass has already read and parsed every file,
+	// so the candidate list costs nothing extra.
+	if escalated, werr := v.escalateCappedPaths(ctx, cappedAssigned); escalated > 0 || werr {
+		glog.Infof(
+			"escalateCappedIdle: escalated %d capped task(s) during index build (%d candidate(s))",
+			escalated,
+			len(cappedAssigned),
+		)
+	}
 }
 
 // Resolve returns the vault-relative path of the task file carrying id, from the
@@ -440,6 +480,36 @@ func (v *vaultScanner) Record(ctx context.Context, id lib.TaskIdentifier, relPat
 	// read lock, so an existing slice must never be modified in place.
 	v.index[id] = []string{relPath}
 	glog.V(2).Infof("index: recorded %s for task %s", relPath, id)
+}
+
+// RecordDuplicate adds relPath beside the path(s) the index already holds for id.
+// Record replaces a single entry, which is right after a walk proves a file unique
+// but hides a second file a create writes for an identifier already indexed
+// elsewhere: a trigger-only controller never rebuilds, so later writes for id would
+// keep landing on the old file (2026-10-27, identifier 9371a3d2: the spawn write hit
+// an aborted file while the live one stayed invisible). See
+// result.TaskPathResolver.RecordDuplicate for the contract.
+func (v *vaultScanner) RecordDuplicate(
+	ctx context.Context,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if id == "" || relPath == "" {
+		return
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	known := v.index[id]
+	if slices.Contains(known, relPath) {
+		return
+	}
+	// Store a NEW slice, as Record does: Resolve uses the slice it read after
+	// releasing the read lock, so an existing slice must never be modified in place.
+	paths := make([]string, 0, len(known)+1)
+	paths = append(paths, known...)
+	paths = append(paths, relPath)
+	v.index[id] = paths
+	glog.V(2).Infof("index: recorded %s beside %v for task %s", relPath, known, id)
 }
 
 // processFile handles a single .md file during a scan cycle.
@@ -566,6 +636,7 @@ func (v *vaultScanner) processFile(
 		hash:           hash,
 		taskIdentifier: lib.TaskIdentifier(taskID),
 		assignee:       currentFMAssignee,
+		capped:         isCappedIdle(frontmatter),
 	}
 	if frontmatter.Status() == "" {
 		glog.Errorf("skipping %s: invalid frontmatter: status is empty", relPath)
