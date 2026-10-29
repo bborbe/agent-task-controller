@@ -50,6 +50,7 @@ func NewResultWriter(
 	waiter libtime.WaiterDuration,
 	notificationSender notifcmd.NotificationPublishCommandSender,
 	resolver TaskPathResolver,
+	humans HumanAssignees,
 ) ResultWriter {
 	return &resultWriter{
 		gitClient:          gitClient,
@@ -60,6 +61,7 @@ func NewResultWriter(
 		waiter:             waiter,
 		notificationSender: notificationSender,
 		resolver:           resolver,
+		humanAssignees:     humans,
 
 		escalationPublishedAt: make(map[string]libtime.DateTime),
 	}
@@ -74,6 +76,10 @@ type resultWriter struct {
 	waiter             libtime.WaiterDuration
 	notificationSender notifcmd.NotificationPublishCommandSender
 	resolver           TaskPathResolver
+	// humanAssignees names the assignee values that are human owners, so the
+	// human_review chokepoint retains them instead of clearing them. Empty (the
+	// unconfigured default) clears every assignee, as before.
+	humanAssignees HumanAssignees
 
 	// escalationCoalescingMutex guards escalationPublishedAt. The check and the record in
 	// claimEscalationCoalescingSlot are one atomic step under it, so two concurrent
@@ -694,7 +700,7 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 	// fixes the 2026-05-25 prod incident (task bborbe-agent #3).
 	// needs_input: agent explicitly requested human review — clear assignee so task surfaces in operator inbox.
 	// Routes through ClearAssigneeIfHumanReview (spec 042) so the partial-update executor shares the same chokepoint.
-	ClearAssigneeIfHumanReview(merged)
+	ClearAssigneeIfHumanReview(merged, r.humanAssignees)
 
 	if merged.SpawnNotification() {
 		delete(merged, "spawn_notification")
@@ -750,7 +756,7 @@ func (r *resultWriter) applyTriggerCap(
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return body
 	}
-	agentName := clearAssignee(merged)
+	agentName := r.clearAssigneeUnlessHuman(merged)
 	if ContainsTriggerCapEscalation(body) {
 		restoreExistingPhase(existing, merged)
 		return body
@@ -777,12 +783,45 @@ func (r *resultWriter) applyRetryCap(
 	if retryCount < merged.MaxRetries() {
 		return body
 	}
-	agentName := clearAssignee(merged)
+	agentName := r.clearAssigneeUnlessHuman(merged)
 	if containsEscalationSection(body, "## Retry Escalation") {
 		restoreExistingPhase(existing, merged)
 		return body
 	}
 	return body + r.escalationSection(retryCount, agentName)
+}
+
+// clearAssigneeUnlessHuman is the cap-path counterpart of ClearAssigneeIfHumanReview:
+// it captures the current assignee for the escalation body, but leaves a configured
+// human owner in place.
+//
+// The cap paths need the same exception for the same reason. They run inside the same
+// result write as the human_review chokepoint — applyTriggerCap before it and
+// applyRetryCap after it — so without this a human-owned record whose trigger or retry
+// cap is engaged loses its owner on that write, silently undoing the chokepoint's
+// retention. A cap escalation exists to park a runaway *agent* task in the operator
+// inbox; a record a human already owns is already in a queue, so clearing the owner
+// removes it from that queue without putting it anywhere else.
+//
+// Returns the name the escalation body should report: the human's own, unchanged.
+func (r *resultWriter) clearAssigneeUnlessHuman(merged lib.TaskFrontmatter) string {
+	return ClearAssigneeUnlessHuman(merged, r.humanAssignees)
+}
+
+// ClearAssigneeUnlessHuman is the exported form of clearAssigneeUnlessHuman for
+// callers outside this package — today the update-frontmatter executor's own
+// trigger-cap branch, which clears before its human-aware chokepoint runs and so
+// cannot rely on that chokepoint to protect the owner.
+//
+// Same contract as the method: capture the current assignee for the escalation
+// body, clear it unless it names a configured human owner, and return the name
+// the body should report.
+func ClearAssigneeUnlessHuman(merged lib.TaskFrontmatter, humans HumanAssignees) string {
+	assignee := string(merged.Assignee())
+	if humans.Contains(assignee) {
+		return assignee
+	}
+	return clearAssignee(merged)
 }
 
 // clearAssignee sets previous_assignee to the current assignee value (if non-empty),
@@ -813,11 +852,24 @@ func ClearAssignee(merged lib.TaskFrontmatter) string {
 // was already empty). This is the single chokepoint for the human_review
 // assignee-clear invariant; both the result writer and the partial-update
 // executor (spec 042) route through here.
-func ClearAssigneeIfHumanReview(merged lib.TaskFrontmatter) string {
-	if phase, ok := merged["phase"].(string); ok && phase == "human_review" {
-		return clearAssignee(merged)
+//
+// humans is the configured set of assignee values that name a human owner (see
+// HumanAssignees). A record already carrying one of them is left untouched: the
+// doctrine's purpose is that an *agent* must not keep a record it parked, and
+// clearing a human's owner instead removes the record from that human's queue —
+// the exact failure the routing stamp writes the owner to prevent. Everything not
+// in the set is treated as an agent and cleared, so an empty set reproduces the
+// pre-existing behaviour exactly. The set is supplied by configuration because this
+// package cannot distinguish a human name from an agent name on its own.
+func ClearAssigneeIfHumanReview(merged lib.TaskFrontmatter, humans HumanAssignees) string {
+	phase, ok := merged["phase"].(string)
+	if !ok || phase != "human_review" {
+		return ""
 	}
-	return ""
+	if assignee, isString := merged["assignee"].(string); isString && humans.Contains(assignee) {
+		return ""
+	}
+	return clearAssignee(merged)
 }
 
 // restoreExistingPhase writes the on-disk phase back into merged when the existing

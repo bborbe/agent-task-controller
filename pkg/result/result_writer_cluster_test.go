@@ -90,6 +90,7 @@ var _ = Describe("ResultWriter cluster pin", func() {
 			libtime.NewWaiterDuration(),
 			nil,
 			nil,
+			nil,
 		)
 	})
 

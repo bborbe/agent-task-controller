@@ -114,6 +114,7 @@ var _ = Describe("resultWriter retry_count retirement", func() {
 				},
 			),
 			nil,
+			nil,
 		)
 	})
 

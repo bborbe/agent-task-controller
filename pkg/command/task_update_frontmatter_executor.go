@@ -87,6 +87,7 @@ func NewUpdateFrontmatterExecutor(
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
+	humans result.HumanAssignees,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -128,7 +129,7 @@ func NewUpdateFrontmatterExecutor(
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "read task for update")
 			}
-			if err := applyUpdate(ctx, client, task, cmd, vaultName, currentDateTime); err != nil {
+			if err := applyUpdate(ctx, client, task, cmd, vaultName, currentDateTime, humans); err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
@@ -166,8 +167,9 @@ func applyUpdate(
 	cmd task.UpdateFrontmatterCommand,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	humans result.HumanAssignees,
 ) error {
-	fields, escalation := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName)
+	fields, escalation := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName, humans)
 	if cmd.Body == nil && escalation == nil {
 		if len(fields) > 0 {
 			if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
@@ -236,6 +238,7 @@ func buildUpdatePatch(
 	updates lib.TaskFrontmatter,
 	frontmatter map[string]any,
 	vaultName string,
+	humans result.HumanAssignees,
 ) (map[string]any, *triggerCapEscalation) {
 	// `before` is the task as it stands, snapshotted BEFORE the command's own
 	// updates are merged — otherwise the diff below would exclude them and the
@@ -253,9 +256,10 @@ func buildUpdatePatch(
 	// Evaluated BEFORE the human-review doctrine, and that order is load-bearing:
 	// the cap captures the current assignee into previous_assignee, so running it
 	// after ClearAssigneeIfHumanReview would capture "" and lose the name.
-	escalation := applyUpdateTriggerCap(merged)
-	// spec 042: phase: human_review ⇒ assignee: "". No-op otherwise.
-	result.ClearAssigneeIfHumanReview(merged)
+	escalation := applyUpdateTriggerCap(merged, humans)
+	// spec 042: phase: human_review ⇒ assignee: "", except a configured human
+	// owner, which is retained. No-op otherwise.
+	result.ClearAssigneeIfHumanReview(merged, humans)
 	// Heal-on-write: stamp target_vault on legacy tasks lacking it.
 	result.HealTargetVault(merged, vaultName)
 
@@ -340,7 +344,10 @@ func applyControllerOwnedGuard(
 // a brand-new task with no count must not be escalated degenerately.
 //
 // Returns nil when the cap does not engage, so the caller writes no body section.
-func applyUpdateTriggerCap(merged lib.TaskFrontmatter) *triggerCapEscalation {
+func applyUpdateTriggerCap(
+	merged lib.TaskFrontmatter,
+	humans result.HumanAssignees,
+) *triggerCapEscalation {
 	if !result.TriggerCapEngaged(merged) {
 		return nil
 	}
@@ -348,7 +355,12 @@ func applyUpdateTriggerCap(merged lib.TaskFrontmatter) *triggerCapEscalation {
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return nil
 	}
-	agentName := result.ClearAssignee(merged)
+	// Human-aware: this branch runs BEFORE ClearAssigneeIfHumanReview in
+	// buildUpdatePatch, so an unconditional clear here would move a human owner
+	// into previous_assignee and defeat the chokepoint on this write path — the
+	// same ordering hazard the result writer closes for applyTriggerCap and
+	// applyRetryCap.
+	agentName := result.ClearAssigneeUnlessHuman(merged, humans)
 	return &triggerCapEscalation{
 		triggerCount: triggerCount,
 		maxTriggers:  merged.MaxTriggers(),

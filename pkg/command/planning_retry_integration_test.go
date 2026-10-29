@@ -237,6 +237,7 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 			commenter,
 			metrics.New(),
 			nil,
+			nil,
 		)
 	})
 
