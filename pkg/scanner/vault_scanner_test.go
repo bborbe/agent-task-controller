@@ -246,7 +246,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("assignee transition → counter reset", func() {
 		It(
-			"resets trigger_count and retry_count when assignee transitions from empty to named",
+			"resets trigger_count and leaves the retired retry_count untouched when assignee transitions from empty to named",
 			func() {
 				taskID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 				absPath := filepath.Join(tmpDir, taskDir, "parked.md")
@@ -276,7 +276,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(written))), &fm),
 				).To(Succeed())
 				Expect(fm["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm["retry_count"]).To(BeNumerically("==", 2))
 				Expect(fm["assignee"]).To(Equal("claude"))
 
 				// Third scan: reads reset file, publishes task with fresh counters
@@ -286,7 +286,7 @@ var _ = Describe("VaultScanner", func() {
 				Expect(r3.Changed).To(HaveLen(1))
 				Expect(string(r3.Changed[0].Frontmatter.Assignee())).To(Equal("claude"))
 				Expect(r3.Changed[0].Frontmatter.TriggerCount()).To(Equal(0))
-				Expect(r3.Changed[0].Frontmatter.RetryCount()).To(Equal(0))
+				Expect(r3.Changed[0].Frontmatter.RetryCount()).To(Equal(2))
 			},
 		)
 
@@ -329,7 +329,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(written))), &fm),
 				).To(Succeed())
 				Expect(fm["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm["retry_count"]).To(BeNumerically("==", 2))
 				Expect(fm["phase"]).To(Equal("execution"))
 			},
 		)
@@ -427,7 +427,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(afterFirstReset))), &fm1),
 				).To(Succeed())
 				Expect(fm1["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm1["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm1["retry_count"]).To(BeNumerically("==", 2))
 
 				// Third scan: zero-hash sentinel forces re-process, but prevEntry.assignee = "claude"
 				// → no second transition detected → no second reset
@@ -443,7 +443,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(afterSecondScan))), &fm2),
 				).To(Succeed())
 				Expect(fm2["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm2["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm2["retry_count"]).To(BeNumerically("==", 2))
 			},
 		)
 

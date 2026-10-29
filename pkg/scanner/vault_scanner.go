@@ -751,7 +751,7 @@ func repairConverges(ctx context.Context, candidate []byte, id string) bool {
 	return resolved == id
 }
 
-// writeCounterReset resets trigger_count and retry_count to 0 through the
+// writeCounterReset resets trigger_count to 0 through the
 // controller's atomic read-modify-write path, so the reset is applied to the
 // file as it is on disk at write time rather than to the scan-time snapshot.
 // The previous whole-file write from that snapshot raced the executor's
@@ -775,12 +775,12 @@ func (v *vaultScanner) writeCounterReset(
 		glog.Warningf("writeCounterReset: atomic reset failed for %s: %v", relPath, err)
 		return "", true
 	}
-	glog.V(2).Infof("writeCounterReset: reset trigger_count/retry_count for %s", relPath)
+	glog.V(2).Infof("writeCounterReset: reset trigger_count for %s", relPath)
 	return relPath, false
 }
 
-// resetCounters applies trigger_count: 0 and retry_count: 0 to the frontmatter
-// it is given, preserving every other field and the body verbatim. It runs
+// resetCounters applies trigger_count: 0 to the frontmatter it is given,
+// preserving every other field and the body verbatim. It runs
 // inside AtomicReadModifyWriteAndCommitPush, so its input is the file as it is
 // on disk at write time, not the scanner's earlier read.
 func resetCounters(ctx context.Context, current []byte) ([]byte, error) {
@@ -796,7 +796,6 @@ func resetCounters(ctx context.Context, current []byte) ([]byte, error) {
 		fm = make(map[string]interface{})
 	}
 	fm["trigger_count"] = 0
-	fm["retry_count"] = 0
 
 	newFmYAML, err := yaml.Marshal(fm)
 	if err != nil {
