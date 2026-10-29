@@ -194,4 +194,44 @@ var _ = Describe("ResultWriter human-owner retention", func() {
 		Expect(written).To(ContainSubstring(`assignee: ""`))
 		Expect(written).To(ContainSubstring("## Retry Escalation"))
 	})
+
+	// The trigger cap is the sibling path: applyTriggerCap runs BEFORE the
+	// human_review chokepoint inside one write, so it needs its own retention case.
+	// Without one, routing it through clearAssigneeUnlessHuman is unproven and a
+	// regression there would silently strip the owner on every capped record.
+	It("retains a human owner when the trigger cap fires in the same write", func() {
+		writeTaskFile("task_identifier: " + string(identifier) +
+			"\nstatus: in_progress\nphase: human_review\nassignee: bborbe" +
+			"\nmax_triggers: 1\ntrigger_count: 1")
+
+		triggerCapped := humanReviewResult()
+		triggerCapped.Frontmatter["max_triggers"] = 1
+		triggerCapped.Frontmatter["trigger_count"] = 1
+
+		Expect(newWriter(result.ParseHumanAssignees("bborbe")).WriteResult(ctx, triggerCapped)).
+			To(Succeed())
+
+		written := readTaskFile()
+		Expect(written).To(ContainSubstring("assignee: bborbe"))
+		Expect(strings.Count(written, "## Trigger Cap Escalation")).To(Equal(1))
+	})
+
+	It("clears an agent assignee when the trigger cap fires", func() {
+		writeTaskFile("task_identifier: " + string(identifier) +
+			"\nstatus: in_progress\nphase: human_review\nassignee: pr-reviewer-agent" +
+			"\nmax_triggers: 1\ntrigger_count: 1")
+
+		triggerCapped := humanReviewResult()
+		triggerCapped.Frontmatter["assignee"] = "pr-reviewer-agent"
+		triggerCapped.Frontmatter["max_triggers"] = 1
+		triggerCapped.Frontmatter["trigger_count"] = 1
+
+		Expect(newWriter(result.ParseHumanAssignees("bborbe")).WriteResult(ctx, triggerCapped)).
+			To(Succeed())
+
+		written := readTaskFile()
+		Expect(written).To(ContainSubstring("previous_assignee: pr-reviewer-agent"))
+		Expect(written).To(ContainSubstring(`assignee: ""`))
+		Expect(written).To(ContainSubstring("## Trigger Cap Escalation"))
+	})
 })

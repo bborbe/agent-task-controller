@@ -797,8 +797,20 @@ func (r *resultWriter) applyRetryCap(
 //
 // Returns the name the escalation body should report: the human's own, unchanged.
 func (r *resultWriter) clearAssigneeUnlessHuman(merged lib.TaskFrontmatter) string {
+	return ClearAssigneeUnlessHuman(merged, r.humanAssignees)
+}
+
+// ClearAssigneeUnlessHuman is the exported form of clearAssigneeUnlessHuman for
+// callers outside this package — today the update-frontmatter executor's own
+// trigger-cap branch, which clears before its human-aware chokepoint runs and so
+// cannot rely on that chokepoint to protect the owner.
+//
+// Same contract as the method: capture the current assignee for the escalation
+// body, clear it unless it names a configured human owner, and return the name
+// the body should report.
+func ClearAssigneeUnlessHuman(merged lib.TaskFrontmatter, humans HumanAssignees) string {
 	assignee := string(merged.Assignee())
-	if r.humanAssignees.Contains(assignee) {
+	if humans.Contains(assignee) {
 		return assignee
 	}
 	return clearAssignee(merged)

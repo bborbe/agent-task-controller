@@ -256,7 +256,7 @@ func buildUpdatePatch(
 	// Evaluated BEFORE the human-review doctrine, and that order is load-bearing:
 	// the cap captures the current assignee into previous_assignee, so running it
 	// after ClearAssigneeIfHumanReview would capture "" and lose the name.
-	escalation := applyUpdateTriggerCap(merged)
+	escalation := applyUpdateTriggerCap(merged, humans)
 	// spec 042: phase: human_review ⇒ assignee: "", except a configured human
 	// owner, which is retained. No-op otherwise.
 	result.ClearAssigneeIfHumanReview(merged, humans)
@@ -344,7 +344,10 @@ func applyControllerOwnedGuard(
 // a brand-new task with no count must not be escalated degenerately.
 //
 // Returns nil when the cap does not engage, so the caller writes no body section.
-func applyUpdateTriggerCap(merged lib.TaskFrontmatter) *triggerCapEscalation {
+func applyUpdateTriggerCap(
+	merged lib.TaskFrontmatter,
+	humans result.HumanAssignees,
+) *triggerCapEscalation {
 	if !result.TriggerCapEngaged(merged) {
 		return nil
 	}
@@ -352,7 +355,12 @@ func applyUpdateTriggerCap(merged lib.TaskFrontmatter) *triggerCapEscalation {
 	if triggerCount == 0 || triggerCount < merged.MaxTriggers() {
 		return nil
 	}
-	agentName := result.ClearAssignee(merged)
+	// Human-aware: this branch runs BEFORE ClearAssigneeIfHumanReview in
+	// buildUpdatePatch, so an unconditional clear here would move a human owner
+	// into previous_assignee and defeat the chokepoint on this write path — the
+	// same ordering hazard the result writer closes for applyTriggerCap and
+	// applyRetryCap.
+	agentName := result.ClearAssigneeUnlessHuman(merged, humans)
 	return &triggerCapEscalation{
 		triggerCount: triggerCount,
 		maxTriggers:  merged.MaxTriggers(),

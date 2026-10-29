@@ -43,8 +43,8 @@ On agent-task-v1-request (operation: "update"):
   ├── resolve task_identifier → task file path (index hit: one read, no listing; miss: full directory walk as before)
   ├── merge frontmatter + apply escalation check (counter set by executor, not incremented here)
   │     ├── read retry_count from merged frontmatter (set by executor at spawn time, spec 011)
-  │     ├── if trigger_count >= max_triggers → clear assignee: "", preserve lifecycle phase, append ## Trigger Cap Escalation (once)
-  │     ├── if retry_count >= max_retries   → clear assignee: "", preserve lifecycle phase, append ## Retry Escalation (once)
+  │     ├── if trigger_count >= max_triggers → clear assignee: "" unless it is a configured human owner, preserve lifecycle phase, append ## Trigger Cap Escalation (once)
+  │     ├── if retry_count >= max_retries   → clear assignee: "" unless it is a configured human owner, preserve lifecycle phase, append ## Retry Escalation (once)
   │     └── if agent emits needs_input → clear assignee: "" (phase unchanged; spec-039 supersedes spec-021 for this row)
   ├── sanitize content (escape bare --- lines to prevent YAML corruption)
   ├── write frontmatter + content to file
@@ -125,15 +125,17 @@ The vault has exactly two terminal task statuses: `completed` and `aborted`. A t
 
 ## Assignee-Clear on Escalation (spec 021, refined by spec 039, completed by spec 042)
 
-Every escalation path writes `assignee: ""` so the task surfaces in operator inbox.
-All four rows route through the single chokepoint `result.ClearAssigneeIfHumanReview`
-(for `human_review` paths) or `result.clearAssignee` (for cap paths) in
+Every escalation path writes `assignee: ""` so the task surfaces in operator inbox —
+**unless the assignee is a configured human owner**, which is retained (see the
+exception below). All four rows route through the single chokepoint
+`result.ClearAssigneeIfHumanReview` (for `human_review` paths) or
+`result.ClearAssigneeUnlessHuman` (for cap paths) in
 `task/controller/pkg/result/result_writer.go`:
 
 | Escalation trigger | `phase` written | `assignee` written | Enforcement point |
 |---|---|---|---|
-| `trigger_count >= max_triggers` | unchanged (lifecycle stage preserved) | `""` | `applyTriggerCap` → `clearAssignee` |
-| `retry_count >= max_retries` | unchanged (lifecycle stage preserved) | `""` | `applyRetryCap` → `clearAssignee` |
+| `trigger_count >= max_triggers` | unchanged (lifecycle stage preserved) | `""`, unless the assignee is a configured human owner | `applyTriggerCap` → `ClearAssigneeUnlessHuman` |
+| `retry_count >= max_retries` | unchanged (lifecycle stage preserved) | `""`, unless the assignee is a configured human owner | `applyRetryCap` → `ClearAssigneeUnlessHuman` |
 | Agent emits `Result.NextPhase: human_review` (legitimate handoff) | `human_review` (from `resolveNextPhase`) | `""`, unless the assignee is a configured human owner | `applyRetryCounter` → `ClearAssigneeIfHumanReview` |
 | Agent emits `UpdateFrontmatterCommand` with merged `phase: human_review` (spec 042) | `human_review` | `""`, unless the assignee is a configured human owner | `buildUpdatePatch` → `ClearAssigneeIfHumanReview` |
 
@@ -160,11 +162,15 @@ would lose its owner on that same write — the chokepoint's retention silently 
 Both now call `clearAssigneeUnlessHuman`, which captures the name for the escalation body
 and clears only a non-human assignee. The escalation section is still appended: a cap
 escalation parks a runaway *agent* task in the operator inbox, and a record a human
-already owns is already in a queue.
+already owns is already in a queue. **The escalation *notification* is not published in
+that case** — its trigger is "prior assignee non-empty AND merged assignee empty", so a
+retained human owner suppresses it. That is intended, for the same reason the section is
+harmless: the record is already in the human's queue, so there is nothing new to surface.
 
-Once a task is parked (escalation section present, `assignee: ""`), repeated stale agent
-result publishes are idempotent: the escalation section is not duplicated, the lifecycle
-phase is restored from the on-disk value, and assignee stays empty.
+Once a task is parked (escalation section present, `assignee: ""` — or the retained human
+owner, which is the exception above), repeated stale agent result publishes are idempotent:
+the escalation section is not duplicated, the lifecycle phase is restored from the on-disk
+value, and the assignee stays as it was written.
 
 The `phase == "human_review"` assignee-clear guard in `resultWriter.applyRetryCounter`
 runs BEFORE the `spawn_notification` early return. This ordering is load-bearing: on
