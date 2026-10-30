@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.22.9
 
 - fix: **a terminal write clears `current_job`.** The executor cleared the field only for tasks still in its process memory, so runs finishing across an executor restart or after store eviction kept a stale job name — 5175 closed records on 2026-10-29. Both controller write paths (result write, update-frontmatter) now empty `current_job` when the merged status is `completed` or `aborted`; non-terminal writes are unchanged, so a running job is never erased.
 
