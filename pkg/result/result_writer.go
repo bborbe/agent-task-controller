@@ -639,6 +639,7 @@ func (r *resultWriter) buildResultModifyFn(
 		// permanently stops falling through to both controllers once the owning
 		// controller writes it. Never overrides an existing target_vault.
 		HealTargetVault(merged, r.vaultName)
+		ClearCurrentJobIfTerminal(merged)
 		mergedBody := mergeBody(bodyStr, string(req.Content))
 		body := r.applyRetryCounter(merged, currentOnDisk, mergedBody)
 
@@ -1442,6 +1443,22 @@ func applyAccumulatedCounters(
 func HealTargetVault(fm lib.TaskFrontmatter, vaultName string) {
 	if _, ok := fm["target_vault"]; !ok {
 		fm["target_vault"] = vaultName
+	}
+}
+
+// ClearCurrentJobIfTerminal empties current_job when the merged status is
+// terminal (completed / aborted). The executor clears the field only from
+// process memory, so a run that finishes across an executor restart, or after
+// its task was evicted from the executor's store, kept a stale current_job.
+// A terminal record cannot own a live job, so clearing here cannot erase a
+// newer job's name. Writes "" (the executor's own clear value). Mutates fm in
+// place; no-op when the status is not terminal or the field is absent or empty.
+func ClearCurrentJobIfTerminal(fm lib.TaskFrontmatter) {
+	if !isTerminalStatus(fm.Status()) {
+		return
+	}
+	if v, ok := fm["current_job"]; ok && v != nil && v != "" {
+		fm["current_job"] = ""
 	}
 }
 

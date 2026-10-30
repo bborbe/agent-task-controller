@@ -864,6 +864,42 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			)
 		})
 
+		Context("terminal status clears current_job", func() {
+			It("PATCHes current_job to empty when the update sets status: completed", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: terminal-job-uuid\nstatus: in_progress\nphase: execution\nassignee: claude\ncurrent_job: some-job\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("terminal-job-uuid"),
+					Updates:        lib.TaskFrontmatter{"status": "completed"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(HaveKeyWithValue("current_job", ""))
+				Expect(fields).To(HaveKeyWithValue("status", "completed"))
+			})
+
+			It("leaves current_job out of the patch for a non-terminal update", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: nonterminal-job-uuid\nstatus: in_progress\nphase: planning\nassignee: claude\ncurrent_job: some-job\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("nonterminal-job-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(HaveKeyWithValue("phase", "execution"))
+				Expect(fields).NotTo(HaveKey("current_job"))
+			})
+		})
+
 		Context("spec 042: non-phase updates leave assignee untouched", func() {
 			It(
 				"does not clear assignee and does not add previous_assignee when Updates contains no phase key",
