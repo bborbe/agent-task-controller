@@ -262,6 +262,8 @@ func buildUpdatePatch(
 	result.ClearAssigneeIfHumanReview(merged, humans)
 	// Heal-on-write: stamp target_vault on legacy tasks lacking it.
 	result.HealTargetVault(merged, vaultName)
+	// A terminal record owns no live job; see result.ClearCurrentJobIfTerminal.
+	result.ClearCurrentJobIfTerminal(merged)
 
 	patch := map[string]any{}
 	for key, value := range merged {
