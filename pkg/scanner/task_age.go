@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
@@ -40,6 +41,20 @@ const (
 	// frontmatter that will not deduplicate or unmarshal: skipped, counted in no bucket.
 	taskAgeSkipped
 )
+
+// recomputeTaskAgeMetrics lists the task directory once and publishes the
+// task-age series from a single clock read. It never pulls, scans, writes,
+// commits or sends on the results channel.
+func (v *vaultScanner) recomputeTaskAgeMetrics(ctx context.Context) {
+	now := time.Now()
+	glob := v.taskDir + "/*.md"
+	paths, err := v.ops.listFiles(ctx, glob)
+	if err != nil {
+		glog.Warningf("task age metrics: list %s failed: %v", glob, err)
+		return
+	}
+	v.publishTaskAgeMetrics(ctx, paths, now, v.vaultName)
+}
 
 // publishTaskAgeMetrics reads the given task files and publishes the task-age
 // gauges. It is read-only and never writes, pulls or scans.

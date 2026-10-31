@@ -237,6 +237,8 @@ var _ = Describe("VaultScanner", func() {
 			make(chan struct{}),
 			metrics.New(),
 			true,
+			"test-vault",
+			0,
 		)
 	})
 
@@ -592,7 +594,16 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("NewVaultScanner", func() {
 		It("returns a non-nil VaultScanner", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				nil,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			Expect(vs).NotTo(BeNil())
 		})
 	})
@@ -608,6 +619,8 @@ var _ = Describe("VaultScanner", func() {
 				nil,
 				metrics.New(),
 				true,
+				"test-vault",
+				0,
 			)
 			Expect(vs).NotTo(BeNil())
 
@@ -628,7 +641,16 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("Run", func() {
 		It("returns nil when context is cancelled", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				nil,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			runCtx, cancel := context.WithCancel(ctx)
 			done := make(chan error, 1)
 			go func() {
@@ -644,7 +666,16 @@ var _ = Describe("VaultScanner", func() {
 			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
 
 			trigger := make(chan struct{}, 1)
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				trigger,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			scanResults := make(chan scanner.ScanResult, 1)
 			runCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -673,7 +704,16 @@ var _ = Describe("VaultScanner", func() {
 			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
 
 			trigger := make(chan struct{}, 1)
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, 0, trigger, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				0,
+				trigger,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			scanResults := make(chan scanner.ScanResult, 1)
 			runCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -1081,6 +1121,8 @@ var _ = Describe("VaultScanner", func() {
 					make(chan struct{}),
 					metrics.New(),
 					true,
+					"test-vault",
+					0,
 				)
 				scanResults := make(chan scanner.ScanResult, 1)
 

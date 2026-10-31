@@ -81,14 +81,16 @@ type fileOps struct {
 }
 
 type vaultScanner struct {
-	gitClient    gitclient.GitClient
-	taskDir      string
-	pollInterval time.Duration
-	hashes       map[string]fileEntry
-	trigger      <-chan struct{}
-	metrics      metrics.Metrics
-	ops          fileOps
-	autoInject   bool
+	gitClient       gitclient.GitClient
+	taskDir         string
+	pollInterval    time.Duration
+	hashes          map[string]fileEntry
+	trigger         <-chan struct{}
+	metrics         metrics.Metrics
+	ops             fileOps
+	autoInject      bool
+	vaultName       string
+	metricsInterval time.Duration
 
 	// indexMutex guards index. publishIndex builds the whole map and swaps it under
 	// the write lock; Resolve reads the published snapshot under the read lock. A
@@ -150,17 +152,21 @@ func NewVaultScanner(
 	trigger <-chan struct{},
 	m metrics.Metrics,
 	autoInject bool,
+	vaultName string,
+	metricsInterval time.Duration,
 ) VaultScanner {
 	return &vaultScanner{
-		gitClient:    gitClient,
-		taskDir:      taskDir,
-		pollInterval: pollInterval,
-		hashes:       make(map[string]fileEntry),
-		trigger:      trigger,
-		metrics:      m,
-		ops:          newLocalFileOps(gitClient.Path()),
-		autoInject:   autoInject,
-		index:        make(map[lib.TaskIdentifier][]string),
+		gitClient:       gitClient,
+		taskDir:         taskDir,
+		pollInterval:    pollInterval,
+		hashes:          make(map[string]fileEntry),
+		trigger:         trigger,
+		metrics:         m,
+		ops:             newLocalFileOps(gitClient.Path()),
+		autoInject:      autoInject,
+		vaultName:       vaultName,
+		metricsInterval: metricsInterval,
+		index:           make(map[lib.TaskIdentifier][]string),
 	}
 }
 
@@ -174,6 +180,8 @@ func NewGitRestVaultScanner(
 	trigger <-chan struct{},
 	m metrics.Metrics,
 	autoInject bool,
+	vaultName string,
+	metricsInterval time.Duration,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -187,8 +195,10 @@ func NewGitRestVaultScanner(
 			readFile:  gitClient.ReadFile,
 			writeFile: gitClient.WriteFile,
 		},
-		autoInject: autoInject,
-		index:      make(map[lib.TaskIdentifier][]string),
+		autoInject:      autoInject,
+		vaultName:       vaultName,
+		metricsInterval: metricsInterval,
+		index:           make(map[lib.TaskIdentifier][]string),
 	}
 }
 
@@ -211,6 +221,19 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 		// republishes it from its own bookkeeping.
 		v.buildIndex(ctx)
 	}
+	// A non-positive metrics interval constructs neither the ticker nor the start-up
+	// recompute, mirroring the poll-interval guard above: time.NewTicker panics on a
+	// non-positive duration. Only a caller can produce the value; no configuration
+	// exposes it.
+	var metricsTick <-chan time.Time
+	if v.metricsInterval > 0 {
+		// One recompute before the loop, so a fresh pod publishes all five series
+		// immediately instead of reporting "no data" for the first interval.
+		v.recomputeTaskAgeMetrics(ctx)
+		metricsTicker := time.NewTicker(v.metricsInterval)
+		defer metricsTicker.Stop()
+		metricsTick = metricsTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -219,6 +242,8 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 			v.RunCycle(ctx, results)
 		case <-v.trigger:
 			v.RunCycle(ctx, results)
+		case <-metricsTick:
+			v.recomputeTaskAgeMetrics(ctx)
 		}
 	}
 }

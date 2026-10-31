@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [019-task-age-metrics]
+summary: Added a dedicated 60 s task-age metrics ticker to vaultScanner.Run, threaded vaultName/metricsInterval through both constructors, added the injectable createVaultScanner wiring in main.go, and covered it with ticker, single-writer, failed-listing and wiring specs.
+execution_id: agent-task-controller-task-age-exec-041-spec-019-ticker-and-wiring
+dark-factory-version: v0.198.7
 created: "2026-10-31T16:30:00Z"
 queued: "2026-10-31T15:31:37Z"
+started: "2026-10-31T15:42:34Z"
+completed: "2026-10-31T15:51:19Z"
 branch: dark-factory/spec-019
 ---
 
