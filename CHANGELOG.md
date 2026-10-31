@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - feat: add `agent_controller_task_oldest_age_seconds` and `agent_controller_task_age_bucket_tasks` gauge families, exposed through `metrics.Metrics` with the frozen `vault` / `bucket` labels and the closed bucket set `lt_1d`, `1d_7d`, `gt_7d`, `undated`
+- feat: compute the task-age summary in `pkg/scanner` with `(*vaultScanner).publishTaskAgeMetrics`, which reads each task file once and publishes the oldest non-terminal age and the four bucket gauges; terminal records and unreadable/malformed files are skipped, future timestamps clamp to zero, and quoted plus unquoted frontmatter timestamps are both accepted
 
 ## v0.22.10
 

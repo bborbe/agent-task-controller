@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [019-task-age-metrics]
+summary: Added pure task-age summary computation to pkg/scanner with publishTaskAgeMetrics, timestamp parsing helpers, and full Ginkgo spec coverage
+execution_id: agent-task-controller-task-age-exec-040-spec-019-task-age-summary
+dark-factory-version: v0.198.7
 created: "2026-10-31T16:25:00Z"
 queued: "2026-10-31T15:31:37Z"
+started: "2026-10-31T15:36:29Z"
+completed: "2026-10-31T15:42:33Z"
 branch: dark-factory/spec-019
 ---
 
