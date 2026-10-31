@@ -134,6 +134,52 @@ task_identifier: kept-state-uuid
 		Expect(string(published.Frontmatter.Assignee())).To(Equal(""))
 	})
 
+	It("decides the publish from the committed attempt, not an earlier failed one", func() {
+		attempt := 0
+		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
+			_ context.Context,
+			absPath string,
+			modify func([]byte) ([]byte, error),
+			_ string,
+		) error {
+			// Attempt 1 sees the parked record and rejects the stale fields; its
+			// push "fails". Attempt 2 sees a record the operator moved back to
+			// in_progress with the agent assigned, so nothing is rejected.
+			attempt++
+			if _, err := modify([]byte(parkedOverride)); err != nil {
+				return err
+			}
+			reopened := `---
+status: in_progress
+phase: human_review
+assignee: pr-reviewer-agent
+task_type: pr-override
+task_identifier: kept-state-uuid
+---
+# Review
+`
+			updated, err := modify([]byte(reopened))
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
+		}
+		Expect(writer.WriteResult(ctx, lib.Task{
+			TaskIdentifier: identifier,
+			Frontmatter: lib.TaskFrontmatter{
+				"status":       "in_progress",
+				"phase":        "human_review",
+				"assignee":     "pr-reviewer-agent",
+				"task_type":    "pr-override",
+				"target_vault": "openclaw",
+			},
+			Content: lib.TaskContent("# Review\n"),
+		})).To(Succeed())
+
+		Expect(attempt).To(Equal(1))
+		Expect(fakePublisher.PublishChangedCallCount()).To(Equal(0))
+	})
+
 	It("publishes nothing when the guard rejects no field", func() {
 		Expect(writer.WriteResult(ctx, lib.Task{
 			TaskIdentifier: identifier,

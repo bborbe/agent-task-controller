@@ -626,7 +626,7 @@ func (r *resultWriter) writeAndPublish(
 			ctx,
 			req,
 			func(e escalation) { escalated = &e },
-			func(t lib.Task) { kept = &t },
+			func(t *lib.Task) { kept = t },
 		),
 		commitMessage,
 	); err != nil {
@@ -669,7 +669,7 @@ func (r *resultWriter) buildResultModifyFn(
 	ctx context.Context,
 	req lib.Task,
 	recordEscalation func(escalation),
-	recordKeptState func(lib.Task),
+	recordKeptState func(*lib.Task),
 ) func(current []byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		frontmatterStr, err := ExtractFrontmatter(ctx, current)
@@ -730,16 +730,19 @@ func (r *resultWriter) buildResultModifyFn(
 			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
 		}
 		// merged is what lands on disk (or already is, when the write is a no-op),
-		// so it is the state every view must converge on. Recorded per attempt and
-		// published once after the commit, like the escalation above.
+		// so it is the state every view must converge on. Overwritten on every
+		// attempt — nil when this attempt rejected nothing — so only the attempt
+		// that committed decides the publish, which runs once after the commit.
+		var kept *lib.Task
 		if len(decisions) > 0 {
-			recordKeptState(lib.Task{
+			kept = &lib.Task{
 				Object:         req.Object,
 				TaskIdentifier: req.TaskIdentifier,
 				Frontmatter:    merged,
 				Content:        lib.TaskContent(body),
-			})
+			}
 		}
+		recordKeptState(kept)
 		return []byte("---\n" + string(marshaledFrontmatter) + "---\n" + body), nil
 	}
 }
