@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [019-task-age-metrics]
+summary: Verified the pre-existing Task Age Metrics contract in docs/controller-design.md against all required statements and appended the Unreleased feat bullet naming both task-age series to CHANGELOG.md.
+execution_id: agent-task-controller-task-age-exec-042-spec-019-doc-and-changelog
+dark-factory-version: v0.198.7
 created: "2026-10-31T16:35:00Z"
 queued: "2026-10-31T15:31:37Z"
+started: "2026-10-31T15:51:22Z"
+completed: "2026-10-31T15:58:42Z"
 branch: dark-factory/spec-019
 ---
 
