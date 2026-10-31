@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	_ "github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 var _ = Describe("Metrics", func() {
@@ -145,6 +145,65 @@ var _ = Describe("Metrics", func() {
 		Expect(value).To(BeNumerically("==", 0))
 	})
 })
+
+var _ = Describe("task age metrics (spec 019)", func() {
+	It("publishes both families as gauges with exactly the frozen label names", func() {
+		m := metrics.New()
+		m.TaskOldestAgeSeconds("spec-019-labels").Set(1)
+		for _, bucket := range metrics.AvailableTaskAgeBuckets {
+			m.TaskAgeBucketTasks("spec-019-labels", bucket).Set(0)
+		}
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		ageFamily := findMetricFamily(mfs, "agent_controller_task_oldest_age_seconds")
+		Expect(ageFamily).NotTo(BeNil(), "oldest-age family must be registered")
+		Expect(ageFamily.GetType()).To(Equal(dto.MetricType_GAUGE))
+		Expect(metricFamilyLabelNames(ageFamily)).To(Equal([]string{"vault"}))
+
+		bucketFamily := findMetricFamily(mfs, "agent_controller_task_age_bucket_tasks")
+		Expect(bucketFamily).NotTo(BeNil(), "bucket family must be registered")
+		Expect(bucketFamily.GetType()).To(Equal(dto.MetricType_GAUGE))
+		// The DTO reports label names sorted, so assert the exact set rather than
+		// the declaration order.
+		Expect(metricFamilyLabelNames(bucketFamily)).To(ConsistOf("vault", "bucket"))
+	})
+
+	It("exposes exactly the frozen bucket values as the closed set", func() {
+		Expect(metrics.AvailableTaskAgeBuckets).To(HaveLen(4))
+
+		values := make([]string, 0, len(metrics.AvailableTaskAgeBuckets))
+		for _, bucket := range metrics.AvailableTaskAgeBuckets {
+			values = append(values, bucket.String())
+		}
+
+		Expect(values).To(Equal([]string{"lt_1d", "1d_7d", "gt_7d", "undated"}))
+	})
+})
+
+// findMetricFamily returns the family with the given name, or nil when absent.
+func findMetricFamily(mfs []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			return mf
+		}
+	}
+	return nil
+}
+
+// metricFamilyLabelNames returns the label names of the family's first sample.
+func metricFamilyLabelNames(mf *dto.MetricFamily) []string {
+	samples := mf.GetMetric()
+	if len(samples) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(samples[0].GetLabel()))
+	for _, lp := range samples[0].GetLabel() {
+		names = append(names, lp.GetName())
+	}
+	return names
+}
 
 func gatherLabels(mfs []*dto.MetricFamily, metricName string, labelName string) []string {
 	for _, mf := range mfs {
