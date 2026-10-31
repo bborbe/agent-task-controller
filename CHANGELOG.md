@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- feat: add `agent_controller_task_oldest_age_seconds` and `agent_controller_task_age_bucket_tasks` gauge families, exposed through `metrics.Metrics` with the frozen `vault` / `bucket` labels and the closed bucket set `lt_1d`, `1d_7d`, `gt_7d`, `undated`
-- feat: compute the task-age summary in `pkg/scanner` with `(*vaultScanner).publishTaskAgeMetrics`, which reads each task file once and publishes the oldest non-terminal age and the four bucket gauges; terminal records and unreadable/malformed files are skipped, future timestamps clamp to zero, and quoted plus unquoted frontmatter timestamps are both accepted
-- feat: publish the task-age series on a dedicated 60 s ticker in `(*vaultScanner).Run`, independent of `POLL_INTERVAL` so a trigger-only controller still publishes; the recompute runs once before the loop and then per tick, lists and reads only, leaves previous values in place on a failed listing, and both scanner constructors take the vault name and metrics interval (`main` wires a package-constant 60 s cadence, no configuration surface)
 - feat: **task age metrics: the oldest non-terminal record's age and its bucket distribution are now published per vault.** `agent_controller_task_oldest_age_seconds{vault}` carries the age in whole seconds of the oldest dated non-terminal record and `agent_controller_task_age_bucket_tasks{vault,bucket}` counts non-terminal records in `lt_1d` / `1d_7d` / `gt_7d` / `undated`. Both are levels recomputed by a dedicated 60-second ticker that runs even under `POLL_INTERVAL=0s`, where the scan-cycle gauge is dead. Age comes from `created`, then `created_date`, then `queued_at`, then `job_started_at`; a record with none is counted in `undated`, and a future timestamp clamps to 0. The contract is written in `docs/controller-design.md` § Task Age Metrics.
 
 ## v0.22.10
