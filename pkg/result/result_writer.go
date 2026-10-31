@@ -51,8 +51,9 @@ func NewResultWriter(
 	notificationSender notifcmd.NotificationPublishCommandSender,
 	resolver TaskPathResolver,
 	humans HumanAssignees,
+	opts ...ResultWriterOption,
 ) ResultWriter {
-	return &resultWriter{
+	w := &resultWriter{
 		gitClient:          gitClient,
 		taskDir:            taskDir,
 		vaultName:          vaultName,
@@ -65,9 +66,42 @@ func NewResultWriter(
 
 		escalationPublishedAt: make(map[string]libtime.DateTime),
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
+}
+
+// KeptStatePublisher republishes a task's on-disk state on the task event topic.
+// publisher.TaskPublisher satisfies it.
+type KeptStatePublisher interface {
+	PublishChanged(ctx context.Context, task lib.Task) error
+}
+
+// ResultWriterOption configures optional ResultWriter behaviour.
+type ResultWriterOption func(*resultWriter)
+
+// WithKeptStatePublisher makes the writer republish the task's on-disk state
+// whenever the ownership guard rejected an incoming field.
+//
+// Without it, a result the guard reduces to a no-op produces no commit
+// (AtomicReadModifyWriteAndCommitPush skips an unchanged file), so the vault
+// scanner sees no change and no event is published. An executor whose view
+// holds the rejected values then never learns they were rejected, and re-drives
+// the task once its success grace lapses. Measured 2026-10-28 and 2026-10-31 on
+// sun-k3s: completed, parked pr-override records re-spawned and re-approved
+// already-merged PRs.
+func WithKeptStatePublisher(p KeptStatePublisher) ResultWriterOption {
+	return func(w *resultWriter) {
+		w.keptStatePublisher = p
+	}
 }
 
 type resultWriter struct {
+	// keptStatePublisher, when set, republishes the on-disk state after a write in
+	// which the ownership guard rejected at least one incoming field.
+	keptStatePublisher KeptStatePublisher
+
 	gitClient          gitclient.GitClient
 	taskDir            string
 	vaultName          string
@@ -584,10 +618,16 @@ func (r *resultWriter) writeAndPublish(
 	commitMessage string,
 ) error {
 	var escalated *escalation
+	var kept *lib.Task
 	if err := r.gitClient.AtomicReadModifyWriteAndCommitPush(
 		ctx,
 		absPath,
-		r.buildResultModifyFn(ctx, req, func(e escalation) { escalated = &e }),
+		r.buildResultModifyFn(
+			ctx,
+			req,
+			func(e escalation) { escalated = &e },
+			func(t *lib.Task) { kept = t },
+		),
 		commitMessage,
 	); err != nil {
 		return err
@@ -596,7 +636,28 @@ func (r *resultWriter) writeAndPublish(
 		escalated.taskName = taskNameFromRelPath(matchedRelPath)
 		r.publishEscalation(ctx, *escalated)
 	}
+	if kept != nil {
+		r.publishKeptState(ctx, *kept)
+	}
 	return nil
+}
+
+// publishKeptState republishes the state the guard kept on disk, so every
+// executor's view converges on it. Best-effort: the vault write already
+// succeeded, so a publish failure is logged rather than failing the result.
+func (r *resultWriter) publishKeptState(ctx context.Context, task lib.Task) {
+	if r.keptStatePublisher == nil {
+		return
+	}
+	if err := r.keptStatePublisher.PublishChanged(ctx, task); err != nil {
+		glog.Warningf(
+			"event=kept_state_publish_failed task=%s err=%v",
+			task.TaskIdentifier,
+			err,
+		)
+		return
+	}
+	glog.Infof("event=kept_state_published task=%s", task.TaskIdentifier)
 }
 
 // buildResultModifyFn returns a modify callback for AtomicReadModifyWriteAndCommitPush
@@ -608,6 +669,7 @@ func (r *resultWriter) buildResultModifyFn(
 	ctx context.Context,
 	req lib.Task,
 	recordEscalation func(escalation),
+	recordKeptState func(*lib.Task),
 ) func(current []byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		frontmatterStr, err := ExtractFrontmatter(ctx, current)
@@ -667,6 +729,20 @@ func (r *resultWriter) buildResultModifyFn(
 		if err != nil {
 			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
 		}
+		// merged is what lands on disk (or already is, when the write is a no-op),
+		// so it is the state every view must converge on. Overwritten on every
+		// attempt — nil when this attempt rejected nothing — so only the attempt
+		// that committed decides the publish, which runs once after the commit.
+		var kept *lib.Task
+		if len(decisions) > 0 {
+			kept = &lib.Task{
+				Object:         req.Object,
+				TaskIdentifier: req.TaskIdentifier,
+				Frontmatter:    merged,
+				Content:        lib.TaskContent(body),
+			}
+		}
+		recordKeptState(kept)
 		return []byte("---\n" + string(marshaledFrontmatter) + "---\n" + body), nil
 	}
 }

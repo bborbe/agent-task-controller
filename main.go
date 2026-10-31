@@ -167,14 +167,15 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		metrics.New(),
 		autoInject,
 	)
+	taskPublisher := publisher.NewTaskPublisher(
+		eventObjectSender,
+		lib.TaskV1SchemaID,
+		currentDateTime,
+		a.VaultName,
+	)
 	syncLoop := pkgsync.NewSyncLoop(
 		vaultScanner,
-		publisher.NewTaskPublisher(
-			eventObjectSender,
-			lib.TaskV1SchemaID,
-			currentDateTime,
-			a.VaultName,
-		),
+		taskPublisher,
 		trigger,
 		metrics.New(),
 	)
@@ -225,6 +226,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		notificationSender,
 		vaultScanner,
 		humanAssignees,
+		result.WithKeptStatePublisher(taskPublisher),
 	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
