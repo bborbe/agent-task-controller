@@ -100,6 +100,19 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 		return false, nil
 	}
 
+	phase := existingFrontmatter.Phase()
+	phaseValue := ""
+	if phase != nil {
+		phaseValue = phase.String()
+	}
+	// phaseValue is "" when phase is nil, and "" never equals planning, so the
+	// single comparison covers the absent-phase case too.
+	if phaseValue != domain.TaskPhasePlanning.String() {
+		glog.V(3).
+			Infof("planning-retry: task %s on-disk phase=%s; skipping gate", req.TaskIdentifier, phaseValue)
+		return false, nil
+	}
+
 	count, _ := existingFrontmatter.Int("planning_retry_count")
 	if count < 0 {
 		count = 0
@@ -150,12 +163,6 @@ func (g *planningRetryGate) matchesRetryGate(req lib.Task) bool {
 		req.Frontmatter.Assignee() != lib.TaskAssignee("pr-reviewer-agent") {
 		glog.V(3).
 			Infof("planning-retry: task %s is not pr-review (task_type=%q, assignee=%q); skipping gate", req.TaskIdentifier, taskType, req.Frontmatter.Assignee())
-		return false
-	}
-	phase := req.Frontmatter.Phase()
-	if phase == nil || phase.String() != domain.TaskPhasePlanning.String() {
-		glog.V(3).
-			Infof("planning-retry: task %s phase is not planning; skipping gate", req.TaskIdentifier)
 		return false
 	}
 	if !hasFailureMarker(string(req.Content)) {
@@ -234,6 +241,13 @@ func (g *planningRetryGate) buildRetryModifyFn(
 
 		onDiskCount, _ := fm.Int("planning_retry_count")
 		if onDiskCount != count {
+			return current, nil
+		}
+		// Re-check the phase against THIS read, not the one Handle saw: the task
+		// may have moved past planning between FindTaskFilePath and here, and a
+		// stale read must never force it back to planning.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
 			return current, nil
 		}
 
@@ -329,6 +343,17 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 		var fm lib.TaskFrontmatter
 		if err := yaml.Unmarshal([]byte(fmStr), &fm); err != nil {
 			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
+		}
+
+		// Re-check the phase against THIS read: a task that moved past planning
+		// between FindTaskFilePath and here must not be escalated back into the
+		// human queue. Clearing firstEscalation keeps the caller from posting the
+		// escalation comment or bumping the "exhausted" metric for a write that
+		// did not happen.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
+			*firstEscalation = false
+			return current, nil
 		}
 
 		// Idempotency: check if terminal retry line already present
