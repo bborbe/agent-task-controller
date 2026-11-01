@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.136.0, github.com/bborbe/argument/v2 to v2.13.9, github.com/bborbe/boltkv to v1.16.5, github.com/bborbe/cqrs to v0.6.15, github.com/bborbe/errors to v1.6.6, github.com/bborbe/http to v1.26.32, github.com/bborbe/kafka to v1.29.10, github.com/bborbe/kv to v1.21.27, github.com/bborbe/log to v1.7.6, github.com/bborbe/metrics to v0.6.9, github.com/bborbe/notification to v0.7.10, github.com/bborbe/run to v1.11.9, github.com/bborbe/sentry to v1.10.7, github.com/bborbe/service to v1.11.2, github.com/bborbe/time to v1.27.24, github.com/bborbe/validation to v1.5.7, github.com/bborbe/vault-cli to v0.184.4
+
 ## v0.24.0
 
 - feat: **open-task census gauge surface.** Adds the `agent_controller_open_tasks{vault,phase,task_type}` gauge vector, exposed through a new `Metrics.OpenTasks()` accessor, so the controller can publish the number of open task records per `(phase, task_type)` pair as a level that is recomputed rather than accumulated.
