@@ -331,6 +331,24 @@ A file that cannot be read, carries no frontmatter, or carries frontmatter that 
 
 The dashboard panel and the alert rule live in `bborbe/nuke`; this section is the contract they consume. A change to a name, a label, a bucket boundary, the precedence or the cadence is a cross-repo change and needs its own spec that updates this section in the same change.
 
+## Open Task Census
+
+One gauge describes the open part of the board by phase and task type, scraped from `/metrics`. It is a level, not a counter: the metrics ticker recomputes it from scratch on every pass and `Set`s each pair's count, so two passes over an unchanged board publish the same value.
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `agent_controller_open_tasks` | `vault`, `phase`, `task_type` | Number of open task records in each (phase, task_type) pair for this controller's own vault. |
+
+**Open** is status neither completed nor aborted — a missing status, an unknown status, human_review and done all count. The resting-phase exclusion (human_review and done are excluded) belongs to the alert expression, not to the instrument, so the gauge never hides a resting record.
+
+`vault` is the controller's own configured `VAULT_NAME`, passed through verbatim; the vault-api display name is not applied. `phase` and `task_type` are read from the record's frontmatter. A missing or non-string `phase` or `task_type` is published as an empty label value and the record is still counted — no normalisation, no sentinel and no filtering.
+
+**Empty pairs.** A pair that empties disappears from the exposition entirely rather than lingering at 0. The deletion is scoped to this controller's own `vault` value, so a second controller's series are never touched; a blanket reset would clear another vault's series and is explicitly rejected. A file that cannot be read, carries no frontmatter, or will not deduplicate or unmarshal is skipped silently and counted in no pair. A failed listing writes nothing: the previous values stay, and on a pod's first failed pass no series exists yet.
+
+**Recompute.** The census rides the same dedicated ticker as the age series, independent of `POLL_INTERVAL`: one recompute at start-up and then every 60 seconds, so it publishes on a trigger-only controller (`POLL_INTERVAL=0s`) where the scan cycle is dead. It runs as a sibling of the task-age pass, not folded into it, and it never runs from the scan cycle or the start-up index build. It is read-only: it does not pull, scan, write, commit or send on the results channel.
+
+The alert joins this series against the executor-side `executor_config_accepted` metric: an open pair with no accepted config is the defect. The alert rule, the resting-phase exclusion and the join expression live in `bborbe/nuke`. A change to the name, a label, the open definition or the cadence is a cross-repo change and needs its own spec that updates this section in the same change.
+
 ## What the Controller Does NOT Do
 
 - No K8s API calls (task/executor handles job spawning)

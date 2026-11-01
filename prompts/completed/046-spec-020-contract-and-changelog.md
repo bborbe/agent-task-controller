@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [020-open-task-census]
+summary: Documented the open task census contract in docs/controller-design.md and extended CHANGELOG.md's Unreleased section
+execution_id: agent-task-controller-open-tasks-gauge-exec-046-spec-020-contract-and-changelog
+dark-factory-version: v0.198.7
 created: "2026-11-01T14:30:00Z"
 queued: "2026-11-01T13:28:07Z"
+started: "2026-11-01T13:44:31Z"
+completed: "2026-11-01T13:45:13Z"
 branch: dark-factory/open-task-census
 ---
 
