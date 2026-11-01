@@ -47,6 +47,11 @@ const vaultLocalPath = "/data/vault"
 
 const githubAPIBaseURL = "https://api.github.com"
 
+// metricsInterval is the fixed cadence of the task-age metrics recompute. It is a
+// package constant, not configuration: the alert contract is "at most 60 s", and a
+// knob that could widen or disable it would be an opt-out on the shipped behaviour.
+const metricsInterval = 60 * time.Second
+
 func main() {
 	app := &application{}
 	os.Exit(service.Main(context.Background(), app, &app.SentryDSN, &app.SentryProxy))
@@ -159,13 +164,11 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	trigger := make(chan struct{}, 1)
-	vaultScanner := scanner.NewGitRestVaultScanner(
+	vaultScanner := a.createVaultScanner(
 		gitClient,
-		a.TaskDir,
-		a.PollInterval,
 		trigger,
-		metrics.New(),
 		autoInject,
+		scanner.NewGitRestVaultScanner,
 	)
 	taskPublisher := publisher.NewTaskPublisher(
 		eventObjectSender,
@@ -252,6 +255,40 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		syncLoop.Run,
 		commandConsumer,
 		a.createHTTPServer(syncLoop, restClient),
+	)
+}
+
+// vaultScannerConstructor is the signature shared by both scanner constructors.
+// It is a parameter of createVaultScanner so the wiring can be exercised without
+// running Run.
+type vaultScannerConstructor func(
+	gitClient gitrestclient.GitClient,
+	taskDir string,
+	pollInterval time.Duration,
+	trigger <-chan struct{},
+	m metrics.Metrics,
+	autoInject bool,
+	vaultName string,
+	metricsInterval time.Duration,
+) scanner.VaultScanner
+
+// createVaultScanner builds the process's single VaultScanner. The constructor is
+// injected so a test can record the arguments this wiring passes.
+func (a *application) createVaultScanner(
+	gitClient gitrestclient.GitClient,
+	trigger chan struct{},
+	autoInject bool,
+	constructor vaultScannerConstructor,
+) scanner.VaultScanner {
+	return constructor(
+		gitClient,
+		a.TaskDir,
+		a.PollInterval,
+		trigger,
+		metrics.New(),
+		autoInject,
+		a.VaultName,
+		metricsInterval,
 	)
 }
 

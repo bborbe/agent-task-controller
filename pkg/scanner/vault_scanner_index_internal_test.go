@@ -115,7 +115,7 @@ var _ = Describe("vaultScanner identifier index", func() {
 		results = make(chan ScanResult, 1)
 		var ok bool
 		s, ok = NewGitRestVaultScanner(
-			client, ".", time.Hour, nil, metrics.New(), true,
+			client, ".", time.Hour, nil, metrics.New(), true, "test-vault", 0,
 		).(*vaultScanner)
 		Expect(ok).To(BeTrue())
 	})
@@ -405,7 +405,7 @@ var _ = Describe("vaultScanner identifier index", func() {
 	Context("trigger-only mode (poll interval zero)", func() {
 		triggerOnly := func() *vaultScanner {
 			built, ok := NewGitRestVaultScanner(
-				client, ".", 0, make(chan struct{}), metrics.New(), true,
+				client, ".", 0, make(chan struct{}), metrics.New(), true, "test-vault", 0,
 			).(*vaultScanner)
 			Expect(ok).To(BeTrue())
 			return built
