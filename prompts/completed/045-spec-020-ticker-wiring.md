@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [020-open-task-census]
+summary: Wired recomputeOpenTaskCensus into Run's metrics ticker (start-up plus each tick) as a sibling of the age pass, with internal specs proving publish-under-pollInterval=0, single-writer, failed-listing, cancelled-pass and sibling-isolation behaviour.
+execution_id: agent-task-controller-open-tasks-gauge-exec-045-spec-020-ticker-wiring
+dark-factory-version: v0.198.7
 created: "2026-11-01T14:25:00Z"
 queued: "2026-11-01T13:28:07Z"
+started: "2026-11-01T13:39:34Z"
+completed: "2026-11-01T13:44:29Z"
 branch: dark-factory/open-task-census
 ---
 

@@ -234,9 +234,13 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 	// exposes it.
 	var metricsTick <-chan time.Time
 	if v.metricsInterval > 0 {
-		// One recompute before the loop, so a fresh pod publishes all five series
-		// immediately instead of reporting "no data" for the first interval.
+		// One recompute before the loop, so a fresh pod publishes both the age and
+		// the open-task census series immediately instead of reporting "no data"
+		// for the first interval. The two are siblings, not one folded pass: they
+		// have different definitions and different failure modes, and an early
+		// return in one must not blank the other.
 		v.recomputeTaskAgeMetrics(ctx)
+		v.recomputeOpenTaskCensus(ctx)
 		metricsTicker := time.NewTicker(v.metricsInterval)
 		defer metricsTicker.Stop()
 		metricsTick = metricsTicker.C
@@ -251,6 +255,7 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 			v.RunCycle(ctx, results)
 		case <-metricsTick:
 			v.recomputeTaskAgeMetrics(ctx)
+			v.recomputeOpenTaskCensus(ctx)
 		}
 	}
 }
