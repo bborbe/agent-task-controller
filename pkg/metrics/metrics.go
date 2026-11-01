@@ -28,6 +28,8 @@ type Metrics interface {
 	CommandExpiredTotal(operation string) prometheus.Counter
 	SkippedFilesTotal(reason SkipReason) prometheus.Counter
 	UpdateGoStuckPlanningTasks() prometheus.Gauge
+	TaskOldestAgeSeconds(vault string) prometheus.Gauge
+	TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge
 }
 
 // defaultMetrics implements Metrics using promauto-registered counters.
@@ -86,6 +88,14 @@ func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter
 
 func (m *defaultMetrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
 	return UpdateGoStuckPlanningTasks
+}
+
+func (m *defaultMetrics) TaskOldestAgeSeconds(vault string) prometheus.Gauge {
+	return TaskOldestAgeSeconds.WithLabelValues(vault)
+}
+
+func (m *defaultMetrics) TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge {
+	return TaskAgeBucketTasks.WithLabelValues(vault, bucket.String())
 }
 
 // ScanCyclesTotal counts scan cycle completions by result.
@@ -228,6 +238,28 @@ var AvailableSkipReasons = []SkipReason{
 	ReasonRepairNotConverging,
 }
 
+// TaskAgeBucket is the closed set of bucket label values for TaskAgeBucketTasks.
+type TaskAgeBucket string
+
+// String returns the Prometheus label value for the bucket.
+func (b TaskAgeBucket) String() string { return string(b) }
+
+const (
+	TaskAgeBucketLt1d    TaskAgeBucket = "lt_1d"
+	TaskAgeBucket1d7d    TaskAgeBucket = "1d_7d"
+	TaskAgeBucketGt7d    TaskAgeBucket = "gt_7d"
+	TaskAgeBucketUndated TaskAgeBucket = "undated"
+)
+
+// AvailableTaskAgeBuckets is the full closed set of bucket values, used by the
+// scanner to publish every bucket on every pass so each series exists at 0.
+var AvailableTaskAgeBuckets = []TaskAgeBucket{
+	TaskAgeBucketLt1d,
+	TaskAgeBucket1d7d,
+	TaskAgeBucketGt7d,
+	TaskAgeBucketUndated,
+}
+
 // SkippedFilesTotal counts vault task files the scanner skipped during a scan cycle,
 // labelled by the structured reason for the skip. A non-zero value on any label
 // indicates operator-actionable vault health issues (broken frontmatter, empty status,
@@ -274,6 +306,36 @@ var UpdateGoStuckPlanningTasks = promauto.NewGauge(
 		Name: "agent_controller_update_go_stuck_planning_tasks",
 		Help: "Number of github-update-go tasks at phase planning with a job started more than 24h ago and a ## Failure entry.",
 	},
+)
+
+// TaskOldestAgeSeconds is the age in seconds of the oldest dated non-terminal
+// task record, labelled by vault.
+//
+// It is a level, not a counter: the dedicated metrics ticker recomputes it and
+// Set()s the result, so the series falls back to 0 as soon as the last dated
+// record turns terminal. That is what makes a threshold expression alertable —
+// the alert rule in bborbe/nuke compares it against the 7-day threshold
+// `> 604800` seconds.
+var TaskOldestAgeSeconds = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_task_oldest_age_seconds",
+		Help: "Age in seconds of the oldest dated non-terminal task record, by vault.",
+	},
+	[]string{"vault"},
+)
+
+// TaskAgeBucketTasks is the number of non-terminal task records per age bucket,
+// labelled by vault and bucket.
+//
+// It is a level, not a counter: every successful recompute Set()s all four
+// bucket series, including the empty ones, so a scrape never sees a missing
+// series after a pass and each bucket reads 0 when it is empty.
+var TaskAgeBucketTasks = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_task_age_bucket_tasks",
+		Help: "Number of non-terminal task records per age bucket, by vault and bucket.",
+	},
+	[]string{"vault", "bucket"},
 )
 
 func init() {

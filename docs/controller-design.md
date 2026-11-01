@@ -299,6 +299,38 @@ Agent output may contain bare `---` lines that would corrupt YAML frontmatter bo
 | `/setloglevel` | Temporary log level change (5-min auto-reset) |
 | `/trigger` | On-demand vault scan cycle |
 
+## Task Age Metrics
+
+Two gauges describe the non-terminal part of the board: its oldest age and its age distribution, scraped from `/metrics`. Both are **levels**, not counters: the ticker recomputes them and `Set`s the result, so a value falls back to 0 as soon as the condition clears. That is what makes a threshold expression alertable.
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `agent_controller_task_oldest_age_seconds` | `vault` | Age in whole seconds of the oldest dated non-terminal record; 0 when no dated non-terminal record exists. The alert threshold is 7 days (`604800`), compared as `> 604800`. |
+| `agent_controller_task_age_bucket_tasks` | `vault`, `bucket` | Number of non-terminal records per bucket. `bucket` is a closed set of exactly four values. |
+
+`vault` is the controller's own configured `VAULT_NAME`, passed through verbatim; no display name or slug mapping is applied, so the dashboard selector that matches both spellings needs no change. **Non-terminal** is `status` neither `completed` nor `aborted` — an empty or unknown status is non-terminal.
+
+**Age precedence — first parseable value wins:** `created`, then `created_date`, then `queued_at`, then `job_started_at`. A value parses as RFC3339 (with or without fractional seconds) or as date-only `YYYY-MM-DD` read as midnight UTC. A value that is present but unparseable is skipped and the next field is tried. A record with none of the four parseable is **undated** and contributes nothing to the oldest age. A timestamp in the future clamps to an age of 0 and lands in `lt_1d`; no negative value is ever published.
+
+The published age is truncated to whole seconds, and bucket classification uses that same truncated value. A record whose untruncated age is 7 days plus a fraction of a second therefore publishes `604800` and lands in `1d_7d`, not in `gt_7d` — so the value a scrape reads and the bucket it lands in agree at both the 24-hour and the 7-day boundary.
+
+**Buckets** (half-open where it matters):
+
+| `bucket` | Boundary |
+|---|---|
+| `lt_1d` | age < 24h, including every age clamped to 0 |
+| `1d_7d` | 24h ≤ age ≤ 7 days |
+| `gt_7d` | age > 7 days |
+| `undated` | none of the four fields parseable |
+
+**Alert comparison.** The alert rule compares `agent_controller_task_oldest_age_seconds > 604800`, matching the `gt_7d` bucket and `1d_7d`'s inclusive 7-day upper bound. A `>=` would put a record exactly 7 days old in both `1d_7d` and the alert, double-reporting it.
+
+**Recompute.** A dedicated ticker, independent of `POLL_INTERVAL`, runs one recompute at start-up and then every **60 seconds** when its interval is positive — a package constant in `main.go`, not configuration, because the alert contract is "at most 60 s" and a knob that could widen or disable it would be an opt-out on the shipped behaviour. A non-positive interval disables both the start-up recompute and the ticker, so the series are never published; configuration cannot produce that value, only a caller can. The recompute lists `TASK_DIR/*.md`, reads and parses each file, and `Set`s all five series — the empty buckets at 0 included — so after a successful pass a scrape never sees a missing series. It does not pull, scan, write or commit, and it sends nothing on the results channel. The scan cycle never writes these series (single writer): `scanFiles` is dead on a trigger-only controller, and a second writer would make the value depend on which path ran last.
+
+A file that cannot be read, carries no frontmatter, or carries frontmatter that will not unmarshal — including duplicate keys that will not re-parse — is skipped entirely: it lands in no bucket and never affects the oldest age, so one broken file cannot blank the instrument. A file whose duplicate keys do deduplicate cleanly is not skipped; it is counted once, with the last value winning for each key. A failed listing writes nothing: the values from the previous successful pass stay, and on a pod's first failed recompute no series exists yet.
+
+The dashboard panel and the alert rule live in `bborbe/nuke`; this section is the contract they consume. A change to a name, a label, a bucket boundary, the precedence or the cadence is a cross-repo change and needs its own spec that updates this section in the same change.
+
 ## What the Controller Does NOT Do
 
 - No K8s API calls (task/executor handles job spawning)
