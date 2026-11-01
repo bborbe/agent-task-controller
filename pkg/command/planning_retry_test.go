@@ -180,6 +180,116 @@ var _ = Describe("PlanningRetryGate", func() {
 		})
 	})
 
+	Describe("on-disk phase is the source of truth", func() {
+		Context("payload carries no phase, on-disk phase is planning", func() {
+			It("retries based on the on-disk phase", func() {
+				req := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter: lib.TaskFrontmatter{
+						"task_type": "pr-review",
+						"assignee":  "pr-reviewer-agent",
+					},
+					Content: lib.TaskContent("## Result\nStatus: failed\nMessage: boom\n"),
+				}
+				Expect(req.Frontmatter.Phase()).To(BeNil())
+
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+				count, _ := fm.Int("planning_retry_count")
+				Expect(count).To(Equal(1))
+			})
+		})
+
+		Context("payload phase is planning, on-disk phase is execution", func() {
+			It("skips without writing", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				Expect(req.Frontmatter.Phase().String()).To(Equal("planning"))
+
+				diskContent := onDiskFileWithPhase(
+					"pr-123",
+					"execution",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				diskFMStr, diskErr := result.ExtractFrontmatter(ctx, diskContent)
+				Expect(diskErr).To(BeNil())
+				var diskFM lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
+				Expect(diskFM.Phase().String()).To(Equal("execution"))
+
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("on-disk phase is absent", func() {
+			It("skips without writing", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := []byte(
+					"---\ntask_identifier: pr-123\ntask_type: pr-review\nassignee: pr-reviewer-agent\nstatus: in_progress\nplanning_retry_count: 0\n---\n## Objective\n\nreview the PR\n",
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("task file not found", func() {
+			It("skips before consulting the phase", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				fakeGit.ListFilesReturns([]string{}, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+	})
+
 	Describe("retry attempts", func() {
 		Context("retry attempt 1 (count absent -> 0)", func() {
 			It("bumps counter to 1 and sets fresh task_identifier", func() {

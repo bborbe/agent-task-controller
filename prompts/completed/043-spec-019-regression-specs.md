@@ -1,7 +1,13 @@
 ---
-status: draft
+status: completed
 spec: [019-bug-planning-retry-gate-reads-on-disk-phase]
+summary: Added four Ginkgo specs locking the planning-retry gate to the on-disk phase and proved the AC3 regression spec fails against the pre-fix predicate and passes after restore.
+execution_id: agent-task-controller-phase-gate-exec-043-spec-019-regression-specs
+dark-factory-version: v0.198.7
 created: "2026-11-01T10:26:17Z"
+queued: "2026-11-01T12:57:17Z"
+started: "2026-11-01T12:57:19Z"
+completed: "2026-11-01T13:06:26Z"
 branch: dark-factory/bug-planning-retry-gate-reads-on-disk-phase
 ---
 
@@ -15,7 +21,7 @@ branch: dark-factory/bug-planning-retry-gate-reads-on-disk-phase
 </summary>
 
 <objective>
-Lock the on-disk-phase behaviour of the planning-retry gate with four Ginkgo specs, and prove the central regression spec fails against the pre-fix gate logic and passes against the fixed logic. This prompt depends on `1-spec-019-on-disk-phase-gate.md` having landed: the gate must already read `existingFrontmatter.Phase()` and the test fixture helper `onDiskFileWithPhase` must already exist.
+Lock the on-disk-phase behaviour of the planning-retry gate with four Ginkgo specs, and prove the central regression spec fails against the pre-fix gate logic and passes against the fixed logic. This prompt depends on prompt 1 (`prompts/completed/039-spec-019-on-disk-phase-gate.md`) having landed: the gate must already read `existingFrontmatter.Phase()` and the test fixture helper `onDiskFileWithPhase` must already exist.
 </objective>
 
 <context>
@@ -74,16 +80,16 @@ Reference guides (in-container paths):
    ```
    Capture the modify closure with the existing pattern (invoking it with `diskContent`), then assert:
    - `err` is nil.
-   - `handled` is `true`.
+   - `Expect(handled).To(BeTrue())`.
    - `fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()` equals `1`.
    - Applying `capturedModify(diskContent)` yields frontmatter whose `planning_retry_count` (via `fm.Int("planning_retry_count")`) equals `1`.
-   Do not add a `phase` key to the payload. Do not use `buildPRReviewTask` for this spec.
+   Do not add a `phase` key to the payload. Do not use `buildPRReviewTask` for this spec. Assert the precondition before acting, so the spec cannot silently degrade: `Expect(req.Frontmatter.Phase()).To(BeNil())`.
 
 3. Context `"payload phase is planning, on-disk phase is execution"` — this is the AC4 regression spec. Use `buildPRReviewTask("pr-123", "planning", "## Result\nStatus: failed\nMessage: boom\n")` for the payload and `onDiskFileWithPhase("pr-123", "execution", 0, "## Objective\n\nreview the PR\n")` for the file. Assert:
    - `err` is nil.
-   - `handled` is `false`.
+   - `Expect(handled).To(BeFalse())`.
    - `fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()` equals `0`.
-   Do not weaken this spec by removing the payload phase — the payload must actively claim `planning` while the disk says `execution`.
+   Do not weaken this spec by removing the payload phase — the payload must actively claim `planning` while the disk says `execution`. Assert both preconditions before acting, so the spec cannot degrade into two empty values: `Expect(req.Frontmatter.Phase().String()).To(Equal("planning"))` and the parsed on-disk phase equals `"execution"`.
 
 4. Context `"on-disk phase is absent"` — build the on-disk bytes inline with no `phase` key:
    ```go
@@ -93,9 +99,9 @@ Reference guides (in-container paths):
 
 5. Context `"task file not found"` — payload `buildPRReviewTask("pr-123", "planning", "## Result\nStatus: failed\nMessage: boom\n")`, then `fakeGit.ListFilesReturns([]string{}, nil)`. Do not stub `ReadFileReturns`. Assert `err` is nil, `handled` is `false`, and `AtomicReadModifyWriteAndCommitPushCallCount()` equals `0`. This locks the frozen ordering: the not-found guard runs before the phase predicate.
 
-6. Prove the AC3 spec fails against the pre-fix gate logic. The container's `.git` is masked, so a literal `git checkout ede6d9d` is not available; reproduce the pre-fix predicate by temporarily reinstating it.
+6. Prove the AC3 spec fails against the pre-fix gate logic. Do not touch git history; reproduce the pre-fix predicate by temporarily reinstating it by hand in the working tree, then restoring it from the copy below.
    - Save the fixed file: `cp pkg/command/planning_retry.go /tmp/planning_retry.go.fixed`
-   - Insert this block at the very top of the body of `matchesRetryGate` (before the task-type check):
+   - Insert this block inside `matchesRetryGate` immediately after the task-type/assignee check and before the `hasFailureMarker` check — exactly where `ede6d9d` had it:
      ```go
      	phase := req.Frontmatter.Phase()
      	if phase == nil || phase.String() != domain.TaskPhasePlanning.String() {
@@ -104,15 +110,21 @@ Reference guides (in-container paths):
      		return false
      	}
      ```
-   - Run `go test ./pkg/command/ -count=1 -args -ginkgo.focus="payload carries no phase"`. It must FAIL at the `handled` assertion (`Expected <bool>: false to be true`). Capture the failing output.
+   - Run, capturing both the output and the exit code:
+     `go test ./pkg/command/ -count=1 -v -args -ginkgo.focus="payload carries no phase" > /tmp/prefix-run.log 2>&1; echo "exit=$?" >> /tmp/prefix-run.log`
+     It must FAIL: the log must contain `to be true` (the `handled` assertion — Gomega prints it across lines, so grep the phrase, not the whole sentence) and must contain `exit=1`.
    - Restore the fixed file: `cp /tmp/planning_retry.go.fixed pkg/command/planning_retry.go`
-   - Re-run the same focused command. It must PASS.
+   - Re-run the same focused command with capture:
+     `go test ./pkg/command/ -count=1 -v -args -ginkgo.focus="payload carries no phase" > /tmp/postfix-run.log 2>&1; echo "exit=$?" >> /tmp/postfix-run.log`
+     It must PASS: the log must contain `Ran 1 of` and `exit=0`, and must NOT contain `to be true`.
    - Confirm the restore is byte-identical with `cmp /tmp/planning_retry.go.fixed pkg/command/planning_retry.go` (must exit 0).
-   - Record both runs (the failing output and the passing output) in the completion report's evidence/notes, and state explicitly that the pre-fix logic was reproduced from `ede6d9d`'s predicate because `.git` is masked.
+   - Record both logs' contents in the completion report's evidence/notes, and state explicitly that the pre-fix logic was reproduced by hand from `ede6d9d`'s `matchesRetryGate` predicate.
 
 7. Do not change any production file permanently in this prompt. The only durable edits are to `pkg/command/planning_retry_test.go`.
 
 8. Self-check before finishing: re-run every `<verification>` command and confirm each passes; confirm `cmp /tmp/planning_retry.go.fixed pkg/command/planning_retry.go` exits 0; walk each acceptance criterion against the change.
+   Ordering matters: `make precommit` runs `format` (goimports-reviser/golines over every `.go` file) and `generate` (it deletes and rebuilds `mocks/`). Run the focused proof runs *before* `make precommit`, so the byte-identity `cmp` compares like with like. After `make precommit`, do **not** re-run `cmp` against `/tmp/planning_retry.go.fixed` — that baseline predates the formatter and a formatting-only rewrite of `planning_retry.go` would fail it spuriously. Verify restoration after precommit with `git status --porcelain pkg/command/planning_retry.go` instead: it must print nothing.
+   The AC2 log line (`planning-retry: task %s on-disk phase=%s; skipping gate`) is deliberately **not** asserted behaviourally: capturing a `glog.V(3)` line needs `-v=3` plus `logtostderr`, which the repo has no precedent for. Prompt 1 covers the format string by grep of the source, and that is the recorded decision — not an omission to fix here.
 </requirements>
 
 <constraints>
@@ -134,11 +146,36 @@ Confirm the four new specs are present:
 `grep -q 'on-disk phase is absent' pkg/command/planning_retry_test.go`
 `grep -q 'task file not found' pkg/command/planning_retry_test.go`
 
-Confirm the production file was restored after the evidence step:
+Confirm all four actually execute (names alone prove nothing):
+`go test ./pkg/command/ -count=1 -v -args -ginkgo.focus="on-disk phase is the source of truth" -ginkgo.v 2>&1 | grep -q 'Ran 4 of'`
+⚠️ `-v` is load-bearing: `go test` captures the package's stdout and only prints it with `-v` (or on failure), so without it the log contains no `Ran N of` line at all and this grep fails on a correct implementation. `-ginkgo.v` alone is not enough.
+
+Confirm the AC3 spec really asserts the retry fired, and the AC4 spec really asserts the skip — by **count**, because the plain greps already match pre-existing specs (12 `BeTrue`, 3 `BeFalse` before this prompt):
+`test "$(grep -c 'Expect(handled).To(BeTrue())' pkg/command/planning_retry_test.go)" -ge 13`
+`test "$(grep -c 'Expect(handled).To(BeFalse())' pkg/command/planning_retry_test.go)" -ge 4`
+`grep -q 'Expect(req.Frontmatter.Phase()).To(BeNil())' pkg/command/planning_retry_test.go`
+`grep -q 'Expect(req.Frontmatter.Phase().String()).To(Equal("planning"))' pkg/command/planning_retry_test.go`
+
+Confirm the two extra contexts are not empty shells (both strings match 0 times today):
+`test "$(grep -c 'ListFilesReturns(\[\]string{}, nil)' pkg/command/planning_retry_test.go)" -ge 1`
+`grep -q 'planning_retry_count: 0' pkg/command/planning_retry_test.go`
+
+Confirm the pre-fix proof actually ran, both directions:
+`grep -q 'to be true' /tmp/prefix-run.log`
+`grep -q 'exit=1' /tmp/prefix-run.log`
+`grep -q 'Ran 1 of' /tmp/postfix-run.log`
+`grep -q 'exit=0' /tmp/postfix-run.log`
+`! grep -q 'to be true' /tmp/postfix-run.log`
+
+Confirm the production file was restored after the evidence step — run this **before** `make precommit`, since the `/tmp` baseline predates the formatter:
 `cmp /tmp/planning_retry.go.fixed pkg/command/planning_retry.go`
 
 Confirm the payload-phase read is still absent:
-`! grep -rq 'req\.Frontmatter\.Phase()' --include='*.go' pkg/`
+`! grep -q 'req\.Frontmatter\.Phase()' pkg/command/planning_retry.go`
+⚠️ Scoped to the production file on purpose: requirements 2 and 3 add `req.Frontmatter.Phase()` assertions to the **test** file, so a repo-wide `--include='*.go' pkg/` grep would be non-zero on a correct implementation and this line would fail it.
 
 Run `ROOTDIR=/workspace make precommit` — must exit 0 (includes `go test ./...`).
+
+After `make precommit`, confirm the production file is still unmodified relative to git (this replaces `cmp` for the post-format state):
+`test -z "$(git status --porcelain pkg/command/planning_retry.go)"`
 </verification>

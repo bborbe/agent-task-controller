@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-11-01T10:21:26Z"
 generating: "2026-11-01T10:23:39Z"
 prompted: "2026-11-01T10:37:12Z"
+verifying: "2026-11-01T10:42:05Z"
 branch: dark-factory/bug-planning-retry-gate-reads-on-disk-phase
 ---
 

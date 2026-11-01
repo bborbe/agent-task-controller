@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - fix: **the planning-retry gate reads the on-disk phase.** `bborbe/agent` v0.136.0 stopped publishing `phase` on a failed result that advanced nothing, so `matchesRetryGate` read a nil payload phase and silently disabled the controller-side planning retry — a `pr-review` task failing in `planning` stalled with `planning_retry_count` at 0 and no PR comment. The phase predicate now runs in `Handle` against the frontmatter `FindTaskFilePath` already returns, after the not-found guard; the payload phase is never consulted. The task-type, assignee and failure-marker pre-filters stay payload-driven, and the 3-retry cap and escalation shape are unchanged.
+- test: **lock the planning-retry gate to the on-disk phase.** Four specs in `pkg/command/planning_retry_test.go` now pin the contract: a payload with no `phase` on a task file parked in `planning` retries and bumps `planning_retry_count` to 1; a payload claiming `planning` on a task file that moved to `execution` skips and writes nothing; a task file with no `phase` key skips; and a missing task file skips before the phase predicate runs. The no-payload-phase spec was re-run against the pre-fix `matchesRetryGate` predicate and fails there, so the regression is genuinely covered.
 
 ## v0.23.0
 
