@@ -105,7 +105,9 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	if phase != nil {
 		phaseValue = phase.String()
 	}
-	if phase == nil || phaseValue != domain.TaskPhasePlanning.String() {
+	// phaseValue is "" when phase is nil, and "" never equals planning, so the
+	// single comparison covers the absent-phase case too.
+	if phaseValue != domain.TaskPhasePlanning.String() {
 		glog.V(3).
 			Infof("planning-retry: task %s on-disk phase=%s; skipping gate", req.TaskIdentifier, phaseValue)
 		return false, nil

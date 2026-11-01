@@ -197,13 +197,13 @@ var _ = Describe("PlanningRetryGate", func() {
 				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
 				fakeGit.ReadFileReturns(diskContent, nil)
 
-				var capturedModify func([]byte) ([]byte, error)
+				// Capture the stub's own invocation, not a second call after Handle
+				// returns — the assertion must describe the path the gate ran.
+				var resultBytes []byte
 				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
+					out, invokeErr := modify(diskContent)
+					resultBytes = out
+					return invokeErr
 				}
 
 				handled, err := gate.Handle(ctx, req)
@@ -211,8 +211,6 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(handled).To(BeTrue())
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -250,6 +248,43 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		// The mirror of the context above: a payload that claims a phase PAST
+		// planning must not veto a retry while the task is still parked in
+		// planning. Without this spec, a reintroduced payload-side veto
+		// ("payload phase present and != planning => skip") would pass every
+		// other spec in this block, and "the payload phase is never consulted"
+		// would be locked in one direction only.
+		Context("payload phase is execution, on-disk phase is planning", func() {
+			It("retries on the on-disk phase and ignores the payload phase", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"execution",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				Expect(req.Frontmatter.Phase().String()).To(Equal("execution"))
+
+				diskContent := onDiskFileWithPhase(
+					"pr-123",
+					"planning",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				diskFMStr, diskErr := result.ExtractFrontmatter(ctx, diskContent)
+				Expect(diskErr).To(BeNil())
+				var diskFM lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
+				Expect(diskFM.Phase().String()).To(Equal("planning"))
+
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 			})
 		})
 
