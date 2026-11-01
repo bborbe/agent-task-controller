@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **the planning-retry gate reads the on-disk phase.** `bborbe/agent` v0.136.0 stopped publishing `phase` on a failed result that advanced nothing, so `matchesRetryGate` read a nil payload phase and silently disabled the controller-side planning retry — a `pr-review` task failing in `planning` stalled with `planning_retry_count` at 0 and no PR comment. The phase predicate now runs in `Handle` against the frontmatter `FindTaskFilePath` already returns, after the not-found guard; the payload phase is never consulted. The task-type, assignee and failure-marker pre-filters stay payload-driven, and the 3-retry cap and escalation shape are unchanged.
+
 ## v0.22.10
 
 - fix: **a result the ownership guard rejects now republishes the on-disk state.** When the guard kept on-disk fields (`status kept completed rejected in_progress`, `assignee kept "" rejected pr-reviewer-agent`), the write became a no-op. `AtomicReadModifyWriteAndCommitPush` skips an unchanged file, so nothing was committed and no event was published. An executor whose view still held the rejected values never learned they were rejected and re-drove the task once its success grace lapsed. On sun-k3s, completed, parked `pr-override` records re-spawned and re-approved already-merged PRs (156 of 359 bot reviews in 24 h on 2026-10-28; still live on 2026-10-31). The result writer now publishes the merged state once after the write whenever the guard rejected a field (`event=kept_state_published`). The publish is best-effort and logged on failure.

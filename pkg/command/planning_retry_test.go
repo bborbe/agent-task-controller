@@ -78,16 +78,14 @@ var _ = Describe("PlanningRetryGate", func() {
 		}
 	}
 
-	// onDiskFile creates a task file content. When retryCount < 0, the
-	// planning_retry_count key is omitted entirely (absent frontmatter state).
-	// When withPRMetadata is true, repository and pull_request_number are included.
-	onDiskFile := func(taskID string, retryCount int, body string, withPRMetadata ...bool) []byte {
+	// onDiskFileWithPhase creates a task file content with an explicit on-disk phase.
+	onDiskFileWithPhase := func(taskID string, phase string, retryCount int, body string, withPRMetadata ...bool) []byte {
 		fm := map[string]interface{}{
 			"task_identifier": taskID,
 			"task_type":       "pr-review",
 			"assignee":        "pr-reviewer-agent",
 			"status":          "in_progress",
-			"phase":           "planning",
+			"phase":           phase,
 		}
 		if retryCount >= 0 {
 			fm["planning_retry_count"] = retryCount
@@ -100,6 +98,13 @@ var _ = Describe("PlanningRetryGate", func() {
 		return []byte("---\n" + string(fmBytes) + "\n---\n" + body)
 	}
 
+	// onDiskFile creates a task file content. When retryCount < 0, the
+	// planning_retry_count key is omitted entirely (absent frontmatter state).
+	// When withPRMetadata is true, repository and pull_request_number are included.
+	onDiskFile := func(taskID string, retryCount int, body string, withPRMetadata ...bool) []byte {
+		return onDiskFileWithPhase(taskID, "planning", retryCount, body, withPRMetadata...)
+	}
+
 	Describe("passthrough cases", func() {
 		Context("non-planning phase", func() {
 			It("returns handled=false and does not write", func() {
@@ -110,7 +115,7 @@ var _ = Describe("PlanningRetryGate", func() {
 				)
 				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
 				fakeGit.ReadFileReturns(
-					onDiskFile("pr-123", 0, "## Objective\nreview the PR\n"),
+					onDiskFileWithPhase("pr-123", "execution", 0, "## Objective\nreview the PR\n"),
 					nil,
 				)
 

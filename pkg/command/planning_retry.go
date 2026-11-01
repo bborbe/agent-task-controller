@@ -100,6 +100,17 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 		return false, nil
 	}
 
+	phase := existingFrontmatter.Phase()
+	phaseValue := ""
+	if phase != nil {
+		phaseValue = phase.String()
+	}
+	if phase == nil || phaseValue != domain.TaskPhasePlanning.String() {
+		glog.V(3).
+			Infof("planning-retry: task %s on-disk phase=%s; skipping gate", req.TaskIdentifier, phaseValue)
+		return false, nil
+	}
+
 	count, _ := existingFrontmatter.Int("planning_retry_count")
 	if count < 0 {
 		count = 0
@@ -150,12 +161,6 @@ func (g *planningRetryGate) matchesRetryGate(req lib.Task) bool {
 		req.Frontmatter.Assignee() != lib.TaskAssignee("pr-reviewer-agent") {
 		glog.V(3).
 			Infof("planning-retry: task %s is not pr-review (task_type=%q, assignee=%q); skipping gate", req.TaskIdentifier, taskType, req.Frontmatter.Assignee())
-		return false
-	}
-	phase := req.Frontmatter.Phase()
-	if phase == nil || phase.String() != domain.TaskPhasePlanning.String() {
-		glog.V(3).
-			Infof("planning-retry: task %s phase is not planning; skipping gate", req.TaskIdentifier)
 		return false
 	}
 	if !hasFailureMarker(string(req.Content)) {
