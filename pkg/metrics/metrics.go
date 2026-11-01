@@ -30,6 +30,12 @@ type Metrics interface {
 	UpdateGoStuckPlanningTasks() prometheus.Gauge
 	TaskOldestAgeSeconds(vault string) prometheus.Gauge
 	TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge
+	// OpenTasks returns the open-task census vector, labelled by vault, phase and
+	// task_type in that declaration order — the same order WithLabelValues and
+	// DeleteLabelValues take. It is a *prometheus.GaugeVec rather than a single
+	// prometheus.Gauge because the caller both Set()s every present pair and
+	// DeleteLabelValues()s the pairs that vanished, and only the vector exposes both.
+	OpenTasks() *prometheus.GaugeVec
 }
 
 // defaultMetrics implements Metrics using promauto-registered counters.
@@ -96,6 +102,10 @@ func (m *defaultMetrics) TaskOldestAgeSeconds(vault string) prometheus.Gauge {
 
 func (m *defaultMetrics) TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge {
 	return TaskAgeBucketTasks.WithLabelValues(vault, bucket.String())
+}
+
+func (m *defaultMetrics) OpenTasks() *prometheus.GaugeVec {
+	return OpenTasks
 }
 
 // ScanCyclesTotal counts scan cycle completions by result.
@@ -336,6 +346,30 @@ var TaskAgeBucketTasks = promauto.NewGaugeVec(
 		Help: "Number of non-terminal task records per age bucket, by vault and bucket.",
 	},
 	[]string{"vault", "bucket"},
+)
+
+// OpenTasks is the number of open task records in each (phase, task_type) pair
+// of this controller's own vault.
+//
+// It is a level, not a counter: the dedicated metrics ticker recomputes it from
+// scratch on every pass and Set()s each pair's count, so the value is the
+// board's count rather than a running total, and two passes over an unchanged
+// board publish the same value.
+//
+// A pair that empties disappears from the exposition entirely rather than
+// lingering at 0: the recompute deletes the series for every pair the previous
+// pass published and this pass did not see, scoped to this controller's own
+// vault label so another controller's series are never touched.
+//
+// There is no init() pre-initialisation. The pair set is data-dependent, so no
+// fixed series can be seeded at registration; a fresh pod publishes no census
+// series until its first successful pass.
+var OpenTasks = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_open_tasks",
+		Help: "Number of open task records per (phase, task_type) pair, by vault. A pair that empties disappears from the exposition rather than lingering at 0.",
+	},
+	[]string{"vault", "phase", "task_type"},
 )
 
 func init() {

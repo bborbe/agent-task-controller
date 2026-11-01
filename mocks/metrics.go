@@ -75,6 +75,16 @@ type Metrics struct {
 	kafkaConsumePausedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	OpenTasksStub        func() *prometheus.GaugeVec
+	openTasksMutex       sync.RWMutex
+	openTasksArgsForCall []struct {
+	}
+	openTasksReturns struct {
+		result1 *prometheus.GaugeVec
+	}
+	openTasksReturnsOnCall map[int]struct {
+		result1 *prometheus.GaugeVec
+	}
 	PlanningRetryTotalStub        func(string) prometheus.Counter
 	planningRetryTotalMutex       sync.RWMutex
 	planningRetryTotalArgsForCall []struct {
@@ -516,6 +526,59 @@ func (fake *Metrics) KafkaConsumePausedTotalReturnsOnCall(i int, result1 prometh
 	}
 	fake.kafkaConsumePausedTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) OpenTasks() *prometheus.GaugeVec {
+	fake.openTasksMutex.Lock()
+	ret, specificReturn := fake.openTasksReturnsOnCall[len(fake.openTasksArgsForCall)]
+	fake.openTasksArgsForCall = append(fake.openTasksArgsForCall, struct {
+	}{})
+	stub := fake.OpenTasksStub
+	fakeReturns := fake.openTasksReturns
+	fake.recordInvocation("OpenTasks", []interface{}{})
+	fake.openTasksMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) OpenTasksCallCount() int {
+	fake.openTasksMutex.RLock()
+	defer fake.openTasksMutex.RUnlock()
+	return len(fake.openTasksArgsForCall)
+}
+
+func (fake *Metrics) OpenTasksCalls(stub func() *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = stub
+}
+
+func (fake *Metrics) OpenTasksReturns(result1 *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = nil
+	fake.openTasksReturns = struct {
+		result1 *prometheus.GaugeVec
+	}{result1}
+}
+
+func (fake *Metrics) OpenTasksReturnsOnCall(i int, result1 *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = nil
+	if fake.openTasksReturnsOnCall == nil {
+		fake.openTasksReturnsOnCall = make(map[int]struct {
+			result1 *prometheus.GaugeVec
+		})
+	}
+	fake.openTasksReturnsOnCall[i] = struct {
+		result1 *prometheus.GaugeVec
 	}{result1}
 }
 
