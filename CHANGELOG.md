@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: **open-task census gauge surface.** Adds the `agent_controller_open_tasks{vault,phase,task_type}` gauge vector, exposed through a new `Metrics.OpenTasks()` accessor, so the controller can publish the number of open task records per `(phase, task_type)` pair as a level that is recomputed rather than accumulated.
+
 ## v0.23.0
 
 - feat: **task age metrics: the oldest non-terminal record's age and its bucket distribution are now published per vault.** `agent_controller_task_oldest_age_seconds{vault}` carries the age in whole seconds of the oldest dated non-terminal record and `agent_controller_task_age_bucket_tasks{vault,bucket}` counts non-terminal records in `lt_1d` / `1d_7d` / `gt_7d` / `undated`. Both are levels recomputed by a dedicated 60-second ticker that runs even under `POLL_INTERVAL=0s`, where the scan-cycle gauge is dead. Age comes from `created`, then `created_date`, then `queued_at`, then `job_started_at`; a record with none is counted in `undated`, and a future timestamp clamps to 0. The contract is written in `docs/controller-design.md` § Task Age Metrics.

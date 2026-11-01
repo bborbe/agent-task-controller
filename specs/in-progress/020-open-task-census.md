@@ -1,9 +1,11 @@
 ---
-status: approved
+status: prompted
 tags:
     - dark-factory
     - spec
 approved: "2026-11-01T13:03:47Z"
+generating: "2026-11-01T13:06:33Z"
+prompted: "2026-11-01T13:20:25Z"
 branch: dark-factory/open-task-census
 ---
 

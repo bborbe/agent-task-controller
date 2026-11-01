@@ -182,6 +182,49 @@ var _ = Describe("task age metrics (spec 019)", func() {
 	})
 })
 
+var _ = Describe("open task census metrics (spec 020)", func() {
+	It("registers the family as a gauge with exactly the frozen label names", func() {
+		metrics.New().OpenTasks().
+			WithLabelValues("spec-020-labels", "planning", "github-update-go").
+			Set(1)
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		family := findMetricFamily(mfs, "agent_controller_open_tasks")
+		Expect(family).NotTo(BeNil(), "open-tasks family must be registered")
+		Expect(family.GetType()).To(Equal(dto.MetricType_GAUGE))
+		// The DTO reports label names sorted, so assert the exact set rather than
+		// the declaration order.
+		Expect(metricFamilyLabelNames(family)).To(ConsistOf("vault", "phase", "task_type"))
+	})
+
+	It("reads back the value the default implementation wrote", func() {
+		metrics.New().OpenTasks().
+			WithLabelValues("spec-020-labels", "planning", "github-update-go").
+			Set(1)
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		family := findMetricFamily(mfs, "agent_controller_open_tasks")
+		Expect(family).NotTo(BeNil(), "open-tasks family must be registered")
+
+		value, found := gatherOpenTasksValue(
+			family,
+			"spec-020-labels",
+			"planning",
+			"github-update-go",
+		)
+		Expect(found).To(BeTrue(), "the spec-020-labels sample must exist")
+		Expect(value).To(BeNumerically("==", 1))
+	})
+
+	It("returns the registered collector itself", func() {
+		Expect(metrics.New().OpenTasks()).To(BeIdenticalTo(metrics.OpenTasks))
+	})
+})
+
 // findMetricFamily returns the family with the given name, or nil when absent.
 func findMetricFamily(mfs []*dto.MetricFamily, name string) *dto.MetricFamily {
 	for _, mf := range mfs {
@@ -241,6 +284,27 @@ func gatherCounterValue(
 					return m.GetCounter().GetValue(), true
 				}
 			}
+		}
+	}
+	return 0, false
+}
+
+// gatherOpenTasksValue returns the gauge value of the open-tasks sample whose
+// vault, phase and task_type labels all match, and whether such a sample exists.
+func gatherOpenTasksValue(
+	mf *dto.MetricFamily,
+	vault string,
+	phase string,
+	taskType string,
+) (float64, bool) {
+	for _, m := range mf.GetMetric() {
+		labels := make(map[string]string, len(m.GetLabel()))
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		if labels["vault"] == vault && labels["phase"] == phase &&
+			labels["task_type"] == taskType {
+			return m.GetGauge().GetValue(), true
 		}
 	}
 	return 0, false
