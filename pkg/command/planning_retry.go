@@ -241,6 +241,13 @@ func (g *planningRetryGate) buildRetryModifyFn(
 		if onDiskCount != count {
 			return current, nil
 		}
+		// Re-check the phase against THIS read, not the one Handle saw: the task
+		// may have moved past planning between FindTaskFilePath and here, and a
+		// stale read must never force it back to planning.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
+			return current, nil
+		}
 
 		retryLine := "retry " + strconv.Itoa(count+1) + "/3: " + reason + " at " + ts
 		retryLineBullet := "- " + retryLine
@@ -334,6 +341,17 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 		var fm lib.TaskFrontmatter
 		if err := yaml.Unmarshal([]byte(fmStr), &fm); err != nil {
 			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
+		}
+
+		// Re-check the phase against THIS read: a task that moved past planning
+		// between FindTaskFilePath and here must not be escalated back into the
+		// human queue. Clearing firstEscalation keeps the caller from posting the
+		// escalation comment or bumping the "exhausted" metric for a write that
+		// did not happen.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
+			*firstEscalation = false
+			return current, nil
 		}
 
 		// Idempotency: check if terminal retry line already present

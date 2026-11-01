@@ -290,6 +290,95 @@ var _ = Describe("PlanningRetryGate", func() {
 		})
 	})
 
+	Describe("the on-disk phase is re-checked inside the write closure", func() {
+		// Handle reads the phase from FindTaskFilePath, but the write happens in a
+		// closure that re-reads the file. A task that moves past planning between
+		// those two reads must not be forced back — neither by the retry write nor
+		// by the escalation write. The stub invokes the closure with the moved
+		// bytes, which is exactly what AtomicReadModifyWriteAndCommitPush does.
+		Context("retry path: the task moves past planning before the write", func() {
+			It("leaves the file untouched and does not bump the counter", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				moved := onDiskFileWithPhase(
+					"pr-123",
+					"execution",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var written []byte
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					out, invokeErr := modify(moved)
+					written = out
+					return invokeErr
+				}
+
+				beforeRetry := testutil.ToFloat64(
+					metrics.PlanningRetryTotal.WithLabelValues("retry"),
+				)
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(written).To(Equal(moved))
+
+				Expect(
+					testutil.ToFloat64(
+						metrics.PlanningRetryTotal.WithLabelValues("retry"),
+					) - beforeRetry,
+				).To(Equal(0.0))
+			})
+		})
+
+		Context("escalation path: the task moves past planning before the write", func() {
+			It("leaves the file untouched and posts no escalation comment", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
+				moved := onDiskFileWithPhase(
+					"pr-123",
+					"human_review",
+					3,
+					"## Objective\n\nreview the PR\n",
+					true,
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var written []byte
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					out, invokeErr := modify(moved)
+					written = out
+					return invokeErr
+				}
+
+				beforeExhausted := testutil.ToFloat64(
+					metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
+				)
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(written).To(Equal(moved))
+
+				Expect(fakeCommenter.PostCommentCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
+					) - beforeExhausted,
+				).To(Equal(0.0))
+			})
+		})
+	})
+
 	Describe("retry attempts", func() {
 		Context("retry attempt 1 (count absent -> 0)", func() {
 			It("bumps counter to 1 and sets fresh task_identifier", func() {
