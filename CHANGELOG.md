@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - feat: **open-task census gauge surface.** Adds the `agent_controller_open_tasks{vault,phase,task_type}` gauge vector, exposed through a new `Metrics.OpenTasks()` accessor, so the controller can publish the number of open task records per `(phase, task_type)` pair as a level that is recomputed rather than accumulated.
+- feat: **open-task census computation and clearing.** The scanner's new unexported `recomputeOpenTaskCensus` lists the task directory once, counts every record whose status is neither `completed` nor `aborted` per `(phase, task_type)`, and `Set`s each pair after the whole listing so a cancelled pass writes nothing. A missing or non-string `phase`/`task_type` is published as `""` rather than dropped, and unreadable or unparseable files are skipped silently. Pairs published by the previous pass and absent now are removed with `DeleteLabelValues(vault, phase, task_type)` scoped to this controller's own vault value — never `Reset()`.
 
 ## v0.23.0
 

@@ -92,6 +92,13 @@ type vaultScanner struct {
 	vaultName       string
 	metricsInterval time.Duration
 
+	// openTaskPairs is the set of (phase, task_type) pairs the previous census pass
+	// published, so the next pass can delete the ones that vanished. It is a nil map
+	// — a valid empty set — until the first successful pass, which is why neither
+	// constructor initialises it. Single-goroutine: the census runs inline in Run's
+	// goroutine and never overlaps itself.
+	openTaskPairs map[openTaskPair]struct{}
+
 	// indexMutex guards index. publishIndex builds the whole map and swaps it under
 	// the write lock; Resolve reads the published snapshot under the read lock. A
 	// reader therefore observes either the previous cycle's map or the new one,

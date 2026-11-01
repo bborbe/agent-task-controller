@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [020-open-task-census]
+summary: Added the unexported open-task census computation with per-vault DeleteLabelValues clearing and 12 internal specs covering AC 4-14 plus the broken-file skip rule.
+execution_id: agent-task-controller-open-tasks-gauge-exec-044-spec-020-census-computation
+dark-factory-version: v0.198.7
 created: "2026-11-01T14:20:00Z"
 queued: "2026-11-01T13:28:07Z"
+started: "2026-11-01T13:34:42Z"
+completed: "2026-11-01T13:39:33Z"
 branch: dark-factory/open-task-census
 ---
 
