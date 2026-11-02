@@ -1,0 +1,611 @@
+// Copyright (c) 2026 Benjamin Borbe All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package result_test
+
+import (
+	lib "github.com/bborbe/agent"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/bborbe/agent-task-controller/pkg/result"
+)
+
+var _ = Describe("MergeFrontmatter", func() {
+	It(
+		"reports zero guard decisions when the incoming counter equals the on-disk counter",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+			_, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
+	It(
+		"reports zero decisions when a JSON-decoded float64 counter equals the YAML-decoded int counter",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+			incoming := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": float64(3),
+			}
+			_, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
+	It(
+		"reports exactly one decision naming the field and both values when the incoming counter differs",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 3}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 1}
+			_, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("trigger_count"))
+			Expect(decisions[0].Kept).To(Equal(3))
+			Expect(decisions[0].Rejected).To(Equal(1))
+		},
+	)
+
+	It(
+		"reports a decision when the on-disk counter is an int64 and the incoming differs (numeric comparison)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": int64(3),
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 1}
+			_, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("trigger_count"))
+		},
+	)
+
+	It(
+		"keeps a non-integer on-disk counter verbatim and still reports a decision (DB failure-mode)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": "3",
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "trigger_count": 1}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("trigger_count"))
+			Expect(merged["trigger_count"]).To(Equal("3"))
+		},
+	)
+
+	It(
+		"does not panic when trigger_count holds an uncomparable type on both sides (map)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": map[string]interface{}{"bad": 1},
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": map[string]interface{}{"other": 2},
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(merged["trigger_count"]).To(Equal(map[string]interface{}{"bad": 1}))
+		},
+	)
+
+	It(
+		"does not panic when trigger_count holds an uncomparable type on both sides (slice)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": []interface{}{1, 2},
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": []interface{}{3},
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(merged["trigger_count"]).To(Equal([]interface{}{1, 2}))
+		},
+	)
+
+	It(
+		"reports exactly one decision naming assignee with the kept and rejected values when the on-disk assignee differs",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "other"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("claude"))
+			Expect(decisions[0].Rejected).To(Equal("other"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It("reports zero decisions when the on-disk assignee equals the incoming assignee", func() {
+		existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+		incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+		merged, decisions := result.MergeFrontmatter(existing, incoming)
+		Expect(decisions).To(HaveLen(0))
+		Expect(merged["assignee"]).To(Equal("claude"))
+	})
+
+	It(
+		"applies an incoming empty assignee over a non-empty on-disk value without reporting a decision (deliverer clear exception)",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": ""}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal(""))
+		},
+	)
+
+	It("reports zero decisions when an incoming assignee introduces a key absent on disk", func() {
+		existing := lib.TaskFrontmatter{"status": "in_progress"}
+		incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": "backtest-agent"}
+		merged, decisions := result.MergeFrontmatter(existing, incoming)
+		Expect(decisions).To(HaveLen(0))
+		Expect(merged["assignee"]).To(Equal("backtest-agent"))
+	})
+
+	It(
+		"applies an incoming assignee when the payload declares a reassignment, and consumes the declaration",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-analyzer-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			// Consumed, not persisted — otherwise a repeat handoff on a re-driven
+			// task would write the value the first one left behind and be discarded.
+			Expect(merged).NotTo(HaveKey("assignee_reassigned_by"))
+		},
+	)
+
+	It(
+		"applies a second handoff on a re-driven task, where the first declaration was consumed",
+		func() {
+			// Re-driven to the analyzer and handed off again: same declarer, same
+			// value. Were the key persisted rather than consumed, this second handoff
+			// would write the value the first left on disk and a value-differs
+			// freshness test would discard it — re-creating the stranding the key
+			// exists to fix, on exactly the re-drive path the runbooks use.
+			handoff := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			afterFirst, _ := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(afterFirst).NotTo(HaveKey("assignee_reassigned_by"))
+
+			afterSecond, decisions := result.MergeFrontmatter(
+				lib.TaskFrontmatter{"status": "in_progress", "assignee": "sentry-analyzer-agent"},
+				handoff,
+			)
+			Expect(decisions).To(HaveLen(0))
+			Expect(afterSecond["assignee"]).To(Equal("sentry-fix-agent"))
+		},
+	)
+
+	It(
+		"keeps the on-disk task_type when a stale snapshot's assignee is discarded (routing tuple travels together)",
+		func() {
+			// The 2026-10-18 prod incident, task 6ea12dd3: the fix handoff wrote
+			// task_type: sentry-fix; a superseded analyzer job's result merged later.
+			// The guard kept assignee sentry-fix-agent but task_type reverted to
+			// sentry-deep-analyzer, so the executor spawned the fix agent with the
+			// analyzer's task type and the pod failed its preflight.
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-fix-agent",
+				"task_type": "sentry-fix",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(2))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("sentry-fix-agent"))
+			Expect(decisions[1].Field).To(Equal("task_type"))
+			Expect(decisions[1].Kept).To(Equal("sentry-fix"))
+			Expect(decisions[1].Rejected).To(Equal("sentry-deep-analyzer"))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			Expect(merged["task_type"]).To(Equal("sentry-fix"))
+		},
+	)
+
+	It(
+		"applies an incoming task_type alongside a declared reassignment (handoff)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "sentry-fix-agent",
+				"task_type":              "sentry-fix",
+				"assignee_reassigned_by": "sentry-deep-execution-fix-handoff",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["assignee"]).To(Equal("sentry-fix-agent"))
+			Expect(merged["task_type"]).To(Equal("sentry-fix"))
+			Expect(merged).NotTo(HaveKey("assignee_reassigned_by"))
+		},
+	)
+
+	It(
+		"applies a same-assignee task_type change (triage→deep reassign produces no assignee decision)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-issue-analyzer",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["task_type"]).To(Equal("sentry-deep-analyzer"))
+		},
+	)
+
+	It(
+		"introduces an incoming task_type when none exists on disk, even if the assignee is discarded",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-fix-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":    "in_progress",
+				"assignee":  "sentry-analyzer-agent",
+				"task_type": "sentry-deep-analyzer",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["task_type"]).To(Equal("sentry-deep-analyzer"))
+		},
+	)
+
+	It(
+		"keeps an operator re-route when the payload carries no declaration",
+		func() {
+			// The guard's purpose, and the case the declaration must not weaken: an
+			// agent's spawn-time snapshot arriving after an operator re-routed the
+			// task still loses.
+			existing := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "operator-chosen-agent",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":   "in_progress",
+				"assignee": "sentry-fix-agent",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(decisions[0].Kept).To(Equal("operator-chosen-agent"))
+			Expect(merged["assignee"]).To(Equal("operator-chosen-agent"))
+		},
+	)
+
+	It(
+		"treats an empty declaration as no declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": "",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
+		"does not panic on a non-string declaration and keeps the on-disk assignee",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{
+				"status":                 "in_progress",
+				"assignee":               "other",
+				"assignee_reassigned_by": []interface{}{"malformed"},
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
+		"keeps the on-disk previous_assignee over a differing incoming value and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "B"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("previous_assignee"))
+			Expect(decisions[0].Kept).To(Equal("A"))
+			Expect(decisions[0].Rejected).To(Equal("B"))
+			Expect(merged["previous_assignee"]).To(Equal("A"))
+		},
+	)
+
+	It(
+		"does not treat an empty incoming previous_assignee as a clear — the on-disk value wins and a decision is reported",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": "A"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "previous_assignee": ""}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("previous_assignee"))
+			Expect(merged["previous_assignee"]).To(Equal("A"))
+		},
+	)
+
+	// Live incident 2026-10-21, task "PR Review github - bborbe-teamvault-docker - 10":
+	// the job spawned from a snapshot carrying cluster: sun, the operator removed
+	// cluster: while it ran (vault commit d107bbdb), and the result write restored
+	// cluster: sun (vault commit 83a2ab1a). An incoming cluster must never
+	// reintroduce a key the operator removed.
+	It(
+		"does not let an incoming cluster reintroduce the key an operator removed while the job ran",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":             "in_progress",
+				"phase":              "planning",
+				"spawn_notification": true,
+				"current_job":        "pr-reviewer-agent-8ba6f21c-20261021214249",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":  "in_progress",
+				"phase":   "done",
+				"cluster": "sun",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged).NotTo(HaveKey("cluster"))
+			Expect(merged["phase"]).To(Equal("done"))
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("cluster"))
+			Expect(decisions[0].Kept).To(BeNil())
+			Expect(decisions[0].Rejected).To(Equal("sun"))
+		},
+	)
+
+	It(
+		"keeps the on-disk cluster over a differing incoming value and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "nuke"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("nuke"))
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("cluster"))
+			Expect(decisions[0].Kept).To(Equal("nuke"))
+			Expect(decisions[0].Rejected).To(Equal("sun"))
+		},
+	)
+
+	It(
+		"produces no decision when the on-disk and incoming cluster are equal",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("sun"))
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
+	It(
+		"produces no decision when the incoming payload carries no cluster",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "cluster": "sun"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "phase": "done"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["cluster"]).To(Equal("sun"))
+			Expect(decisions).To(HaveLen(0))
+		},
+	)
+
+	It(
+		"reports both the counter decision and the operator-owned decision when both differ (additive rule)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": 3,
+				"assignee":      "claude",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":        "in_progress",
+				"trigger_count": 1,
+				"assignee":      "other",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(2))
+			Expect(decisions[0].Field).To(Equal("trigger_count"))
+			Expect(decisions[1].Field).To(Equal("assignee"))
+			Expect(merged["trigger_count"]).To(Equal(3))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	It(
+		"does not panic on a non-string incoming assignee and keeps the on-disk value",
+		func() {
+			// A malformed payload can decode assignee as an uncomparable slice; the
+			// empty-clear comparison must type-assert, never == on any (spec 007,
+			// same doctrine as frontmatterValueEqual).
+			existing := lib.TaskFrontmatter{"status": "in_progress", "assignee": "claude"}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "assignee": []any{"x"}}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("assignee"))
+			Expect(merged["assignee"]).To(Equal("claude"))
+		},
+	)
+
+	DescribeTable(
+		"an accumulated counter adds the incoming value to the on-disk total with no decision",
+		func(existing, incoming lib.TaskFrontmatter, field string, want float64) {
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged[field]).To(BeNumerically("==", want))
+		},
+		Entry(
+			"on-disk int 7 plus incoming float64 3 accumulates to 10",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 7},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": float64(3)},
+			"metrics_agent_turns",
+			float64(10),
+		),
+		Entry(
+			"on-disk int64 3 plus incoming int 4 accumulates to 7",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": int64(3)},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 4},
+			"metrics_agent_turns",
+			float64(7),
+		),
+		Entry(
+			"on-disk int 116 plus incoming float64 41 accumulates to 157",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": 116},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": float64(41)},
+			"metrics_interaction_count",
+			float64(157),
+		),
+		Entry(
+			"an evidenced unattended run (incoming 0) leaves the on-disk total unchanged",
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": 116},
+			lib.TaskFrontmatter{"status": "in_progress", "metrics_interaction_count": float64(0)},
+			"metrics_interaction_count",
+			float64(116),
+		),
+	)
+
+	It(
+		"leaves both on-disk counters untouched with no decision when the incoming payload carries neither key",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":                    "in_progress",
+				"metrics_agent_turns":       7,
+				"metrics_interaction_count": 116,
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress"}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal(7))
+			Expect(merged["metrics_interaction_count"]).To(Equal(116))
+		},
+	)
+
+	It(
+		"takes the incoming value with no decision when the on-disk frontmatter carries no counter key (first run)",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress"}
+			incoming := lib.TaskFrontmatter{
+				"status":                    "in_progress",
+				"metrics_agent_turns":       3,
+				"metrics_interaction_count": 0,
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal(3))
+			Expect(merged["metrics_interaction_count"]).To(Equal(0))
+		},
+	)
+
+	It(
+		"keeps a non-numeric counter verbatim and reports exactly one decision naming the field",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(decisions[0].Kept).To(Equal("unparseable"))
+			Expect(decisions[0].Rejected).To(Equal(3))
+			Expect(merged["metrics_agent_turns"]).To(Equal("unparseable"))
+		},
+	)
+
+	It(
+		"keeps a numeric on-disk counter when the incoming value is non-numeric and reports one decision",
+		func() {
+			existing := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			incoming := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(decisions[0].Kept).To(Equal(3))
+			Expect(decisions[0].Rejected).To(Equal("unparseable"))
+			Expect(merged["metrics_agent_turns"]).To(Equal(3))
+		},
+	)
+
+	It(
+		"keeps the on-disk value verbatim with zero decisions when both sides hold the same non-numeric value",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": "unparseable",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(0))
+			Expect(merged["metrics_agent_turns"]).To(Equal("unparseable"))
+		},
+	)
+
+	It(
+		"keeps a non-numeric slice counter verbatim without panicking (spec Security)",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":              "in_progress",
+				"metrics_agent_turns": []any{"x"},
+			}
+			incoming := lib.TaskFrontmatter{"status": "in_progress", "metrics_agent_turns": 3}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(decisions).To(HaveLen(1))
+			Expect(decisions[0].Field).To(Equal("metrics_agent_turns"))
+			Expect(merged["metrics_agent_turns"]).To(Equal([]any{"x"}))
+		},
+	)
+})

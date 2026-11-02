@@ -9,6 +9,17 @@ import (
 )
 
 type Metrics struct {
+	CommandExpiredTotalStub        func(string) prometheus.Counter
+	commandExpiredTotalMutex       sync.RWMutex
+	commandExpiredTotalArgsForCall []struct {
+		arg1 string
+	}
+	commandExpiredTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	commandExpiredTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
 	ConflictResolutionsTotalStub        func() prometheus.Counter
 	conflictResolutionsTotalMutex       sync.RWMutex
 	conflictResolutionsTotalArgsForCall []struct {
@@ -64,6 +75,16 @@ type Metrics struct {
 	kafkaConsumePausedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	OpenTasksStub        func() *prometheus.GaugeVec
+	openTasksMutex       sync.RWMutex
+	openTasksArgsForCall []struct {
+	}
+	openTasksReturns struct {
+		result1 *prometheus.GaugeVec
+	}
+	openTasksReturnsOnCall map[int]struct {
+		result1 *prometheus.GaugeVec
+	}
 	PlanningRetryTotalStub        func(string) prometheus.Counter
 	planningRetryTotalMutex       sync.RWMutex
 	planningRetryTotalArgsForCall []struct {
@@ -108,6 +129,29 @@ type Metrics struct {
 	skippedFilesTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	TaskAgeBucketTasksStub        func(string, metrics.TaskAgeBucket) prometheus.Gauge
+	taskAgeBucketTasksMutex       sync.RWMutex
+	taskAgeBucketTasksArgsForCall []struct {
+		arg1 string
+		arg2 metrics.TaskAgeBucket
+	}
+	taskAgeBucketTasksReturns struct {
+		result1 prometheus.Gauge
+	}
+	taskAgeBucketTasksReturnsOnCall map[int]struct {
+		result1 prometheus.Gauge
+	}
+	TaskOldestAgeSecondsStub        func(string) prometheus.Gauge
+	taskOldestAgeSecondsMutex       sync.RWMutex
+	taskOldestAgeSecondsArgsForCall []struct {
+		arg1 string
+	}
+	taskOldestAgeSecondsReturns struct {
+		result1 prometheus.Gauge
+	}
+	taskOldestAgeSecondsReturnsOnCall map[int]struct {
+		result1 prometheus.Gauge
+	}
 	TasksPublishedTotalStub        func(string) prometheus.Counter
 	tasksPublishedTotalMutex       sync.RWMutex
 	tasksPublishedTotalArgsForCall []struct {
@@ -119,8 +163,79 @@ type Metrics struct {
 	tasksPublishedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	UpdateGoStuckPlanningTasksStub        func() prometheus.Gauge
+	updateGoStuckPlanningTasksMutex       sync.RWMutex
+	updateGoStuckPlanningTasksArgsForCall []struct {
+	}
+	updateGoStuckPlanningTasksReturns struct {
+		result1 prometheus.Gauge
+	}
+	updateGoStuckPlanningTasksReturnsOnCall map[int]struct {
+		result1 prometheus.Gauge
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *Metrics) CommandExpiredTotal(arg1 string) prometheus.Counter {
+	fake.commandExpiredTotalMutex.Lock()
+	ret, specificReturn := fake.commandExpiredTotalReturnsOnCall[len(fake.commandExpiredTotalArgsForCall)]
+	fake.commandExpiredTotalArgsForCall = append(fake.commandExpiredTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.CommandExpiredTotalStub
+	fakeReturns := fake.commandExpiredTotalReturns
+	fake.recordInvocation("CommandExpiredTotal", []interface{}{arg1})
+	fake.commandExpiredTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) CommandExpiredTotalCallCount() int {
+	fake.commandExpiredTotalMutex.RLock()
+	defer fake.commandExpiredTotalMutex.RUnlock()
+	return len(fake.commandExpiredTotalArgsForCall)
+}
+
+func (fake *Metrics) CommandExpiredTotalCalls(stub func(string) prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = stub
+}
+
+func (fake *Metrics) CommandExpiredTotalArgsForCall(i int) string {
+	fake.commandExpiredTotalMutex.RLock()
+	defer fake.commandExpiredTotalMutex.RUnlock()
+	argsForCall := fake.commandExpiredTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) CommandExpiredTotalReturns(result1 prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = nil
+	fake.commandExpiredTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) CommandExpiredTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.commandExpiredTotalMutex.Lock()
+	defer fake.commandExpiredTotalMutex.Unlock()
+	fake.CommandExpiredTotalStub = nil
+	if fake.commandExpiredTotalReturnsOnCall == nil {
+		fake.commandExpiredTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.commandExpiredTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
 }
 
 func (fake *Metrics) ConflictResolutionsTotal() prometheus.Counter {
@@ -414,6 +529,59 @@ func (fake *Metrics) KafkaConsumePausedTotalReturnsOnCall(i int, result1 prometh
 	}{result1}
 }
 
+func (fake *Metrics) OpenTasks() *prometheus.GaugeVec {
+	fake.openTasksMutex.Lock()
+	ret, specificReturn := fake.openTasksReturnsOnCall[len(fake.openTasksArgsForCall)]
+	fake.openTasksArgsForCall = append(fake.openTasksArgsForCall, struct {
+	}{})
+	stub := fake.OpenTasksStub
+	fakeReturns := fake.openTasksReturns
+	fake.recordInvocation("OpenTasks", []interface{}{})
+	fake.openTasksMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) OpenTasksCallCount() int {
+	fake.openTasksMutex.RLock()
+	defer fake.openTasksMutex.RUnlock()
+	return len(fake.openTasksArgsForCall)
+}
+
+func (fake *Metrics) OpenTasksCalls(stub func() *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = stub
+}
+
+func (fake *Metrics) OpenTasksReturns(result1 *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = nil
+	fake.openTasksReturns = struct {
+		result1 *prometheus.GaugeVec
+	}{result1}
+}
+
+func (fake *Metrics) OpenTasksReturnsOnCall(i int, result1 *prometheus.GaugeVec) {
+	fake.openTasksMutex.Lock()
+	defer fake.openTasksMutex.Unlock()
+	fake.OpenTasksStub = nil
+	if fake.openTasksReturnsOnCall == nil {
+		fake.openTasksReturnsOnCall = make(map[int]struct {
+			result1 *prometheus.GaugeVec
+		})
+	}
+	fake.openTasksReturnsOnCall[i] = struct {
+		result1 *prometheus.GaugeVec
+	}{result1}
+}
+
 func (fake *Metrics) PlanningRetryTotal(arg1 string) prometheus.Counter {
 	fake.planningRetryTotalMutex.Lock()
 	ret, specificReturn := fake.planningRetryTotalReturnsOnCall[len(fake.planningRetryTotalArgsForCall)]
@@ -658,6 +826,129 @@ func (fake *Metrics) SkippedFilesTotalReturnsOnCall(i int, result1 prometheus.Co
 	}{result1}
 }
 
+func (fake *Metrics) TaskAgeBucketTasks(arg1 string, arg2 metrics.TaskAgeBucket) prometheus.Gauge {
+	fake.taskAgeBucketTasksMutex.Lock()
+	ret, specificReturn := fake.taskAgeBucketTasksReturnsOnCall[len(fake.taskAgeBucketTasksArgsForCall)]
+	fake.taskAgeBucketTasksArgsForCall = append(fake.taskAgeBucketTasksArgsForCall, struct {
+		arg1 string
+		arg2 metrics.TaskAgeBucket
+	}{arg1, arg2})
+	stub := fake.TaskAgeBucketTasksStub
+	fakeReturns := fake.taskAgeBucketTasksReturns
+	fake.recordInvocation("TaskAgeBucketTasks", []interface{}{arg1, arg2})
+	fake.taskAgeBucketTasksMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) TaskAgeBucketTasksCallCount() int {
+	fake.taskAgeBucketTasksMutex.RLock()
+	defer fake.taskAgeBucketTasksMutex.RUnlock()
+	return len(fake.taskAgeBucketTasksArgsForCall)
+}
+
+func (fake *Metrics) TaskAgeBucketTasksCalls(stub func(string, metrics.TaskAgeBucket) prometheus.Gauge) {
+	fake.taskAgeBucketTasksMutex.Lock()
+	defer fake.taskAgeBucketTasksMutex.Unlock()
+	fake.TaskAgeBucketTasksStub = stub
+}
+
+func (fake *Metrics) TaskAgeBucketTasksArgsForCall(i int) (string, metrics.TaskAgeBucket) {
+	fake.taskAgeBucketTasksMutex.RLock()
+	defer fake.taskAgeBucketTasksMutex.RUnlock()
+	argsForCall := fake.taskAgeBucketTasksArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Metrics) TaskAgeBucketTasksReturns(result1 prometheus.Gauge) {
+	fake.taskAgeBucketTasksMutex.Lock()
+	defer fake.taskAgeBucketTasksMutex.Unlock()
+	fake.TaskAgeBucketTasksStub = nil
+	fake.taskAgeBucketTasksReturns = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) TaskAgeBucketTasksReturnsOnCall(i int, result1 prometheus.Gauge) {
+	fake.taskAgeBucketTasksMutex.Lock()
+	defer fake.taskAgeBucketTasksMutex.Unlock()
+	fake.TaskAgeBucketTasksStub = nil
+	if fake.taskAgeBucketTasksReturnsOnCall == nil {
+		fake.taskAgeBucketTasksReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Gauge
+		})
+	}
+	fake.taskAgeBucketTasksReturnsOnCall[i] = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) TaskOldestAgeSeconds(arg1 string) prometheus.Gauge {
+	fake.taskOldestAgeSecondsMutex.Lock()
+	ret, specificReturn := fake.taskOldestAgeSecondsReturnsOnCall[len(fake.taskOldestAgeSecondsArgsForCall)]
+	fake.taskOldestAgeSecondsArgsForCall = append(fake.taskOldestAgeSecondsArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.TaskOldestAgeSecondsStub
+	fakeReturns := fake.taskOldestAgeSecondsReturns
+	fake.recordInvocation("TaskOldestAgeSeconds", []interface{}{arg1})
+	fake.taskOldestAgeSecondsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) TaskOldestAgeSecondsCallCount() int {
+	fake.taskOldestAgeSecondsMutex.RLock()
+	defer fake.taskOldestAgeSecondsMutex.RUnlock()
+	return len(fake.taskOldestAgeSecondsArgsForCall)
+}
+
+func (fake *Metrics) TaskOldestAgeSecondsCalls(stub func(string) prometheus.Gauge) {
+	fake.taskOldestAgeSecondsMutex.Lock()
+	defer fake.taskOldestAgeSecondsMutex.Unlock()
+	fake.TaskOldestAgeSecondsStub = stub
+}
+
+func (fake *Metrics) TaskOldestAgeSecondsArgsForCall(i int) string {
+	fake.taskOldestAgeSecondsMutex.RLock()
+	defer fake.taskOldestAgeSecondsMutex.RUnlock()
+	argsForCall := fake.taskOldestAgeSecondsArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) TaskOldestAgeSecondsReturns(result1 prometheus.Gauge) {
+	fake.taskOldestAgeSecondsMutex.Lock()
+	defer fake.taskOldestAgeSecondsMutex.Unlock()
+	fake.TaskOldestAgeSecondsStub = nil
+	fake.taskOldestAgeSecondsReturns = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) TaskOldestAgeSecondsReturnsOnCall(i int, result1 prometheus.Gauge) {
+	fake.taskOldestAgeSecondsMutex.Lock()
+	defer fake.taskOldestAgeSecondsMutex.Unlock()
+	fake.TaskOldestAgeSecondsStub = nil
+	if fake.taskOldestAgeSecondsReturnsOnCall == nil {
+		fake.taskOldestAgeSecondsReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Gauge
+		})
+	}
+	fake.taskOldestAgeSecondsReturnsOnCall[i] = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
 func (fake *Metrics) TasksPublishedTotal(arg1 string) prometheus.Counter {
 	fake.tasksPublishedTotalMutex.Lock()
 	ret, specificReturn := fake.tasksPublishedTotalReturnsOnCall[len(fake.tasksPublishedTotalArgsForCall)]
@@ -716,6 +1007,59 @@ func (fake *Metrics) TasksPublishedTotalReturnsOnCall(i int, result1 prometheus.
 	}
 	fake.tasksPublishedTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	ret, specificReturn := fake.updateGoStuckPlanningTasksReturnsOnCall[len(fake.updateGoStuckPlanningTasksArgsForCall)]
+	fake.updateGoStuckPlanningTasksArgsForCall = append(fake.updateGoStuckPlanningTasksArgsForCall, struct {
+	}{})
+	stub := fake.UpdateGoStuckPlanningTasksStub
+	fakeReturns := fake.updateGoStuckPlanningTasksReturns
+	fake.recordInvocation("UpdateGoStuckPlanningTasks", []interface{}{})
+	fake.updateGoStuckPlanningTasksMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksCallCount() int {
+	fake.updateGoStuckPlanningTasksMutex.RLock()
+	defer fake.updateGoStuckPlanningTasksMutex.RUnlock()
+	return len(fake.updateGoStuckPlanningTasksArgsForCall)
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksCalls(stub func() prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = stub
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksReturns(result1 prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = nil
+	fake.updateGoStuckPlanningTasksReturns = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) UpdateGoStuckPlanningTasksReturnsOnCall(i int, result1 prometheus.Gauge) {
+	fake.updateGoStuckPlanningTasksMutex.Lock()
+	defer fake.updateGoStuckPlanningTasksMutex.Unlock()
+	fake.UpdateGoStuckPlanningTasksStub = nil
+	if fake.updateGoStuckPlanningTasksReturnsOnCall == nil {
+		fake.updateGoStuckPlanningTasksReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Gauge
+		})
+	}
+	fake.updateGoStuckPlanningTasksReturnsOnCall[i] = struct {
+		result1 prometheus.Gauge
 	}{result1}
 }
 

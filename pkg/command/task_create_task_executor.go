@@ -24,6 +24,7 @@ import (
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
@@ -36,12 +37,15 @@ import (
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
 // Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
 // match vaultName are skipped without side effects (no git write, no error, no result event).
+// resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
+	resolver result.TaskPathResolver,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		task.CreateCommandOperation,
@@ -81,261 +85,381 @@ func NewCreateTaskExecutor(
 			if err := validateCreateTaskFrontmatter(ctx, cmd.Frontmatter); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
-			relPath := resolveCreateTaskRelPath(ctx, taskDir, cmd)
-			reopened, priorStatus, err := checkTitlePathFree(
+			title := createTaskTitle(ctx, cmd)
+			title = reuseExistingIdentifierTitle(
 				ctx,
 				gitClient,
-				relPath,
+				resolver,
 				cmd.TaskIdentifier,
-				cmd,
+				title,
 			)
+			pathTitle, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := writeTaskFile(ctx, gitClient, relPath, cmd, vaultName, reopened, priorStatus); err != nil {
-				return nil, nil, err
+			// No path check here on purpose. Every check that can fail has to run
+			// BEFORE the create, because the file exists server-side the moment it
+			// returns: failing afterwards would leave a materialized task that
+			// recordCreatedTaskPath and the supersede hooks never see, so its
+			// results would be dropped for the pod's life. createTaskTitle already
+			// rejects separators (falling back to the identifier), the
+			// disambiguated title is that title plus a fixed suffix, and ".md" is
+			// appended — so no ".." path segment can form, and a title like
+			// "Wait... what?" stays legal.
+			relPath := filepath.Join(taskDir, pathTitle+".md")
+			if reopened {
+				// Unconditional Infof, not V(n)-gated, by design: a reopen replaces a
+				// task an operator or another agent already closed, so it must be
+				// visible in prod logs at default verbosity. Gating it behind -v=2
+				// would hide the one event worth auditing. The prior status is not
+				// in the typed response — the server replaces the file and reports
+				// only that it did — so this line names the task and the path.
+				glog.Infof(
+					"create-task: reopening terminal task %s at %s",
+					cmd.TaskIdentifier,
+					relPath,
+				)
 			}
+			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
+			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
+			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
 }
 
-// checkTitlePathFree reports whether the title path is free for a new task.
-// The slot is free when the path is unoccupied (git-rest 404) OR when the
-// existing file's frontmatter status is a terminal status ("completed" or
-// "aborted", compared case-sensitively after whitespace trim) — a terminal
-// task is no longer a live duplicate, so the slot is reusable. On a
-// terminal-status free it returns reopened=true and the prior status so the
-// caller can distinguish a reopen from a first-ever create. Every other
-// occupied state — any non-terminal status, an absent/empty/unknown status,
-// missing frontmatter delimiters, or unparseable YAML — returns
-// ErrTaskAlreadyExists (a benign Failure on the result topic — no overwrite,
-// no git write) wrapped with the "title path %s occupied" message shape. A
-// transient git-rest read error is propagated. The decision consumes the
-// bytes already read by this function; the caller must not issue a second
-// ReadFile.
+// createTaskTitle returns the filename stem the typed create sends: the command's
+// own title when it passes validation and carries no path separator, the
+// identifier otherwise. The server owns the filename, so this is the only thing
+// the controller still decides about the path.
+func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
+	if err := cmd.Validate(ctx); err != nil {
+		glog.Warningf(
+			"create-task: Title validation failed for task %s (%v); falling back to the identifier",
+			cmd.TaskIdentifier, err,
+		)
+		return string(cmd.TaskIdentifier)
+	}
+	if strings.ContainsAny(cmd.Title, "/\\") {
+		glog.Warningf(
+			"create-task: Title %q contains path separator; falling back to the identifier",
+			cmd.Title,
+		)
+		return string(cmd.TaskIdentifier)
+	}
+	return cmd.Title
+}
+
+// reuseExistingIdentifierTitle returns the title stem of the file that already
+// carries id, or fallbackTitle when the identifier has no single, verifiably
+// matching file. It returns a STEM, never a path: the create still lands in
+// TASK_DIR and the server still owns the filename. It reads the
+// identifier->path index only, so it can never be steered by the index's shared
+// identifier/name/slug space (the vault-api#28 shadowing class).
 //
-// Recurring-task instances are carved out of the reopen path: a command from
-// the recurring-task-creator publisher (created_by: recurring-task-creator)
-// NEVER reopens a terminal-status file. The recurring pipeline republishes the
-// same title path every tick (always-fire cadences), and the title-path file IS
-// the dedupe state — so a completed instance must hold the slot until the
-// period rolls, exactly as it did before the per-alert reopen feature. Without
-// this carve-out, the next hourly tick reopens and overwrites every completed
-// recurring task with a fresh blank instance (observed 2026-08-27: v0.6.0 wiped
-// 27 completed monthly/quarterly/yearly/weekly tasks).
-func checkTitlePathFree(
+// A resolver hit is not trusted on its own. The index is not self-freshening —
+// Record only adds, and buildIndex replaces the map only on the next completed
+// poll — so an entry can point at a file that has since been rewritten to carry
+// a DIFFERENT identifier. Redirecting there would post under that file's title,
+// and postCreate sends ReopenTerminal for a non-recurring command, so the server
+// would replace that unrelated task's terminal record. The resolved file is
+// therefore read and the redirect happens only when its task_identifier still
+// equals id.
+//
+// A nil resolver, a miss, a resolver error, an unusable stem, an unreadable
+// file, unparseable frontmatter and a mismatched identifier all fall through to
+// fallbackTitle.
+func reuseExistingIdentifierTitle(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
-	relPath string,
-	taskIdentifier lib.TaskIdentifier,
-	cmd task.CreateCommand,
-) (reopened bool, priorStatus string, err error) {
-	existing, err := gitClient.ReadFile(ctx, relPath)
+	resolver result.TaskPathResolver,
+	id lib.TaskIdentifier,
+	fallbackTitle string,
+) string {
+	if resolver == nil {
+		return fallbackTitle
+	}
+	relPath, found, err := resolver.Resolve(ctx, id)
 	if err != nil {
-		if !isNotFoundReadError(err) {
-			return false, "", errors.Wrapf(
-				ctx, err, "check existing task file at %s for %s", relPath, taskIdentifier,
-			)
-		}
-		// git-rest 404: the title path is free, first-ever create.
-		return false, "", nil
-	}
-	frontmatterStr, parseErr := result.ExtractFrontmatter(ctx, existing)
-	if parseErr != nil {
+		// A known-duplicate index entry must never choose a path, so the create
+		// keeps the title the command asked for.
 		glog.Warningf(
-			"create-task: cannot read status from existing file at %s for %s; holding title path: %v",
-			relPath,
-			taskIdentifier,
-			parseErr,
+			"create-task: identifier %s resolves ambiguously (%v); using the command title %q",
+			id, err, fallbackTitle,
 		)
-		return false, "", errors.Wrapf(
-			ctx,
-			task.ErrTaskAlreadyExists,
-			"title path %s occupied",
-			relPath,
-		)
+		return fallbackTitle
 	}
-	existingFm, parseErr := parseTaskFrontmatter(frontmatterStr)
-	if parseErr != nil {
+	if !found {
+		return fallbackTitle
+	}
+	stem := strings.TrimSuffix(filepath.Base(relPath), ".md")
+	if stem == "" || stem == "." || stem == ".." {
+		return fallbackTitle
+	}
+	if !fileCarriesIdentifier(ctx, gitClient, relPath, id) {
 		glog.Warningf(
-			"create-task: cannot parse frontmatter of existing file at %s for %s; holding title path: %v",
+			"create-task: index entry for %s points at %s, which does not carry that identifier; using the command title %q",
+			id,
 			relPath,
-			taskIdentifier,
-			parseErr,
+			fallbackTitle,
 		)
-		return false, "", errors.Wrapf(
-			ctx,
-			task.ErrTaskAlreadyExists,
-			"title path %s occupied",
-			relPath,
-		)
-	}
-	status, _ := existingFm.String("status")
-	status = strings.TrimSpace(status)
-	if (status == "completed" || status == "aborted") && !isRecurringTaskCommand(cmd) {
-		return true, status, nil
+		return fallbackTitle
 	}
 	glog.V(2).Infof(
-		"create-task: title path %s already occupied (%d bytes), returning ErrTaskAlreadyExists for %s",
-		relPath,
-		len(existing),
-		taskIdentifier,
+		"create-task: identifier %s resolves to %s; using title %q instead of %q",
+		id, relPath, stem, fallbackTitle,
 	)
-	return false, "", errors.Wrapf(
-		ctx,
-		task.ErrTaskAlreadyExists,
-		"title path %s occupied",
-		relPath,
-	)
+	return stem
 }
 
-// writeTaskFile builds the task content and creates it in the vault via
-// git-rest, then logs the creation. vaultName is stamped as target_vault so the
-// created task is self-describing for the result-path routing guard.
-// reopened and priorStatus carry the reopen signal from the title-path collision
-// check — reopened is true only when the slot was freed by a terminal-status
-// file, and priorStatus is that file's status — for the write path to use.
-// On reopened == true the write commits with a "[agent-task-controller] reopen
-// terminal task <id>" message and emits the unconditional INFO log
-// "create-task: reopening terminal task" (visible at default verbosity, naming
-// the path and prior status); a first-ever create (reopened == false) carries
-// neither — it keeps the "create task" commit message and the V(2) creation log.
+// identifierPresence reports whether the task file at relPath declares id.
 //
-// The write is create-only (?create_only=1) whenever reopened == false — which
-// covers every first-ever create AND every recurring-task instance (those never
-// reopen, see checkTitlePathFree). git-rest refuses to overwrite an
-// already-occupied path with 409 Conflict, surfaced here as ErrAlreadyExists and
-// mapped to task.ErrTaskAlreadyExists (a benign Failure, no git write). This is
-// the authoritative no-overwrite guarantee: even if checkTitlePathFree's read
-// falsely reports the path free, the create-only write can never clobber an
-// existing task file. The upsert path is used ONLY for reopened == true, the
-// deliberate per-alert reopen of a terminal task.
-func writeTaskFile(
+// A nil error means the answer is definitive: either the file carries id, or it
+// definitively does not — including when it no longer exists (git-rest answers
+// 404). A non-nil error means the question could not be answered: the read
+// failed for a reason other than absence, or the frontmatter could not be
+// parsed. A caller choosing between "stale index entry" and "duplicate" must
+// treat that as unknown, never as absence: replacing the entry on a transient
+// 503 silently drops the duplicate detection this index exists to keep, which
+// is the very failure mode the duplicate recording was added for.
+func identifierPresence(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
 	relPath string,
-	cmd task.CreateCommand,
-	vaultName string,
-	reopened bool,
-	priorStatus string,
-) error {
-	content, err := buildCreateTaskContent(ctx, cmd, vaultName)
+	id lib.TaskIdentifier,
+) (bool, error) {
+	content, err := gitClient.ReadFile(ctx, relPath)
 	if err != nil {
-		return errors.Wrapf(ctx, err, "build task file content for %s", cmd.TaskIdentifier)
-	}
-	absPath := filepath.Join(gitClient.Path(), relPath)
-	msg := "[agent-task-controller] create task " + string(cmd.TaskIdentifier)
-	if reopened {
-		msg = "[agent-task-controller] reopen terminal task " + string(cmd.TaskIdentifier)
-		if err := gitClient.AtomicWriteAndCommitPush(
-			ctx,
-			absPath,
-			content,
-			msg,
-		); err != nil {
-			return errors.Wrapf(ctx, err, "atomic write and push for task %s", cmd.TaskIdentifier)
+		if isNotFoundReadError(err) {
+			return false, nil
 		}
-	} else {
-		if err := createTaskFileIfAbsent(
-			ctx,
-			gitClient,
-			absPath,
-			content,
-			msg,
-			relPath,
-			cmd,
-		); err != nil {
-			return err
-		}
-	}
-	glog.V(2).Infof("create-task: created task file at %s for %s", relPath, cmd.TaskIdentifier)
-	// Unconditional Infof, not V(n)-gated, by design: a reopen overwrites a
-	// task an operator (or another agent) already closed, so it must be
-	// visible in prod logs at default verbosity. Gating it behind -v=2 would
-	// make the one event worth auditing the one event nobody sees. The
-	// first-ever-create line above stays V(2) — that one is routine.
-	if reopened {
-		glog.Infof(
-			"create-task: reopening terminal task at %s (prior status %s)",
-			relPath,
-			priorStatus,
+		return false, errors.Wrapf(
+			ctx, err, "read resolved file %s for %s", relPath, id,
 		)
 	}
-	return nil
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "extract frontmatter from resolved file %s for %s", relPath, id,
+		)
+	}
+	fm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "parse frontmatter of resolved file %s for %s", relPath, id,
+		)
+	}
+	actual, _ := fm.String("task_identifier")
+	return actual == string(id), nil
 }
 
-// createTaskFileIfAbsent performs the create-only write for a non-reopen create
-// (a first-ever create or a recurring-task instance). git-rest refuses an
-// occupied path with 409 Conflict, surfaced here as ErrAlreadyExists and mapped
-// to task.ErrTaskAlreadyExists (a benign Failure, no git write). Extracted from
-// writeTaskFile to keep its nesting within the linter budget.
-func createTaskFileIfAbsent(
+// fileCarriesIdentifier reports whether the task file at relPath still declares
+// id in its frontmatter. Every failure to answer answers false: a redirect that
+// cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
+// exists to close, so the caller must fall back to its own title. A caller that
+// must tell an unverifiable occupant from an absent one uses identifierPresence
+// directly.
+func fileCarriesIdentifier(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
-	absPath string,
-	content []byte,
-	msg string,
 	relPath string,
+	id lib.TaskIdentifier,
+) bool {
+	carries, err := identifierPresence(ctx, gitClient, relPath, id)
+	if err != nil {
+		glog.Warningf(
+			"create-task: cannot verify identifier %s in resolved file %s: %v",
+			id, relPath, err,
+		)
+		return false
+	}
+	return carries
+}
+
+// createThroughAPI materialises the task and settles the three answers the old
+// title-path pre-check computed: created, reopened, or a collision.
+//
+// The pre-check is gone rather than ported. The API resolves the occupant by
+// PATH and reports it in the 409, so the controller never touches the index's
+// shared identifier/name/slug key space — the lookup that let a page elsewhere
+// shadow a live task and destroy it in vault-api#28.
+// It returns the title the file actually landed under — the request title, or
+// the disambiguated one — because that, not the server's echo, is what the
+// result-path index and the supersede back-pointers key off.
+func createThroughAPI(
+	ctx context.Context,
+	client vaultapi.Client,
 	cmd task.CreateCommand,
-) error {
-	if err := gitClient.AtomicWriteIfAbsentAndCommitPush(ctx, absPath, content, msg); err != nil {
-		if errors.Is(err, gitclient.ErrAlreadyExists) {
-			glog.V(2).Infof(
-				"create-task: title path %s occupied (create-only write refused), returning ErrTaskAlreadyExists for %s",
-				relPath,
-				cmd.TaskIdentifier,
-			)
-			return errors.Wrapf(
-				ctx,
-				task.ErrTaskAlreadyExists,
-				"title path %s occupied",
-				relPath,
-			)
-		}
-		return errors.Wrapf(
+	title string,
+	vaultName string,
+) (pathTitle string, reopened bool, err error) {
+	reopened, err = postCreate(ctx, client, cmd, title, vaultName)
+	if err == nil {
+		return title, reopened, nil
+	}
+	var conflict *vaultapi.AlreadyExistsError
+	if !errors.As(err, &conflict) {
+		return "", false, err
+	}
+	if conflict.TaskIdentifier == "" || conflict.TaskIdentifier == string(cmd.TaskIdentifier) {
+		// Idempotent re-publish: this task already has a file, so nothing is lost.
+		return "", false, errors.Wrapf(
 			ctx,
-			err,
-			"atomic create-only write and push for task %s",
+			task.ErrTaskAlreadyExists,
+			"title %q occupied for task %s",
+			title,
 			cmd.TaskIdentifier,
 		)
 	}
-	return nil
+	if isRecurringTaskCommand(cmd) && vaultapi.IsTerminalStatus(conflict.Status) {
+		// Recurring carve-out: a terminal recurring instance holds the slot until
+		// the period rolls, because the title-path file IS the dedupe state. This
+		// must be checked before disambiguation — otherwise the next hourly tick
+		// would create a second file beside every completed instance and the
+		// dedupe would never fire again (observed 2026-08-27: v0.6.0 wiped 27
+		// completed monthly/quarterly/yearly/weekly tasks by reopening them).
+		return "", false, errors.Wrapf(
+			ctx,
+			task.ErrTaskAlreadyExists,
+			"title %q held by terminal recurring task %s",
+			title,
+			conflict.TaskIdentifier,
+		)
+	}
+	// A DIFFERENT identifier holds the title: two tasks collided on one filename.
+	// Give the loser its own file, or its results are dropped forever.
+	alt := title + " - " + shortIdentifier(cmd.TaskIdentifier)
+	reopened, err = postCreate(ctx, client, cmd, alt, vaultName)
+	if err != nil {
+		var altConflict *vaultapi.AlreadyExistsError
+		if errors.As(err, &altConflict) {
+			// The suffixed path is occupied too — on a replay of a disambiguated
+			// task it holds this task's own file. That is the same benign
+			// already-exists as any other re-publish, so it must map to the same
+			// sentinel: downstream result-topic consumers special-case
+			// task.ErrTaskAlreadyExists and treat anything else as a real failure.
+			return "", false, errors.Wrapf(
+				ctx,
+				task.ErrTaskAlreadyExists,
+				"title %q and %q both occupied for task %s",
+				title,
+				alt,
+				cmd.TaskIdentifier,
+			)
+		}
+		return "", false, errors.Wrapf(ctx, err, "disambiguated create at %q", alt)
+	}
+	return alt, reopened, nil
 }
 
-// resolveCreateTaskRelPath returns the repo-root-relative path where the task
-// file should be written. If cmd.Title passes validation and contains no path
-// separators, the title-derived path is returned; otherwise a WARN is logged and
-// the UUID-derived path is returned as fallback so the task is always materialized.
-// Filename-collision detection is the caller's job (via gitClient.ReadFile) — this
-// function no longer reads the vault or compares task_identifier.
-func resolveCreateTaskRelPath(
+// postCreate sends one create and reports whether it replaced a terminal
+// occupant. It returns no task: the only field the caller could use is the
+// server's echoed title, and the caller deliberately keys off the title it
+// asked for instead. ReopenTerminal is off for a recurring command: a terminal
+// recurring instance holds its slot until the period rolls, because the file IS
+// the dedupe state — so it must land on the conflict branch rather than be
+// replaced.
+func postCreate(
 	ctx context.Context,
-	taskDir string,
+	client vaultapi.Client,
 	cmd task.CreateCommand,
-) string {
-	uuidRelPath := filepath.Join(taskDir, string(cmd.TaskIdentifier)+".md")
-
-	// Re-validate the command (defense-in-depth: sender may have been bypassed).
-	if err := cmd.Validate(ctx); err != nil {
-		glog.Warningf(
-			"create-task: Title validation failed for task %s (%v); falling back to UUID path",
-			cmd.TaskIdentifier, err,
-		)
-		return uuidRelPath
+	title string,
+	vaultName string,
+) (bool, error) {
+	fm := make(lib.TaskFrontmatter)
+	maps.Copy(fm, cmd.Frontmatter)
+	fm["task_identifier"] = string(cmd.TaskIdentifier)
+	fm["target_vault"] = vaultName
+	created, err := client.CreateTask(
+		ctx,
+		vaultapi.Task{Title: title, Frontmatter: fm, Body: cmd.Body},
+		vaultapi.CreateOptions{ReopenTerminal: !isRecurringTaskCommand(cmd)},
+	)
+	if err != nil {
+		return false, err
 	}
+	return created.Reopened, nil
+}
 
-	// Reject titles containing path separators to prevent path traversal.
-	if strings.ContainsAny(cmd.Title, "/\\") {
-		glog.Warningf(
-			"create-task: Title %q contains path separator; falling back to UUID path",
-			cmd.Title,
-		)
-		return uuidRelPath
+// shortIdentifier is the filename-suffix form of an identifier, matching the
+// sha[:8] short-segment convention used across task filenames.
+func shortIdentifier(id lib.TaskIdentifier) string {
+	s := string(id)
+	if len(s) > 8 {
+		return s[:8]
 	}
+	return s
+}
 
-	return filepath.Join(taskDir, cmd.Title+".md")
+// recordCreatedTaskPath adds the file just written to the identifier→path index, so
+// the results and frontmatter updates that follow a create resolve with one read
+// instead of a full-vault walk. A trigger-only controller builds its index once at
+// pod start, so without this every task created afterwards missed for the pod's
+// whole life (2026-10-25: 155 of 159 walked identifiers, consumer 60 min behind,
+// commands dropped as expired).
+//
+// A resolver error means a known duplicate, which stays as it is; a miss records
+// relPath; a hit at relPath itself needs nothing. A hit at a DIFFERENT path means
+// this create wrote a second file for an identifier the index already maps
+// elsewhere. Skipping the record there hid the new file: a trigger-only controller
+// never rebuilds its index, so every later write resolved to the old file
+// (2026-10-27, identifier 9371a3d2: the executor's spawn write landed on an aborted
+// file while the live one stayed unrecorded). When the known file still carries the
+// identifier both paths are recorded, so Resolve reports the duplicate and later
+// writes refuse loudly. When it no longer does, the entry is stale and relPath
+// replaces it — recording a stale entry beside it would be a false duplicate that
+// blocks every write for the pod's life.
+func recordCreatedTaskPath(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	resolver result.TaskPathResolver,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if resolver == nil {
+		return
+	}
+	knownPath, found, err := resolver.Resolve(ctx, id)
+	if err != nil {
+		return
+	}
+	if !found {
+		resolver.Record(ctx, id, relPath)
+		return
+	}
+	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
+		return
+	}
+	carries, presenceErr := identifierPresence(ctx, gitClient, knownPath, id)
+	if presenceErr != nil {
+		glog.Warningf(
+			"create-task: cannot tell whether index entry %s still carries %s (%v); keeping it rather than replacing it with %s",
+			knownPath,
+			id,
+			presenceErr,
+			relPath,
+		)
+		return
+	}
+	if carries {
+		glog.Warningf(
+			"create-task: task_identifier %s is now carried by both %s and %s; recording both so later writes refuse instead of landing on %s",
+			id,
+			knownPath,
+			relPath,
+			knownPath,
+		)
+		resolver.RecordDuplicate(ctx, id, relPath)
+		return
+	}
+	glog.V(2).Infof(
+		"create-task: index entry %s no longer carries %s; replacing it with %s",
+		knownPath,
+		id,
+		relPath,
+	)
+	resolver.Record(ctx, id, relPath)
 }
 
 // isNotFoundReadError reports whether a gitClient.ReadFile error means the file
@@ -368,18 +492,6 @@ func validateCreateTaskFrontmatter(ctx context.Context, fm lib.TaskFrontmatter) 
 		return errors.Wrap(ctx, validation.Error, "frontmatter missing required field: status")
 	}
 	return nil
-}
-
-func buildCreateTaskContent(
-	ctx context.Context,
-	cmd task.CreateCommand,
-	vaultName string,
-) ([]byte, error) {
-	fm := make(lib.TaskFrontmatter)
-	maps.Copy(fm, cmd.Frontmatter)
-	fm["task_identifier"] = string(cmd.TaskIdentifier)
-	fm["target_vault"] = vaultName
-	return marshalFileContent(ctx, fm, cmd.Body)
 }
 
 // supersedePriorRecurringTask collapses a recurring schedule to a single open
@@ -537,6 +649,8 @@ func collapseCandidates(
 			rc.Title,
 			newRelPath,
 			cmd.TaskIdentifier,
+			"[agent-task-controller] auto-supersede prior recurring task ",
+			true,
 		)
 	}
 }
@@ -643,6 +757,14 @@ func priorIsInProgress(
 
 // transitionPrior performs the read-modify-write that transitions the prior
 // file to aborted. Best-effort: write errors are logged and swallowed.
+//
+// msgPrefix and setCreatedBy are supplied by the caller because the two hooks
+// that share this transition must not share its attribution. The recurring
+// publisher stamps created_by: recurring-task-creator, which is truthful there;
+// a github-update-go prior was emitted by the update-go watcher, so stamping it
+// would overwrite its real created_by with a false one. The build-fix retire
+// path (buildBuildFixRetireModifyFn) already omits the field for the same
+// reason. An empty msgPrefix means the caller builds the whole message.
 func transitionPrior(
 	ctx context.Context,
 	gitClient gitclient.GitClient,
@@ -651,11 +773,13 @@ func transitionPrior(
 	priorTitle string,
 	newRelPath string,
 	taskIdentifier lib.TaskIdentifier,
+	msgPrefix string,
+	setCreatedBy bool,
 ) {
 	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
 	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
-	modify := buildSupersedeModifyFn(ctx, newRelPath, ts)
-	msg := "[agent-task-controller] auto-supersede prior recurring task " + priorTitle
+	modify := buildSupersedeModifyFn(ctx, newRelPath, ts, setCreatedBy)
+	msg := msgPrefix + priorTitle
 	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
 		glog.Warningf(
 			"auto-supersede: write prior %s failed for %s: %v",
@@ -673,11 +797,15 @@ func transitionPrior(
 }
 
 // buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
-// that transitions a prior-period recurring-task instance to aborted.
+// that transitions a prior instance to aborted. setCreatedBy stamps
+// created_by: recurring-task-creator, which is only truthful for a prior the
+// recurring publisher emitted — the update-go hook passes false so it leaves the
+// prior's real attribution alone.
 func buildSupersedeModifyFn(
 	ctx context.Context,
 	newRelPath string,
 	ts string,
+	setCreatedBy bool,
 ) func([]byte) ([]byte, error) {
 	return func(current []byte) ([]byte, error) {
 		fmStr, err := result.ExtractFrontmatter(ctx, current)
@@ -696,7 +824,206 @@ func buildSupersedeModifyFn(
 		fm["phase"] = "done"
 		fm["completed_date"] = ts
 		fm["superseded_by"] = newRelPath
-		fm["created_by"] = "recurring-task-creator"
+		if setCreatedBy {
+			fm["created_by"] = "recurring-task-creator"
+		}
 		return marshalFileContent(ctx, fm, body)
 	}
+}
+
+// retireSupersededBuildFixTasks retires the tasks a re-emitted build-fix task
+// supersedes: every other still-live task carrying the same build_id, and the
+// task whose task_identifier matches supersedes_task_id. Both markers are read
+// from the create command's frontmatter; an absent or empty marker is treated
+// as absent and never matches anything. Best-effort: a list, read, parse or
+// write failure on any single file is logged and swallowed, and the
+// already-created task is never rolled back. newRelPath is the repo-root-
+// relative path of the task that was just written (the superseded_by
+// back-pointer) and must not be re-derived — the path may have been
+// disambiguated with a short-identifier suffix.
+func retireSupersededBuildFixTasks(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	taskDir string,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	cmd task.CreateCommand,
+	newRelPath string,
+) {
+	supersedesTaskID, _ := cmd.Frontmatter.String("supersedes_task_id")
+	supersedesBuildID, _ := cmd.Frontmatter.String("supersedes_build_id")
+	if supersedesTaskID == "" && supersedesBuildID == "" {
+		return
+	}
+	relPaths, err := gitClient.ListFiles(ctx, filepath.Join(taskDir, "*.md"))
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: list candidates failed for %s: %v",
+			cmd.TaskIdentifier,
+			err,
+		)
+		return
+	}
+	for _, relPath := range relPaths {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if relPath == newRelPath {
+			continue
+		}
+		retireSupersededBuildFixCandidate(
+			ctx,
+			gitClient,
+			currentDateTime,
+			relPath,
+			supersedesTaskID,
+			supersedesBuildID,
+			newRelPath,
+			cmd.TaskIdentifier,
+		)
+	}
+}
+
+// retireSupersededBuildFixCandidate retires one candidate task file when a
+// marker names it and it is still live. Every failure is logged and swallowed.
+func retireSupersededBuildFixCandidate(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	relPath string,
+	supersedesTaskID string,
+	supersedesBuildID string,
+	newRelPath string,
+	taskIdentifier lib.TaskIdentifier,
+) {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: read %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	fm, _, err := parseTaskFrontmatterAndBody(ctx, content)
+	if err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: parse %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	if !buildFixCandidateMatches(fm, supersedesTaskID, supersedesBuildID) {
+		return
+	}
+	if !buildFixCandidateIsLive(fm) {
+		return
+	}
+	buildID, _ := fm.String("build_id")
+	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
+	absPath := filepath.Join(gitClient.Path(), relPath)
+	msg := "[agent-task-controller] auto-supersede build-fix: " + relPath
+	if err := gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx,
+		absPath,
+		buildBuildFixRetireModifyFn(ctx, newRelPath, ts),
+		msg,
+	); err != nil {
+		glog.Warningf(
+			"auto-supersede build-fix: write %s failed for %s: %v",
+			relPath,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	glog.V(2).Infof(
+		"auto-supersede build-fix: %s -> %s (build %s retired)",
+		relPath,
+		newRelPath,
+		buildID,
+	)
+}
+
+// buildFixCandidateMatches reports whether a candidate task file is named by
+// one of the two supersede markers. Matching is always by value on the parsed
+// frontmatter — the marker is never joined into a path. An empty marker
+// matches nothing.
+func buildFixCandidateMatches(
+	fm lib.TaskFrontmatter,
+	supersedesTaskID string,
+	supersedesBuildID string,
+) bool {
+	if supersedesTaskID != "" {
+		if id, _ := fm.String("task_identifier"); id == supersedesTaskID {
+			return true
+		}
+	}
+	if supersedesBuildID != "" {
+		if id, _ := fm.String("build_id"); id == supersedesBuildID {
+			return true
+		}
+	}
+	return false
+}
+
+// buildFixCandidateIsLive reports whether a candidate is still live: its
+// status is readable and is neither of the two terminal statuses. An absent,
+// empty, non-string or unparseable status is not live, so it is never retired.
+func buildFixCandidateIsLive(fm lib.TaskFrontmatter) bool {
+	status, _ := fm.String("status")
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return false
+	}
+	return status != "completed" && status != "aborted"
+}
+
+// buildBuildFixRetireModifyFn builds the modify closure for
+// AtomicReadModifyWriteAndCommitPush that transitions a superseded build-fix
+// task to aborted. It writes the same frozen transition set the recurring
+// supersede writes and deliberately does NOT write created_by: that value names
+// the recurring publisher and would be false on a build-fix task, whose
+// created_by is whatever the watcher's create command carried.
+func buildBuildFixRetireModifyFn(
+	ctx context.Context,
+	newRelPath string,
+	ts string,
+) func([]byte) ([]byte, error) {
+	return func(current []byte) ([]byte, error) {
+		fm, body, err := parseTaskFrontmatterAndBody(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		fm["status"] = "aborted"
+		fm["phase"] = "done"
+		fm["completed_date"] = ts
+		fm["superseded_by"] = newRelPath
+		return marshalFileContent(ctx, fm, body)
+	}
+}
+
+// parseTaskFrontmatterAndBody extracts a task file's frontmatter and body and
+// parses the frontmatter into a map. Extracted so the retire closure stays a
+// few lines and its token overlap with the sibling modify closure stays far
+// below the dupl linter's 150-token run.
+func parseTaskFrontmatterAndBody(
+	ctx context.Context,
+	current []byte,
+) (lib.TaskFrontmatter, string, error) {
+	fmStr, err := result.ExtractFrontmatter(ctx, current)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "extract frontmatter")
+	}
+	body, err := result.ExtractBody(ctx, current)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "extract body")
+	}
+	fm, err := parseTaskFrontmatter(fmStr)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "parse frontmatter")
+	}
+	return fm, body, nil
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var _ = Describe("PlanningRetryGate", func() {
@@ -47,7 +48,16 @@ var _ = Describe("PlanningRetryGate", func() {
 		clock = clockVal
 		taskDir = "tasks"
 		fakeGit.PathReturns("/repo")
-		gate = command.NewPlanningRetryGate(fakeGit, taskDir, clock, fakeCommenter, metrics.New())
+		gate = command.NewPlanningRetryGate(
+			fakeGit,
+			taskDir,
+			"openclaw",
+			clock,
+			fakeCommenter,
+			metrics.New(),
+			nil,
+			nil,
+		)
 	})
 
 	buildPRReviewTask := func(taskID string, phaseVal string, content string) lib.Task {
@@ -68,16 +78,14 @@ var _ = Describe("PlanningRetryGate", func() {
 		}
 	}
 
-	// onDiskFile creates a task file content. When retryCount < 0, the
-	// planning_retry_count key is omitted entirely (absent frontmatter state).
-	// When withPRMetadata is true, repository and pull_request_number are included.
-	onDiskFile := func(taskID string, retryCount int, body string, withPRMetadata ...bool) []byte {
+	// onDiskFileWithPhase creates a task file content with an explicit on-disk phase.
+	onDiskFileWithPhase := func(taskID string, phase string, retryCount int, body string, withPRMetadata ...bool) []byte {
 		fm := map[string]interface{}{
 			"task_identifier": taskID,
 			"task_type":       "pr-review",
 			"assignee":        "pr-reviewer-agent",
 			"status":          "in_progress",
-			"phase":           "planning",
+			"phase":           phase,
 		}
 		if retryCount >= 0 {
 			fm["planning_retry_count"] = retryCount
@@ -90,6 +98,13 @@ var _ = Describe("PlanningRetryGate", func() {
 		return []byte("---\n" + string(fmBytes) + "\n---\n" + body)
 	}
 
+	// onDiskFile creates a task file content. When retryCount < 0, the
+	// planning_retry_count key is omitted entirely (absent frontmatter state).
+	// When withPRMetadata is true, repository and pull_request_number are included.
+	onDiskFile := func(taskID string, retryCount int, body string, withPRMetadata ...bool) []byte {
+		return onDiskFileWithPhase(taskID, "planning", retryCount, body, withPRMetadata...)
+	}
+
 	Describe("passthrough cases", func() {
 		Context("non-planning phase", func() {
 			It("returns handled=false and does not write", func() {
@@ -100,7 +115,7 @@ var _ = Describe("PlanningRetryGate", func() {
 				)
 				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
 				fakeGit.ReadFileReturns(
-					onDiskFile("pr-123", 0, "## Objective\nreview the PR\n"),
+					onDiskFileWithPhase("pr-123", "execution", 0, "## Objective\nreview the PR\n"),
 					nil,
 				)
 
@@ -160,6 +175,240 @@ var _ = Describe("PlanningRetryGate", func() {
 					testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
 					) - before,
+				).To(Equal(0.0))
+			})
+		})
+	})
+
+	Describe("on-disk phase is the source of truth", func() {
+		Context("payload carries no phase, on-disk phase is planning", func() {
+			It("retries based on the on-disk phase", func() {
+				req := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter: lib.TaskFrontmatter{
+						"task_type": "pr-review",
+						"assignee":  "pr-reviewer-agent",
+					},
+					Content: lib.TaskContent("## Result\nStatus: failed\nMessage: boom\n"),
+				}
+				Expect(req.Frontmatter.Phase()).To(BeNil())
+
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				// Capture the stub's own invocation, not a second call after Handle
+				// returns — the assertion must describe the path the gate ran.
+				var resultBytes []byte
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					out, invokeErr := modify(diskContent)
+					resultBytes = out
+					return invokeErr
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+				count, _ := fm.Int("planning_retry_count")
+				Expect(count).To(Equal(1))
+			})
+		})
+
+		Context("payload phase is planning, on-disk phase is execution", func() {
+			It("skips without writing", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				Expect(req.Frontmatter.Phase().String()).To(Equal("planning"))
+
+				diskContent := onDiskFileWithPhase(
+					"pr-123",
+					"execution",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				diskFMStr, diskErr := result.ExtractFrontmatter(ctx, diskContent)
+				Expect(diskErr).To(BeNil())
+				var diskFM lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
+				Expect(diskFM.Phase().String()).To(Equal("execution"))
+
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		// The mirror of the context above: a payload that claims a phase PAST
+		// planning must not veto a retry while the task is still parked in
+		// planning. Without this spec, a reintroduced payload-side veto
+		// ("payload phase present and != planning => skip") would pass every
+		// other spec in this block, and "the payload phase is never consulted"
+		// would be locked in one direction only.
+		Context("payload phase is execution, on-disk phase is planning", func() {
+			It("retries on the on-disk phase and ignores the payload phase", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"execution",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				Expect(req.Frontmatter.Phase().String()).To(Equal("execution"))
+
+				diskContent := onDiskFileWithPhase(
+					"pr-123",
+					"planning",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				diskFMStr, diskErr := result.ExtractFrontmatter(ctx, diskContent)
+				Expect(diskErr).To(BeNil())
+				var diskFM lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
+				Expect(diskFM.Phase().String()).To(Equal("planning"))
+
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+			})
+		})
+
+		Context("on-disk phase is absent", func() {
+			It("skips without writing", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := []byte(
+					"---\ntask_identifier: pr-123\ntask_type: pr-review\nassignee: pr-reviewer-agent\nstatus: in_progress\nplanning_retry_count: 0\n---\n## Objective\n\nreview the PR\n",
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("task file not found", func() {
+			It("skips before consulting the phase", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				fakeGit.ListFilesReturns([]string{}, nil)
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeFalse())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+	})
+
+	Describe("the on-disk phase is re-checked inside the write closure", func() {
+		// Handle reads the phase from FindTaskFilePath, but the write happens in a
+		// closure that re-reads the file. A task that moves past planning between
+		// those two reads must not be forced back — neither by the retry write nor
+		// by the escalation write. The stub invokes the closure with the moved
+		// bytes, which is exactly what AtomicReadModifyWriteAndCommitPush does.
+		Context("retry path: the task moves past planning before the write", func() {
+			It("leaves the file untouched and does not bump the counter", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				moved := onDiskFileWithPhase(
+					"pr-123",
+					"execution",
+					0,
+					"## Objective\n\nreview the PR\n",
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var written []byte
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					out, invokeErr := modify(moved)
+					written = out
+					return invokeErr
+				}
+
+				beforeRetry := testutil.ToFloat64(
+					metrics.PlanningRetryTotal.WithLabelValues("retry"),
+				)
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(written).To(Equal(moved))
+
+				Expect(
+					testutil.ToFloat64(
+						metrics.PlanningRetryTotal.WithLabelValues("retry"),
+					) - beforeRetry,
+				).To(Equal(0.0))
+			})
+		})
+
+		Context("escalation path: the task moves past planning before the write", func() {
+			It("leaves the file untouched and posts no escalation comment", func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
+				moved := onDiskFileWithPhase(
+					"pr-123",
+					"human_review",
+					3,
+					"## Objective\n\nreview the PR\n",
+					true,
+				)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var written []byte
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					out, invokeErr := modify(moved)
+					written = out
+					return invokeErr
+				}
+
+				beforeExhausted := testutil.ToFloat64(
+					metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
+				)
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+				Expect(written).To(Equal(moved))
+
+				Expect(fakeCommenter.PostCommentCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
+					) - beforeExhausted,
 				).To(Equal(0.0))
 			})
 		})
@@ -723,5 +972,145 @@ var _ = Describe("PlanningRetryGate", func() {
 				}
 			})
 		})
+	})
+
+	Describe("heal-on-write (target_vault stamping)", func() {
+		It(
+			"stamps target_vault on the retry write for a file lacking it",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("openclaw"))
+
+				// the stamped file read back through ShouldProcessResult no longer
+				// falls through to the non-owning controller
+				stampedReq := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter:    lib.TaskFrontmatter{"target_vault": "openclaw"},
+				}
+				Expect(routing.ShouldProcessResult(stampedReq, "personal")).To(BeFalse())
+				Expect(routing.ShouldProcessResult(stampedReq, "openclaw")).To(BeTrue())
+			},
+		)
+
+		It(
+			"stamps target_vault on the escalation write for a file lacking it",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("openclaw"))
+
+				phase, _ := fm.String("phase")
+				Expect(phase).To(Equal("human_review"))
+
+				stampedReq := lib.Task{
+					TaskIdentifier: lib.TaskIdentifier("pr-123"),
+					Frontmatter:    lib.TaskFrontmatter{"target_vault": "openclaw"},
+				}
+				Expect(routing.ShouldProcessResult(stampedReq, "personal")).To(BeFalse())
+				Expect(routing.ShouldProcessResult(stampedReq, "openclaw")).To(BeTrue())
+			},
+		)
+
+		It(
+			"never overrides an existing target_vault on retry or escalation writes",
+			func() {
+				req := buildPRReviewTask(
+					"pr-123",
+					"planning",
+					"## Result\nStatus: failed\nMessage: boom\n",
+				)
+				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				// rewrite disk content with a pre-existing target_vault
+				stamped := strings.Replace(
+					string(diskContent),
+					"status: in_progress",
+					"status: in_progress\ntarget_vault: personal",
+					1,
+				)
+				diskContent = []byte(stamped)
+				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
+				fakeGit.ReadFileReturns(diskContent, nil)
+
+				var capturedModify func([]byte) ([]byte, error)
+				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
+					capturedModify = modify
+					if _, invokeErr := modify(diskContent); invokeErr != nil {
+						return invokeErr
+					}
+					return nil
+				}
+
+				handled, err := gate.Handle(ctx, req)
+				Expect(err).To(BeNil())
+				Expect(handled).To(BeTrue())
+
+				resultBytes, err := capturedModify(diskContent)
+				Expect(err).To(BeNil())
+				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				Expect(err).To(BeNil())
+				var fm lib.TaskFrontmatter
+				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
+
+				target, _ := fm.String("target_vault")
+				Expect(target).To(Equal("personal"))
+			},
+		)
 	})
 })

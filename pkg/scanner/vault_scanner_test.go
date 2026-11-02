@@ -45,6 +45,10 @@ type testGitClient struct {
 	path          string
 	pullErr       error
 	commitPushErr error
+	// beforeRMW runs inside AtomicReadModifyWriteAndCommitPush before the file
+	// is read, so a test can simulate a concurrent writer landing between the
+	// scanner's scan-time read and the atomic reset.
+	beforeRMW func(absPath string)
 }
 
 func (t *testGitClient) EnsureCloned(_ context.Context) error { return nil }
@@ -77,11 +81,25 @@ func (t *testGitClient) AtomicWriteIfAbsentAndCommitPush(
 
 func (t *testGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
-	_ string,
-	_ func([]byte) ([]byte, error),
+	absPath string,
+	modify func([]byte) ([]byte, error),
 	_ string,
 ) error {
-	return t.commitPushErr
+	if t.commitPushErr != nil {
+		return t.commitPushErr
+	}
+	if t.beforeRMW != nil {
+		t.beforeRMW(absPath)
+	}
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	updated, err := modify(current)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
 }
 
 func (t *testGitClient) ListFiles(_ context.Context, _ string) ([]string, error) { return nil, nil }
@@ -127,11 +145,22 @@ func (t *fileOpsTestGitClient) AtomicWriteIfAbsentAndCommitPush(
 
 func (t *fileOpsTestGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
-	_ string,
-	_ func([]byte) ([]byte, error),
+	absPath string,
+	modify func([]byte) ([]byte, error),
 	_ string,
 ) error {
-	return t.commitPushErr
+	if t.commitPushErr != nil {
+		return t.commitPushErr
+	}
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	updated, err := modify(current)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
 }
 
 func (t *fileOpsTestGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
@@ -208,6 +237,8 @@ var _ = Describe("VaultScanner", func() {
 			make(chan struct{}),
 			metrics.New(),
 			true,
+			"test-vault",
+			0,
 		)
 	})
 
@@ -217,7 +248,7 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("assignee transition → counter reset", func() {
 		It(
-			"resets trigger_count and retry_count when assignee transitions from empty to named",
+			"resets trigger_count and leaves the retired retry_count untouched when assignee transitions from empty to named",
 			func() {
 				taskID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 				absPath := filepath.Join(tmpDir, taskDir, "parked.md")
@@ -247,7 +278,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(written))), &fm),
 				).To(Succeed())
 				Expect(fm["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm["retry_count"]).To(BeNumerically("==", 2))
 				Expect(fm["assignee"]).To(Equal("claude"))
 
 				// Third scan: reads reset file, publishes task with fresh counters
@@ -257,7 +288,51 @@ var _ = Describe("VaultScanner", func() {
 				Expect(r3.Changed).To(HaveLen(1))
 				Expect(string(r3.Changed[0].Frontmatter.Assignee())).To(Equal("claude"))
 				Expect(r3.Changed[0].Frontmatter.TriggerCount()).To(Equal(0))
-				Expect(r3.Changed[0].Frontmatter.RetryCount()).To(Equal(0))
+				Expect(r3.Changed[0].Frontmatter.RetryCount()).To(Equal(2))
+			},
+		)
+
+		It(
+			"applies the counter reset to the live file, preserving a field changed after the scan read",
+			func() {
+				taskID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+				absPath := filepath.Join(tmpDir, taskDir, "live-reset.md")
+				initialContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: \ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(initialContent), 0600)).To(Succeed())
+
+				// First scan: parked (assignee empty).
+				s.RunCycle(ctx, results)
+				Expect(results).To(Receive())
+
+				// Operator re-delegates.
+				delegatedContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(delegatedContent), 0600)).To(Succeed())
+
+				// A concurrent writer moves the task to execution after the
+				// scanner's scan-time read but before the atomic reset. The old
+				// whole-file write reverted this to the snapshot's phase; the
+				// atomic reset must preserve it.
+				fakeGit.beforeRMW = func(p string) {
+					b, err := os.ReadFile(p) // #nosec G304 -- test-only path
+					Expect(err).To(BeNil())
+					updated := strings.Replace(string(b), "phase: planning", "phase: execution", 1)
+					Expect(os.WriteFile(p, []byte(updated), 0600)).To(Succeed())
+				}
+				defer func() { fakeGit.beforeRMW = nil }()
+
+				// Second scan: detects the transition and resets the live file.
+				s.RunCycle(ctx, results)
+				Expect(results).To(Receive())
+
+				written, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+				Expect(err).To(BeNil())
+				var fm map[string]interface{}
+				Expect(
+					yaml.Unmarshal([]byte(extractFrontmatterStr(string(written))), &fm),
+				).To(Succeed())
+				Expect(fm["trigger_count"]).To(BeNumerically("==", 0))
+				Expect(fm["retry_count"]).To(BeNumerically("==", 2))
+				Expect(fm["phase"]).To(Equal("execution"))
 			},
 		)
 
@@ -354,7 +429,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(afterFirstReset))), &fm1),
 				).To(Succeed())
 				Expect(fm1["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm1["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm1["retry_count"]).To(BeNumerically("==", 2))
 
 				// Third scan: zero-hash sentinel forces re-process, but prevEntry.assignee = "claude"
 				// → no second transition detected → no second reset
@@ -370,7 +445,7 @@ var _ = Describe("VaultScanner", func() {
 					yaml.Unmarshal([]byte(extractFrontmatterStr(string(afterSecondScan))), &fm2),
 				).To(Succeed())
 				Expect(fm2["trigger_count"]).To(BeNumerically("==", 0))
-				Expect(fm2["retry_count"]).To(BeNumerically("==", 0))
+				Expect(fm2["retry_count"]).To(BeNumerically("==", 2))
 			},
 		)
 
@@ -519,7 +594,16 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("NewVaultScanner", func() {
 		It("returns a non-nil VaultScanner", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				nil,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			Expect(vs).NotTo(BeNil())
 		})
 	})
@@ -535,6 +619,8 @@ var _ = Describe("VaultScanner", func() {
 				nil,
 				metrics.New(),
 				true,
+				"test-vault",
+				0,
 			)
 			Expect(vs).NotTo(BeNil())
 
@@ -555,7 +641,16 @@ var _ = Describe("VaultScanner", func() {
 
 	Describe("Run", func() {
 		It("returns nil when context is cancelled", func() {
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, nil, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				nil,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			runCtx, cancel := context.WithCancel(ctx)
 			done := make(chan error, 1)
 			go func() {
@@ -571,7 +666,16 @@ var _ = Describe("VaultScanner", func() {
 			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
 
 			trigger := make(chan struct{}, 1)
-			vs := scanner.NewVaultScanner(fakeGit, taskDir, time.Hour, trigger, metrics.New(), true)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				time.Hour,
+				trigger,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
 			scanResults := make(chan scanner.ScanResult, 1)
 			runCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -589,6 +693,45 @@ var _ = Describe("VaultScanner", func() {
 			Expect(
 				string(result.Changed[0].TaskIdentifier),
 			).To(Equal("44444444-4444-4444-8444-444444444444"))
+
+			cancel()
+			Eventually(done, 200*time.Millisecond).Should(Receive(BeNil()))
+		})
+
+		It("does not scan periodically when the poll interval is zero", func() {
+			content := "---\ntask_identifier: 55555555-5555-4555-8555-555555555555\nstatus: todo\nassignee: claude\n---\n# Trigger-only task"
+			absPath := filepath.Join(tmpDir, taskDir, "trigger-only-task.md")
+			Expect(os.WriteFile(absPath, []byte(content), 0600)).To(Succeed())
+
+			trigger := make(chan struct{}, 1)
+			vs := scanner.NewVaultScanner(
+				fakeGit,
+				taskDir,
+				0,
+				trigger,
+				metrics.New(),
+				true,
+				"test-vault",
+				0,
+			)
+			scanResults := make(chan scanner.ScanResult, 1)
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() {
+				done <- vs.Run(runCtx, scanResults)
+			}()
+
+			// No periodic scan: nothing arrives until the trigger fires. A
+			// time.NewTicker(0) would panic here rather than merely stay quiet.
+			Consistently(scanResults, 300*time.Millisecond).ShouldNot(Receive())
+
+			trigger <- struct{}{}
+
+			var result scanner.ScanResult
+			Eventually(scanResults, time.Second).Should(Receive(&result))
+			Expect(result.Changed).To(HaveLen(1))
 
 			cancel()
 			Eventually(done, 200*time.Millisecond).Should(Receive(BeNil()))
@@ -978,6 +1121,8 @@ var _ = Describe("VaultScanner", func() {
 					make(chan struct{}),
 					metrics.New(),
 					true,
+					"test-vault",
+					0,
 				)
 				scanResults := make(chan scanner.ScanResult, 1)
 
@@ -1061,7 +1206,7 @@ var _ = Describe("VaultScanner", func() {
 		})
 
 		It(
-			"maintains counter-call parity with skip-site log lines (AC#6 invariant (raised to 9 after per-site auto-inject gate, spec 001))",
+			"maintains counter-call parity with skip-site log lines (AC#6 invariant, raised to 10 by the spec-009 convergence halt)",
 			func() {
 				// vault_scanner.go is in pkg/scanner/ so the test file at pkg/scanner/vault_scanner_test.go
 				// finds the source at pkg/scanner/vault_scanner.go (same directory).
@@ -1080,17 +1225,21 @@ var _ = Describe("VaultScanner", func() {
 				autoInjectGateRe := regexp.MustCompile(
 					`glog\.Warningf\(\s*"AUTO_INJECT_TASK_IDENTIFIER=false; skipping`,
 				)
+				convergenceHaltRe := regexp.MustCompile(
+					`glog\.Errorf\(\s*"task_identifier repair did not converge`,
+				)
 				skipCount := strings.Count(body, `glog.Warningf("skipping`) +
 					strings.Count(body, `glog.Errorf("skipping`) +
 					strings.Count(body, `glog.Warningf("failed to read`) +
-					len(autoInjectGateRe.FindAllStringIndex(body, -1))
+					len(autoInjectGateRe.FindAllStringIndex(body, -1)) +
+					len(convergenceHaltRe.FindAllStringIndex(body, -1))
 				counterCount := strings.Count(body, `SkippedFilesTotal(`)
 				Expect(
 					skipCount,
-				).To(Equal(9), "expected 9 skip-site log lines (6 existing + 3 auto-inject gate sites), got %d", skipCount)
+				).To(Equal(10), "expected 10 skip-site log lines (6 existing + 3 auto-inject gate sites + 1 spec-009 convergence halt), got %d", skipCount)
 				Expect(
 					counterCount,
-				).To(Equal(9), "expected 9 counter increment calls (6 existing + 3 auto-inject gate sites), got %d", counterCount)
+				).To(Equal(10), "expected 10 counter increment calls (6 existing + 3 auto-inject gate sites + 1 spec-009 convergence halt), got %d", counterCount)
 			},
 		)
 	})

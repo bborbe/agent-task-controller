@@ -77,6 +77,28 @@ var _ = Describe("ShouldProcessResult", func() {
 	)
 })
 
+var _ = Describe("ShouldProcessFrontmatterCommand", func() {
+	DescribeTable(
+		"frontmatter-command routing matrix",
+		func(targetVault, vaultName string, want bool) {
+			Expect(routing.ShouldProcessFrontmatterCommand(targetVault, vaultName)).To(Equal(want))
+		},
+		// empty targetVault falls through (legacy unstamped command — owner heals, non-owner drops)
+		Entry("empty target, vaultName=openclaw → true (fall through)", "", "openclaw", true),
+		Entry("empty target, vaultName=personal → true (fall through)", "", "personal", true),
+		// (target openclaw, my openclaw) → true
+		Entry("openclaw target, vaultName=openclaw → true", "openclaw", "openclaw", true),
+		// (target personal, my personal) → true
+		Entry("personal target, vaultName=personal → true", "personal", "personal", true),
+		// (target openclaw, my personal) → false (cross-vault traffic)
+		Entry("openclaw target, vaultName=personal → false", "openclaw", "personal", false),
+		// (target personal, my openclaw) → false
+		Entry("personal target, vaultName=openclaw → false", "personal", "openclaw", false),
+		// (target other, my openclaw) → false
+		Entry("other target, vaultName=openclaw → false", "other", "openclaw", false),
+	)
+})
+
 var _ = Describe("ValidateVaultName", func() {
 	var ctx context.Context
 	BeforeEach(func() { ctx = context.Background() })

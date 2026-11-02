@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,23 +15,27 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
 var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeGit   *mocks.GitClient
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -77,7 +82,13 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
-		executor = command.NewIncrementFrontmatterExecutor(fakeGit, taskDir, metrics.New())
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
+		executor = command.NewIncrementFrontmatterExecutor(
+			fakeVault,
+			"openclaw",
+			libtime.NewCurrentDateTime(),
+			metrics.New(),
+		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -266,6 +277,44 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("planning"))
 				Expect(fm["assignee"]).To(Equal("sentry-collector-agent"))
 			})
+
+			It(
+				"escalates a ref-bearing task with no max_triggers at the lib default cap",
+				func() {
+					// The exact production shape of the seven parked pr-review records:
+					// a ref, no max_triggers, trigger_count 2 -> 3. Before the fix the
+					// cap only engaged when max_triggers was present, so this increment
+					// charged the budget silently and the task parked with a live
+					// assignee and no job. It must now clear the assignee, capture it in
+					// previous_assignee, and record the escalation section.
+					taskFile := writeTaskFile(
+						"cap-ref.md",
+						"---\ntask_identifier: cap-ref-uuid\ntrigger_count: 2\nphase: planning\nassignee: pr-reviewer-agent\nref: 43b06f44\n---\n## Failure\n- **Reason:** deadline_exceeded\n",
+					)
+					cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cap-ref-uuid"),
+						Field:          "trigger_count",
+						Delta:          1,
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeNumerically("==", 3))
+					Expect(fm["assignee"]).To(BeEmpty())
+					Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+					Expect(fm["phase"]).To(Equal("planning"))
+
+					content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+					Expect(readErr).NotTo(HaveOccurred())
+					body := string(content)
+					Expect(body).To(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(body).To(ContainSubstring("**Trigger count:** 3"))
+					Expect(body).To(ContainSubstring("**Max triggers:** 3"))
+					// The pre-existing ## Failure section must survive the body PUT.
+					Expect(body).To(ContainSubstring("deadline_exceeded"))
+				},
+			)
 		})
 
 		Context("no escalation below cap", func() {
@@ -319,6 +368,115 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+			})
+		})
+
+		Context("vault routing", func() {
+			It(
+				"skips a mismatched-vault command with zero git writes and zero not_found increments",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cross-vault-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					before := testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"increment-frontmatter",
+							"not_found",
+						),
+					)
+					cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cross-vault-uuid"),
+						TargetVault:    "personal",
+						Field:          "trigger_count",
+						Delta:          1,
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+					// guard fires before the task-file lookup and before any write
+					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
+					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(
+						testutil.ToFloat64(
+							metrics.FrontmatterCommandsTotal.WithLabelValues(
+								"increment-frontmatter",
+								"not_found",
+							),
+						),
+					).To(Equal(before))
+					// file untouched
+					fm := parseFrontmatter(taskFile)
+					_, hasTrigger := fm["trigger_count"]
+					Expect(hasTrigger).To(BeFalse())
+					_, hasTarget := fm["target_vault"]
+					Expect(hasTarget).To(BeFalse())
+				},
+			)
+
+			It("processes an empty-vault command (legacy fall-through)", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: legacy-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("legacy-uuid"),
+					Field:          "trigger_count",
+					Delta:          1,
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				// The write is now a typed PATCH addressed by identifier, so the
+				// "wrote exactly once" assertion moves to that seam. The file
+				// content check below is what proves the write landed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(Equal(1))
+			})
+
+			It(
+				"heals a file lacking target_vault, stamping the controller vault in the same write",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: heal-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Field:          "trigger_count",
+						Delta:          1,
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["target_vault"]).To(Equal("openclaw"))
+					// the stamped file read back through ShouldProcessResult no longer
+					// falls through to the non-owning controller
+					req := lib.Task{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Frontmatter: lib.TaskFrontmatter{
+							"target_vault": "openclaw",
+						},
+					}
+					Expect(routing.ShouldProcessResult(req, "personal")).To(BeFalse())
+					Expect(routing.ShouldProcessResult(req, "openclaw")).To(BeTrue())
+				},
+			)
+
+			It("never overrides an existing target_vault", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: stamped-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: personal\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.IncrementFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("stamped-uuid"),
+					Field:          "trigger_count",
+					Delta:          1,
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["target_vault"]).To(Equal("personal"))
+				Expect(fm["trigger_count"]).To(Equal(1))
 			})
 		})
 	})

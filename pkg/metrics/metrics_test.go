@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	_ "github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
 
 var _ = Describe("Metrics", func() {
@@ -31,6 +31,26 @@ var _ = Describe("Metrics", func() {
 		Expect(names).To(HaveKey("agent_controller_frontmatter_commands_total"))
 		Expect(names).To(HaveKey("agent_controller_git_rest_calls_total"))
 		Expect(names).To(HaveKey("agent_controller_vault_scanner_skipped_files_total"))
+		Expect(names).To(HaveKey("agent_controller_update_go_stuck_planning_tasks"))
+	})
+
+	It("publishes the stuck-planning gauge at 0 before the first scan", func() {
+		// A gauge with no value yet reads as "no data" to an alert query, which is
+		// indistinguishable from "nothing is stuck". init() sets it explicitly so a
+		// freshly started pod answers 0 rather than absent.
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		var found bool
+		for _, mf := range mfs {
+			if mf.GetName() != "agent_controller_update_go_stuck_planning_tasks" {
+				continue
+			}
+			found = true
+			Expect(mf.GetMetric()).To(HaveLen(1))
+			Expect(mf.GetMetric()[0].GetGauge().GetValue()).To(BeNumerically("==", 0))
+		}
+		Expect(found).To(BeTrue())
 	})
 
 	It("pre-initializes all scan_cycles_total label combinations", func() {
@@ -54,7 +74,7 @@ var _ = Describe("Metrics", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		labels := gatherLabels(mfs, "agent_controller_results_written_total", "result")
-		Expect(labels).To(ContainElements("success", "not_found", "error"))
+		Expect(labels).To(ContainElements("success", "not_found", "unowned", "error"))
 	})
 
 	It("pre-initializes all git_push_total label combinations", func() {
@@ -106,9 +126,127 @@ var _ = Describe("Metrics", func() {
 			"empty_status",
 			"inject_task_identifier_failed",
 			"read_failed",
+			"auto_inject_disabled",
+			"repair_not_converging",
 		))
 	})
+
+	It("pre-initializes repair_not_converging at zero before any skip (spec 009 AC1)", func() {
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		value, found := gatherCounterValue(
+			mfs,
+			"agent_controller_vault_scanner_skipped_files_total",
+			"reason",
+			"repair_not_converging",
+		)
+		Expect(found).To(BeTrue(), "repair_not_converging series must exist after init()")
+		Expect(value).To(BeNumerically("==", 0))
+	})
 })
+
+var _ = Describe("task age metrics (spec 019)", func() {
+	It("publishes both families as gauges with exactly the frozen label names", func() {
+		m := metrics.New()
+		m.TaskOldestAgeSeconds("spec-019-labels").Set(1)
+		for _, bucket := range metrics.AvailableTaskAgeBuckets {
+			m.TaskAgeBucketTasks("spec-019-labels", bucket).Set(0)
+		}
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		ageFamily := findMetricFamily(mfs, "agent_controller_task_oldest_age_seconds")
+		Expect(ageFamily).NotTo(BeNil(), "oldest-age family must be registered")
+		Expect(ageFamily.GetType()).To(Equal(dto.MetricType_GAUGE))
+		Expect(metricFamilyLabelNames(ageFamily)).To(Equal([]string{"vault"}))
+
+		bucketFamily := findMetricFamily(mfs, "agent_controller_task_age_bucket_tasks")
+		Expect(bucketFamily).NotTo(BeNil(), "bucket family must be registered")
+		Expect(bucketFamily.GetType()).To(Equal(dto.MetricType_GAUGE))
+		// The DTO reports label names sorted, so assert the exact set rather than
+		// the declaration order.
+		Expect(metricFamilyLabelNames(bucketFamily)).To(ConsistOf("vault", "bucket"))
+	})
+
+	It("exposes exactly the frozen bucket values as the closed set", func() {
+		Expect(metrics.AvailableTaskAgeBuckets).To(HaveLen(4))
+
+		values := make([]string, 0, len(metrics.AvailableTaskAgeBuckets))
+		for _, bucket := range metrics.AvailableTaskAgeBuckets {
+			values = append(values, bucket.String())
+		}
+
+		Expect(values).To(Equal([]string{"lt_1d", "1d_7d", "gt_7d", "undated"}))
+	})
+})
+
+var _ = Describe("open task census metrics (spec 020)", func() {
+	It("registers the family as a gauge with exactly the frozen label names", func() {
+		metrics.New().OpenTasks().
+			WithLabelValues("spec-020-labels", "planning", "github-update-go").
+			Set(1)
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		family := findMetricFamily(mfs, "agent_controller_open_tasks")
+		Expect(family).NotTo(BeNil(), "open-tasks family must be registered")
+		Expect(family.GetType()).To(Equal(dto.MetricType_GAUGE))
+		// The DTO reports label names sorted, so assert the exact set rather than
+		// the declaration order.
+		Expect(metricFamilyLabelNames(family)).To(ConsistOf("vault", "phase", "task_type"))
+	})
+
+	It("reads back the value the default implementation wrote", func() {
+		metrics.New().OpenTasks().
+			WithLabelValues("spec-020-labels", "planning", "github-update-go").
+			Set(1)
+
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		family := findMetricFamily(mfs, "agent_controller_open_tasks")
+		Expect(family).NotTo(BeNil(), "open-tasks family must be registered")
+
+		value, found := gatherOpenTasksValue(
+			family,
+			"spec-020-labels",
+			"planning",
+			"github-update-go",
+		)
+		Expect(found).To(BeTrue(), "the spec-020-labels sample must exist")
+		Expect(value).To(BeNumerically("==", 1))
+	})
+
+	It("returns the registered collector itself", func() {
+		Expect(metrics.New().OpenTasks()).To(BeIdenticalTo(metrics.OpenTasks))
+	})
+})
+
+// findMetricFamily returns the family with the given name, or nil when absent.
+func findMetricFamily(mfs []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			return mf
+		}
+	}
+	return nil
+}
+
+// metricFamilyLabelNames returns the label names of the family's first sample.
+func metricFamilyLabelNames(mf *dto.MetricFamily) []string {
+	samples := mf.GetMetric()
+	if len(samples) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(samples[0].GetLabel()))
+	for _, lp := range samples[0].GetLabel() {
+		names = append(names, lp.GetName())
+	}
+	return names
+}
 
 func gatherLabels(mfs []*dto.MetricFamily, metricName string, labelName string) []string {
 	for _, mf := range mfs {
@@ -126,4 +264,48 @@ func gatherLabels(mfs []*dto.MetricFamily, metricName string, labelName string) 
 		return values
 	}
 	return nil
+}
+
+// gatherCounterValue returns the counter value of the sample of metricName whose
+// label labelName equals labelValue, and whether such a sample exists at all.
+func gatherCounterValue(
+	mfs []*dto.MetricFamily,
+	metricName string,
+	labelName string,
+	labelValue string,
+) (float64, bool) {
+	for _, mf := range mfs {
+		if mf.GetName() != metricName {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == labelName && lp.GetValue() == labelValue {
+					return m.GetCounter().GetValue(), true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// gatherOpenTasksValue returns the gauge value of the open-tasks sample whose
+// vault, phase and task_type labels all match, and whether such a sample exists.
+func gatherOpenTasksValue(
+	mf *dto.MetricFamily,
+	vault string,
+	phase string,
+	taskType string,
+) (float64, bool) {
+	for _, m := range mf.GetMetric() {
+		labels := make(map[string]string, len(m.GetLabel()))
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		if labels["vault"] == vault && labels["phase"] == phase &&
+			labels["task_type"] == taskType {
+			return m.GetGauge().GetValue(), true
+		}
+	}
+	return 0, false
 }

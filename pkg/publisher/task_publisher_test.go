@@ -28,6 +28,7 @@ var _ = Describe("TaskPublisher", func() {
 		tp              publisher.TaskPublisher
 		currentDateTime libtime.CurrentDateTime
 		fixedTime       libtime.DateTime
+		vaultName       string
 	)
 
 	BeforeEach(func() {
@@ -41,7 +42,8 @@ var _ = Describe("TaskPublisher", func() {
 		currentDateTime = libtime.NewCurrentDateTime()
 		fixedTime = libtimetest.ParseDateTime("2026-01-15T10:00:00Z")
 		currentDateTime.SetNow(fixedTime)
-		tp = publisher.NewTaskPublisher(fakeSender, schemaID, currentDateTime)
+		vaultName = "test-vault"
+		tp = publisher.NewTaskPublisher(fakeSender, schemaID, currentDateTime, vaultName)
 	})
 
 	Describe("PublishChanged", func() {
@@ -69,6 +71,39 @@ var _ = Describe("TaskPublisher", func() {
 			Expect(eventObject.Event.MarshalInto(ctx, &publishedTask)).To(Succeed())
 			Expect(publishedTask.Object.Created).To(Equal(fixedTime))
 			Expect(publishedTask.Object.Modified).To(Equal(fixedTime))
+		})
+
+		It("stamps the configured vault when the input task has an empty vault", func() {
+			fakeSender.SendUpdateReturns(nil)
+			task := lib.Task{
+				TaskIdentifier: lib.TaskIdentifier("test-uuid-1234"),
+			}
+
+			err := tp.PublishChanged(ctx, task)
+			Expect(err).To(BeNil())
+			Expect(fakeSender.SendUpdateCallCount()).To(Equal(1))
+
+			_, eventObject := fakeSender.SendUpdateArgsForCall(0)
+			var publishedTask lib.Task
+			Expect(eventObject.Event.MarshalInto(ctx, &publishedTask)).To(Succeed())
+			Expect(publishedTask.Vault).To(Equal(vaultName))
+		})
+
+		It("overrides the input vault with the configured vault", func() {
+			fakeSender.SendUpdateReturns(nil)
+			task := lib.Task{
+				TaskIdentifier: lib.TaskIdentifier("test-uuid-1234"),
+				Vault:          "some-other-vault",
+			}
+
+			err := tp.PublishChanged(ctx, task)
+			Expect(err).To(BeNil())
+			Expect(fakeSender.SendUpdateCallCount()).To(Equal(1))
+
+			_, eventObject := fakeSender.SendUpdateArgsForCall(0)
+			var publishedTask lib.Task
+			Expect(eventObject.Event.MarshalInto(ctx, &publishedTask)).To(Succeed())
+			Expect(publishedTask.Vault).To(Equal(vaultName))
 		})
 
 		It("returns an error when SendUpdate fails", func() {

@@ -25,7 +25,17 @@ type Metrics interface {
 	FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
+	CommandExpiredTotal(operation string) prometheus.Counter
 	SkippedFilesTotal(reason SkipReason) prometheus.Counter
+	UpdateGoStuckPlanningTasks() prometheus.Gauge
+	TaskOldestAgeSeconds(vault string) prometheus.Gauge
+	TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge
+	// OpenTasks returns the open-task census vector, labelled by vault, phase and
+	// task_type in that declaration order — the same order WithLabelValues and
+	// DeleteLabelValues take. It is a *prometheus.GaugeVec rather than a single
+	// prometheus.Gauge because the caller both Set()s every present pair and
+	// DeleteLabelValues()s the pairs that vanished, and only the vector exposes both.
+	OpenTasks() *prometheus.GaugeVec
 }
 
 // defaultMetrics implements Metrics using promauto-registered counters.
@@ -74,8 +84,28 @@ func (m *defaultMetrics) KafkaConsumePausedTotal() prometheus.Counter {
 	return KafkaConsumePausedTotal
 }
 
+func (m *defaultMetrics) CommandExpiredTotal(operation string) prometheus.Counter {
+	return CommandExpiredTotal.WithLabelValues(operation)
+}
+
 func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter {
 	return SkippedFilesTotal.WithLabelValues(reason.String())
+}
+
+func (m *defaultMetrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
+	return UpdateGoStuckPlanningTasks
+}
+
+func (m *defaultMetrics) TaskOldestAgeSeconds(vault string) prometheus.Gauge {
+	return TaskOldestAgeSeconds.WithLabelValues(vault)
+}
+
+func (m *defaultMetrics) TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge {
+	return TaskAgeBucketTasks.WithLabelValues(vault, bucket.String())
+}
+
+func (m *defaultMetrics) OpenTasks() *prometheus.GaugeVec {
+	return OpenTasks
 }
 
 // ScanCyclesTotal counts scan cycle completions by result.
@@ -107,7 +137,11 @@ var PlanningRetryTotal = promauto.NewCounterVec(
 	[]string{"result"},
 )
 
-// ResultsWrittenTotal counts result write attempts by outcome.
+// ResultsWrittenTotal counts result write attempts by outcome
+// ("success" | "not_found" | "unowned" | "error"). `unowned` is a miss on a
+// result carrying no target_vault, which every controller consumes by design —
+// routine fan-out, not data loss. `not_found` is a miss on a result this
+// controller was routed, and is the series AgentControllerResultNotFound alerts on.
 var ResultsWrittenTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_results_written_total",
@@ -161,6 +195,31 @@ var KafkaConsumePausedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total number of times Kafka consumption was paused waiting for git-rest.",
 })
 
+// CommandExpiredTotal counts commands dropped by the expiry filter, by operation.
+//
+// It is the counter the 60-minute window could not previously report: an expired command was
+// dropped silently, so "a published create never reached the controller" had no series to read.
+// A non-zero value is loss, not slowness — the command's effect never happened — so the alert is
+// a level test on increase() over a window wide enough to cover a burst, not a rate over 5m.
+var CommandExpiredTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_commands_expired_total",
+		Help: "Total number of commands dropped as expired before execution, by operation.",
+	},
+	[]string{"operation"},
+)
+
+// availableCommandOperations is the closed set of command operations this controller consumes,
+// used for counter pre-initialisation so every operation series exists at 0 before the first drop.
+// An operation missing here still counts on first increment; it just starts at "no data".
+var availableCommandOperations = []string{
+	"create-task",
+	"complete-task",
+	"increment-frontmatter",
+	"update-frontmatter",
+	"update",
+}
+
 // SkipReason is the closed set of structured reasons the vault scanner skips a task file.
 type SkipReason string
 
@@ -174,6 +233,7 @@ const (
 	ReasonInjectTaskIdentifierFailed  SkipReason = "inject_task_identifier_failed"
 	ReasonReadFailed                  SkipReason = "read_failed"
 	ReasonAutoInjectDisabled          SkipReason = "auto_inject_disabled"
+	ReasonRepairNotConverging         SkipReason = "repair_not_converging"
 )
 
 // AvailableSkipReasons is the full closed set of skip reasons, used for counter
@@ -185,20 +245,131 @@ var AvailableSkipReasons = []SkipReason{
 	ReasonInjectTaskIdentifierFailed,
 	ReasonReadFailed,
 	ReasonAutoInjectDisabled,
+	ReasonRepairNotConverging,
+}
+
+// TaskAgeBucket is the closed set of bucket label values for TaskAgeBucketTasks.
+type TaskAgeBucket string
+
+// String returns the Prometheus label value for the bucket.
+func (b TaskAgeBucket) String() string { return string(b) }
+
+const (
+	TaskAgeBucketLt1d    TaskAgeBucket = "lt_1d"
+	TaskAgeBucket1d7d    TaskAgeBucket = "1d_7d"
+	TaskAgeBucketGt7d    TaskAgeBucket = "gt_7d"
+	TaskAgeBucketUndated TaskAgeBucket = "undated"
+)
+
+// AvailableTaskAgeBuckets is the full closed set of bucket values, used by the
+// scanner to publish every bucket on every pass so each series exists at 0.
+var AvailableTaskAgeBuckets = []TaskAgeBucket{
+	TaskAgeBucketLt1d,
+	TaskAgeBucket1d7d,
+	TaskAgeBucketGt7d,
+	TaskAgeBucketUndated,
 }
 
 // SkippedFilesTotal counts vault task files the scanner skipped during a scan cycle,
 // labelled by the structured reason for the skip. A non-zero value on any label
 // indicates operator-actionable vault health issues (broken frontmatter, empty status,
-// unreadable files, injection failures); a stuck broken file will keep the relevant
-// label rate-positive until repaired. The closed set of reason values is declared
-// as constants above and pre-initialised in init().
+// unreadable files, injection failures). For every label EXCEPT repair_not_converging,
+// a stuck broken file is re-read every cycle and keeps its label rate-positive until
+// repaired, so rate(agent_controller_vault_scanner_skipped_files_total[5m]) > 0 is the
+// detection query.
+//
+// repair_not_converging is the documented exception: it is an edge, not a level. The
+// scanner short-circuits on the file's content hash, so a file whose repair was halted is
+// not re-processed while its bytes are unchanged, and the counter increments exactly once
+// per distinct file content. Detect it with:
+//
+//	increase(agent_controller_vault_scanner_skipped_files_total{reason="repair_not_converging"}[6h]) > 0
+//
+// A short-window rate is wrong for this label (it goes flat while the file stays broken),
+// and a bare level check is wrong too (it survives forever after the file is repaired and
+// resets on pod restart).
+//
+// The closed set of reason values is declared as constants above and pre-initialised in init().
 var SkippedFilesTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_vault_scanner_skipped_files_total",
-		Help: "Total number of vault task files the scanner skipped during a scan cycle, by reason. Increments exactly once per skipped file per cycle — re-scans of an unrepaired broken file keep the rate positive.",
+		Help: "Total number of vault task files the scanner skipped during a scan cycle, by reason. Increments once per skipped file per cycle for every reason except repair_not_converging, which is an edge that fires once per distinct file content and then goes flat while the file stays broken; see the doc comment for its increase(...[6h]) detection query.",
 	},
 	[]string{"reason"},
+)
+
+// UpdateGoStuckPlanningTasks is the number of github-update-go tasks sitting at
+// phase: planning whose last job started more than 24 hours ago and whose body
+// carries a `## Failure` entry.
+//
+// It is a level, not an edge: the scanner recomputes it once per scan cycle and
+// Set()s the result, so the series falls back to 0 as soon as the queue drains.
+// That is what makes it alertable — `agent_controller_update_go_stuck_planning_tasks >= 10`
+// is true only while at least ten tasks are actually stuck, unlike a counter which
+// would stay positive forever after the backlog was cleared.
+//
+// The 24 h age comes from the task's `job_started_at` frontmatter field; a task
+// with no recorded job start is not counted, because "stuck" is defined by a run
+// that began and never finished rather than by the file merely existing.
+var UpdateGoStuckPlanningTasks = promauto.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_update_go_stuck_planning_tasks",
+		Help: "Number of github-update-go tasks at phase planning with a job started more than 24h ago and a ## Failure entry.",
+	},
+)
+
+// TaskOldestAgeSeconds is the age in seconds of the oldest dated non-terminal
+// task record, labelled by vault.
+//
+// It is a level, not a counter: the dedicated metrics ticker recomputes it and
+// Set()s the result, so the series falls back to 0 as soon as the last dated
+// record turns terminal. That is what makes a threshold expression alertable —
+// the alert rule in bborbe/nuke compares it against the 7-day threshold
+// `> 604800` seconds.
+var TaskOldestAgeSeconds = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_task_oldest_age_seconds",
+		Help: "Age in seconds of the oldest dated non-terminal task record, by vault.",
+	},
+	[]string{"vault"},
+)
+
+// TaskAgeBucketTasks is the number of non-terminal task records per age bucket,
+// labelled by vault and bucket.
+//
+// It is a level, not a counter: every successful recompute Set()s all four
+// bucket series, including the empty ones, so a scrape never sees a missing
+// series after a pass and each bucket reads 0 when it is empty.
+var TaskAgeBucketTasks = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_task_age_bucket_tasks",
+		Help: "Number of non-terminal task records per age bucket, by vault and bucket.",
+	},
+	[]string{"vault", "bucket"},
+)
+
+// OpenTasks is the number of open task records in each (phase, task_type) pair
+// of this controller's own vault.
+//
+// It is a level, not a counter: the dedicated metrics ticker recomputes it from
+// scratch on every pass and Set()s each pair's count, so the value is the
+// board's count rather than a running total, and two passes over an unchanged
+// board publish the same value.
+//
+// A pair that empties disappears from the exposition entirely rather than
+// lingering at 0: the recompute deletes the series for every pair the previous
+// pass published and this pass did not see, scoped to this controller's own
+// vault label so another controller's series are never touched.
+//
+// There is no init() pre-initialisation. The pair set is data-dependent, so no
+// fixed series can be seeded at registration; a fresh pod publishes no census
+// series until its first successful pass.
+var OpenTasks = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_open_tasks",
+		Help: "Number of open task records per (phase, task_type) pair, by vault. A pair that empties disappears from the exposition rather than lingering at 0.",
+	},
+	[]string{"vault", "phase", "task_type"},
 )
 
 func init() {
@@ -213,6 +384,7 @@ func init() {
 
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)
+	ResultsWrittenTotal.WithLabelValues("unowned").Add(0)
 	ResultsWrittenTotal.WithLabelValues("error").Add(0)
 
 	PlanningRetryTotal.WithLabelValues("retry").Add(0)
@@ -241,4 +413,13 @@ func init() {
 	for _, reason := range AvailableSkipReasons {
 		SkippedFilesTotal.WithLabelValues(reason.String()).Add(0)
 	}
+
+	for _, operation := range availableCommandOperations {
+		CommandExpiredTotal.WithLabelValues(operation).Add(0)
+	}
+
+	// A gauge has no label combinations to pre-initialise, but setting it to 0
+	// publishes the series before the first scan completes, so an alert query
+	// reads 0 rather than "no data" on a freshly started pod.
+	UpdateGoStuckPlanningTasks.Set(0)
 }

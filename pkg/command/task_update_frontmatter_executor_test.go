@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,23 +15,27 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 	var (
-		ctx      context.Context
-		tmpDir   string
-		taskDir  string
-		fakeGit  *mocks.GitClient
-		executor cdb.CommandObjectExecutorTx
-		schemaID cdb.SchemaID
+		ctx       context.Context
+		tmpDir    string
+		taskDir   string
+		fakeVault *mocks.VaultAPIClient
+		executor  cdb.CommandObjectExecutorTx
+		schemaID  cdb.SchemaID
 	)
 
 	BeforeEach(func() {
@@ -42,41 +47,14 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test helper
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
-
-		executor = command.NewUpdateFrontmatterExecutor(fakeGit, taskDir, metrics.New())
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
+		executor = command.NewUpdateFrontmatterExecutor(
+			fakeVault,
+			"openclaw",
+			libtime.NewCurrentDateTime(),
+			metrics.New(),
+			nil,
+		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 
@@ -147,6 +125,277 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			})
 		})
 
+		Context("controller-owned frontmatter", func() {
+			It("applies a count the command names, even a lower one", func() {
+				// ⚠️ Deliberately NOT guarded. The executor's triggerBudgetWrite has
+				// a scopeChanged arm that writes trigger_count: 1 to grant a fresh
+				// budget when the scope moves, and it arrives through this executor.
+				// A "lower count loses" rule would cap a task that had legitimately
+				// earned a new budget, so the count is left command-writable and the
+				// stale-echo risk is documented rather than half-defended.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 3\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 2,
+						"phase":         "human_review",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(BeEquivalentTo(2))
+				Expect(fm["trigger_scope"]).To(Equal("planning"))
+				Expect(fm["phase"]).To(Equal("human_review"))
+			})
+
+			It("keeps the on-disk trigger_scope when the command omits it", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-scope-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 1\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-scope-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["trigger_scope"]).To(Equal("planning"))
+			})
+
+			It("rejects a scope that arrives without a count advance", func() {
+				// Only the charge writes the pair together; a scope on its own is
+				// an agent echo and must not move the budget's phase key.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: guard-scope-only-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 1\ntrigger_scope: planning\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("guard-scope-only-uuid"),
+					Updates:        lib.TaskFrontmatter{"trigger_scope": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["trigger_scope"]).To(Equal("planning"))
+			})
+
+			It(
+				"lets the FIRST charge land both count and scope on a task with no stored count",
+				func() {
+					// The blocking case: triggerBudgetWrite's !hasScope arm writes the
+					// pair together, and it is the write this fix exists to escalate.
+					// Treating "no on-disk count" as "no accepted count" stripped the
+					// scope, which re-arms the scope-write arm on every later spawn.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: first-charge-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("first-charge-uuid"),
+						Updates: lib.TaskFrontmatter{
+							"trigger_count": 1,
+							"trigger_scope": "planning",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeEquivalentTo(1))
+					Expect(fm["trigger_scope"]).To(Equal("planning"))
+					// 1 is below the lib default cap of 3, so nothing escalates yet.
+					Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
+				},
+			)
+
+			It(
+				"accepts a scope reset that lowers the count, because the scope moves with it",
+				func() {
+					// triggerBudgetWrite's scopeChanged arm writes trigger_count: 1 to
+					// grant a fresh budget when the task's scope moves. The count floor
+					// alone would reject it; the paired scope change is the signal.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: scope-reset-uuid\nstatus: in_progress\nphase: execution\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\ntrigger_scope: planning\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("scope-reset-uuid"),
+						Updates: lib.TaskFrontmatter{
+							"trigger_count": 1,
+							"trigger_scope": "execution",
+						},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["trigger_count"]).To(BeEquivalentTo(1))
+					Expect(fm["trigger_scope"]).To(Equal("execution"))
+				},
+			)
+
+			It("does not let a snapshot raise max_triggers out from under the cap", func() {
+				// max_triggers is the cap's definition. A snapshot that raises it in
+				// the same write would suppress the escalation, so the on-disk value
+				// wins and an absent one stays absent.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: raise-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nmax_triggers: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("raise-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 99},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(3))
+				Expect(fm["assignee"]).To(Equal(""))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not let a snapshot introduce max_triggers on a ref-only task", func() {
+				// A ref-bearing task has no max_triggers and falls back to the lib
+				// default 3. An incoming max_triggers would raise that default.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: intro-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("intro-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 99},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm).NotTo(HaveKey("max_triggers"))
+				Expect(fm["assignee"]).To(Equal(""))
+			})
+
+			It("lets a command that names the counter win — that is how the charge lands", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: charge-uuid\nstatus: in_progress\nphase: planning\ntrigger_count: 2\nassignee: pr-reviewer-agent\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("charge-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 3,
+						"trigger_scope": "planning",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["trigger_count"]).To(BeEquivalentTo(3))
+				Expect(fm["trigger_scope"]).To(Equal("planning"))
+			})
+		})
+
+		Context("trigger cap", func() {
+			It(
+				"escalates a ref-bearing task at the cap: assignee cleared, section appended",
+				func() {
+					// The case the whole fix exists for, on the ONLY write a capped task
+					// receives. ref present + no max_triggers ⇒ MaxTriggers() falls back
+					// to the lib default 3.
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cap-uuid"),
+						Updates:        lib.TaskFrontmatter{"assignee": "pr-reviewer-agent"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["assignee"]).To(Equal(""))
+					Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+
+					content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+					Expect(readErr).NotTo(HaveOccurred())
+					Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+					Expect(string(content)).To(ContainSubstring("- **Trigger count:** 3"))
+					Expect(string(content)).To(ContainSubstring("- **Max triggers:** 3"))
+					Expect(
+						string(content),
+					).To(ContainSubstring("- **Assignee:** pr-reviewer-agent"))
+				},
+			)
+
+			It("escalates on the charge write itself, which names trigger_count", func() {
+				// The executor charges a spawn by writing trigger_count and
+				// trigger_scope together (triggerBudgetWrite's !hasScope arm). That
+				// write is the one that reaches the cap in practice, so it must
+				// escalate rather than relying on a later write that never comes.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: charge-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 2\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("charge-cap-uuid"),
+					Updates: lib.TaskFrontmatter{
+						"trigger_count": 3,
+						"trigger_scope": "planning",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["assignee"]).To(Equal(""))
+				Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not escalate a task with neither max_triggers nor a ref", func() {
+				// A plain recurring task keeps re-dispatching: the cap is engaged
+				// only by an explicit max_triggers or a ref-bearing task.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: recurring-uuid\nstatus: in_progress\nphase: planning\nassignee: trading-hypothesis-agent\ntrigger_count: 9\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("recurring-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parseFrontmatter(taskFile)["assignee"]).To(Equal("trading-hypothesis-agent"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("does not append a second escalation section on a repeat write", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: cap-twice-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nprevious_assignee: pr-reviewer-agent\n---\nbody\n\n## Trigger Cap Escalation\n\n- **Timestamp:** 2026-01-01T00:00:00Z\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("cap-twice-uuid"),
+					Updates:        lib.TaskFrontmatter{"assignee": "pr-reviewer-agent"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(strings.Count(string(content), "## Trigger Cap Escalation")).To(Equal(1))
+			})
+		})
+
 		Context("empty updates", func() {
 			It("returns nil without writing when Updates is nil", func() {
 				writeTaskFile(
@@ -159,7 +408,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 
 			It("returns nil without writing when Updates is empty map", func() {
@@ -173,7 +423,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -188,7 +439,8 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					}),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -212,6 +464,312 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(fm["phase"]).To(Equal("done"))
 				Expect(fm["assignee"]).To(Equal("claude"))
 				Expect(fm["custom"]).To(Equal("preserve"))
+			})
+		})
+
+		Context("PATCH payload", func() {
+			It("PATCHes only the fields the command names, not the whole frontmatter", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: payload-uuid\nstatus: in_progress\nphase: ai_review\nassignee: claude\ncustom: preserve\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("payload-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				// The central claim of the typed port: the request carries the
+				// changed field and nothing else. A whole-frontmatter PATCH would
+				// land the same final file through the fake and pass unnoticed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, id, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(id).To(Equal("payload-uuid"))
+				Expect(fields).To(Equal(map[string]any{"phase": "done"}))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+			})
+
+			It("sends no PATCH when the command restates the current value", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: noop3-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("noop3-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "ai_review"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+			})
+
+			It("does not panic on a task carrying a list-valued frontmatter field", func() {
+				// Regression: frontmatter arrives JSON-decoded, so `tags:` is a
+				// []any and comparing two of them with `!=` panics with
+				// "comparing uncomparable type []interface {}" — for EVERY update
+				// command against such a task, not just ones naming the list.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: list-uuid\nstatus: in_progress\nphase: ai_review\ntags:\n  - alpha\n  - beta\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("list-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(Equal(map[string]any{"phase": "done"}))
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["tags"]).To(ConsistOf("alpha", "beta"))
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+
+			It("returns an error when PutBody fails, before the PATCH is attempted", func() {
+				// The documented partial-application window, in the order the writer
+				// uses: body first, frontmatter second. A body failure therefore
+				// leaves frontmatter untouched — which is what makes the escalation
+				// section safe to render from the pre-patch assignee (see
+				// applyUpdate's ordering note). The command is redelivered and
+				// re-runs both halves.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: partial-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				fakeVault.PutBodyReturns(errors.New("body write failed"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("partial-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "human_review"},
+					Body: &task.BodySection{
+						Heading: "## Failure",
+						Section: "## Failure\n\n- **Reason:** OOMKilled\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("ai_review"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).NotTo(ContainSubstring("## Failure"))
+			})
+		})
+
+		Context("body merge re-reads the task", func() {
+			It("keeps a body section that landed between the read and the PUT", func() {
+				// PUT replaces the WHOLE body, so merging onto the body captured at
+				// the top of the command would silently drop an edit made in
+				// between. The first read is stubbed to return the older body;
+				// the re-read before the PUT must see the operator's section.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: reread-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n\n## Operator\n\nkeep me\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.Body = "body\n"
+						return &stale, nil
+					}
+					return found, nil
+				}
+
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("reread-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+					Body: &task.BodySection{
+						Heading: "## Result",
+						Section: "## Result\n\nfinished\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Operator"))
+				Expect(string(content)).To(ContainSubstring("keep me"))
+				Expect(string(content)).To(ContainSubstring("## Result"))
+			})
+		})
+
+		Context("failure modes", func() {
+			It("surfaces a read failure at the top of the executor", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: readfail-uuid\nstatus: in_progress\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				fakeVault.ReadTaskReturns(nil, errors.New("vault-api unreachable"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("readfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+			})
+
+			It("surfaces a re-read failure that happens before the PATCH is attempted", func() {
+				// The top-of-executor read must succeed, so only the SECOND read is
+				// stubbed to fail — the one applyUpdate makes before its PUT. This
+				// is the branch the re-read added; stubbing every read would fail
+				// the first one and never reach it.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: rereadfail-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					calls++
+					if calls == 2 {
+						return nil, errors.New("vault-api unreachable")
+					}
+					return realRead(c, id)
+				}
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("rereadfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "human_review"},
+					Body: &task.BodySection{
+						Heading: "## Failure",
+						Section: "## Failure\n\n- **Reason:** OOMKilled\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+				// body first: the re-read failed, so neither write landed
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(parseFrontmatter(taskFile)["phase"]).To(Equal("ai_review"))
+			})
+
+			It("addresses the body PUT by the re-read task's id, not the stale one", func() {
+				// The filesystem fake gives both reads the same ID, so without a
+				// stub that makes them differ, reverting fresh.ID to task.ID leaves
+				// the suite green — the hardening would be untested.
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: idmix-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				realRead := fakeVault.ReadTaskStub
+				calls := 0
+				fakeVault.ReadTaskStub = func(
+					c context.Context,
+					id string,
+				) (*vaultapi.Task, error) {
+					found, err := realRead(c, id)
+					if err != nil {
+						return nil, err
+					}
+					calls++
+					if calls == 1 {
+						stale := *found
+						stale.ID = "stale-id"
+						return &stale, nil
+					}
+					fresh := *found
+					fresh.ID = "fresh-id"
+					return &fresh, nil
+				}
+				// Both writes are addressed by a synthetic id, so stub them rather
+				// than let the fake's identifier lookup fail on it.
+				fakeVault.PatchTaskStub = func(
+					context.Context,
+					string,
+					map[string]any,
+				) (*vaultapi.Task, error) {
+					return &vaultapi.Task{ID: "stale-id"}, nil
+				}
+				var putID string
+				fakeVault.PutBodyStub = func(_ context.Context, id string, _ string) error {
+					putID = id
+					return nil
+				}
+
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("idmix-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+					Body: &task.BodySection{
+						Heading: "## Result",
+						Section: "## Result\n\nfinished\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(1))
+				Expect(putID).To(Equal("fresh-id"))
+			})
+
+			It("surfaces a PATCH failure and counts it as an error", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: patchfail-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: openclaw\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
+				)
+				fakeVault.PatchTaskReturns(nil, errors.New("patch rejected"))
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("patchfail-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
+				// nothing was written: the PATCH was the only write and it failed
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("ai_review"))
 			})
 		})
 
@@ -304,6 +862,42 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					Expect(fm["status"]).To(Equal("in_progress"))
 				},
 			)
+		})
+
+		Context("terminal status clears current_job", func() {
+			It("PATCHes current_job to empty when the update sets status: completed", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: terminal-job-uuid\nstatus: in_progress\nphase: execution\nassignee: claude\ncurrent_job: some-job\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("terminal-job-uuid"),
+					Updates:        lib.TaskFrontmatter{"status": "completed"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(HaveKeyWithValue("current_job", ""))
+				Expect(fields).To(HaveKeyWithValue("status", "completed"))
+			})
+
+			It("leaves current_job out of the patch for a non-terminal update", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: nonterminal-job-uuid\nstatus: in_progress\nphase: planning\nassignee: claude\ncurrent_job: some-job\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("nonterminal-job-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "execution"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				_, _, fields := fakeVault.PatchTaskArgsForCall(0)
+				Expect(fields).To(HaveKeyWithValue("phase", "execution"))
+				Expect(fields).NotTo(HaveKey("current_job"))
+			})
 		})
 
 		Context("spec 042: non-phase updates leave assignee untouched", func() {
@@ -405,5 +999,117 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				)
 			},
 		)
+
+		Context("vault routing", func() {
+			It(
+				"skips a mismatched-vault command with zero git writes and zero not_found increments",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: cross-vault-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					before := testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"not_found",
+						),
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("cross-vault-uuid"),
+						TargetVault:    "personal",
+						Updates:        lib.TaskFrontmatter{"phase": "done"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+					// guard fires before the task read and before any write
+					Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+					Expect(
+						testutil.ToFloat64(
+							metrics.FrontmatterCommandsTotal.WithLabelValues(
+								"update-frontmatter",
+								"not_found",
+							),
+						),
+					).To(Equal(before))
+					// file untouched
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["phase"]).To(Equal("ai_review"))
+					_, hasTarget := fm["target_vault"]
+					Expect(hasTarget).To(BeFalse())
+				},
+			)
+
+			It("processes an empty-vault command (legacy fall-through)", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: legacy-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("legacy-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				// The write is a typed PATCH now, so "wrote exactly once" moves to
+				// that seam. The file content check is what proves it landed.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+
+			It(
+				"heals a file lacking target_vault, stamping the controller vault in the same write",
+				func() {
+					taskFile := writeTaskFile(
+						"task.md",
+						"---\ntask_identifier: heal-uuid\nstatus: in_progress\nphase: ai_review\n---\nbody\n",
+					)
+					cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Updates:        lib.TaskFrontmatter{"phase": "done"},
+					})
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).NotTo(HaveOccurred())
+					fm := parseFrontmatter(taskFile)
+					Expect(fm["target_vault"]).To(Equal("openclaw"))
+					// the stamped file read back through ShouldProcessResult no longer
+					// falls through to the non-owning controller
+					req := lib.Task{
+						TaskIdentifier: lib.TaskIdentifier("heal-uuid"),
+						Frontmatter: lib.TaskFrontmatter{
+							"target_vault": "openclaw",
+						},
+					}
+					Expect(routing.ShouldProcessResult(req, "personal")).To(BeFalse())
+					Expect(routing.ShouldProcessResult(req, "openclaw")).To(BeTrue())
+					// and the frontmatter-command predicate rejects the non-owner too,
+					// so subsequent update/increment commands for this file skip cleanly
+					Expect(
+						routing.ShouldProcessFrontmatterCommand("openclaw", "personal"),
+					).To(BeFalse())
+					Expect(
+						routing.ShouldProcessFrontmatterCommand("openclaw", "openclaw"),
+					).To(BeTrue())
+				},
+			)
+
+			It("never overrides an existing target_vault", func() {
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: stamped-uuid\nstatus: in_progress\nphase: ai_review\ntarget_vault: personal\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("stamped-uuid"),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["target_vault"]).To(Equal("personal"))
+				Expect(fm["phase"]).To(Equal("done"))
+			})
+		})
 	})
 })

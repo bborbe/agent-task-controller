@@ -7,8 +7,11 @@ package scanner
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -35,12 +38,38 @@ type VaultScanner interface {
 	// RunCycle executes a single scan cycle (git pull + file scan + optional commit/push).
 	// Exported for use in scanner_test package; prefer Run() in production.
 	RunCycle(ctx context.Context, results chan<- ScanResult)
+	// Resolve returns the vault-relative path of the task file carrying id, from the
+	// identifier→path index the last completed scan cycle — or, in trigger-only mode,
+	// the boot build — published, including entries recorded since that rebuild.
+	// It returns ("", false, nil) when the index does not hold id — an unknown
+	// identifier is not an error — and ("", false, err) naming both paths when two
+	// files carry id. The index is empty until the first cycle completes.
+	Resolve(ctx context.Context, id lib.TaskIdentifier) (string, bool, error)
+	// Record tells the resolver that relPath is the vault-relative path of the task
+	// file carrying id, so a later Resolve(id) hits instead of missing. The caller
+	// must have just established that fact — by writing that file or by a walk that
+	// found exactly one file carrying id. It returns nothing: recording is a cache
+	// fill, and a failure to record only costs a later walk. An empty id or empty
+	// relPath is ignored. A resolver that already knows of two or more paths for id
+	// keeps them, so a known duplicate is never hidden.
+	Record(ctx context.Context, id lib.TaskIdentifier, relPath string)
+	// RecordDuplicate adds relPath alongside the path(s) already known for id, where
+	// Record would replace them, so a second file carrying id makes Resolve report
+	// the duplicate as an error. See result.TaskPathResolver.RecordDuplicate for the
+	// contract.
+	RecordDuplicate(ctx context.Context, id lib.TaskIdentifier, relPath string)
 }
 
 type fileEntry struct {
 	hash           [32]byte
 	taskIdentifier lib.TaskIdentifier
 	assignee       lib.TaskAssignee
+	// capped records that the file's frontmatter is at or past its trigger cap
+	// (see isCappedIdle). It is populated whenever the file is parsed, which for a
+	// stable capped record is the last time it changed — exactly what the sweep
+	// needs, because a capped record stops changing precisely when the executor
+	// stops writing to it.
+	capped bool
 }
 
 // fileOps holds pluggable file I/O functions so the scanner can operate over
@@ -52,14 +81,41 @@ type fileOps struct {
 }
 
 type vaultScanner struct {
-	gitClient    gitclient.GitClient
-	taskDir      string
-	pollInterval time.Duration
-	hashes       map[string]fileEntry
-	trigger      <-chan struct{}
-	metrics      metrics.Metrics
-	ops          fileOps
-	autoInject   bool
+	gitClient       gitclient.GitClient
+	taskDir         string
+	pollInterval    time.Duration
+	hashes          map[string]fileEntry
+	trigger         <-chan struct{}
+	metrics         metrics.Metrics
+	ops             fileOps
+	autoInject      bool
+	vaultName       string
+	metricsInterval time.Duration
+
+	// openTaskPairs is the set of (phase, task_type) pairs the previous census pass
+	// published, so the next pass can delete the ones that vanished. It is a nil map
+	// — a valid empty set — until the first successful pass, which is why neither
+	// constructor initialises it. Single-goroutine: the census runs inline in Run's
+	// goroutine and never overlaps itself.
+	openTaskPairs map[openTaskPair]struct{}
+
+	// indexMutex guards index. publishIndex builds the whole map and swaps it under
+	// the write lock; Resolve reads the published snapshot under the read lock. A
+	// reader therefore observes either the previous cycle's map or the new one,
+	// never a partially built map and never one being mutated. The scanner's own
+	// bookkeeping (hashes) stays single-goroutine and unguarded — only this
+	// published snapshot is shared. In-process only, never serialized.
+	indexMutex sync.RWMutex
+	// index maps a task identifier to every vault-relative path carrying it. The
+	// slice is a multimap entry on purpose: collapsing a duplicate to one path is
+	// the 2026-08-31 incident (a result landing on the wrong task file). Rebuilt
+	// wholesale once per completed scan cycle (or once by buildIndex in trigger-only
+	// mode); between rebuilds a single entry is replaced by Record, or extended by
+	// RecordDuplicate when a create proves a second file carries the identifier —
+	// always with a new slice, never mutated in place, because Resolve uses the slice it read after
+	// releasing the read lock. A Record that lands just before a publishIndex or
+	// buildIndex swap is lost with the old map, which costs at most one later walk.
+	index map[lib.TaskIdentifier][]string
 }
 
 // newLocalFileOps creates fileOps backed by the local filesystem rooted at basePath.
@@ -103,16 +159,21 @@ func NewVaultScanner(
 	trigger <-chan struct{},
 	m metrics.Metrics,
 	autoInject bool,
+	vaultName string,
+	metricsInterval time.Duration,
 ) VaultScanner {
 	return &vaultScanner{
-		gitClient:    gitClient,
-		taskDir:      taskDir,
-		pollInterval: pollInterval,
-		hashes:       make(map[string]fileEntry),
-		trigger:      trigger,
-		metrics:      m,
-		ops:          newLocalFileOps(gitClient.Path()),
-		autoInject:   autoInject,
+		gitClient:       gitClient,
+		taskDir:         taskDir,
+		pollInterval:    pollInterval,
+		hashes:          make(map[string]fileEntry),
+		trigger:         trigger,
+		metrics:         m,
+		ops:             newLocalFileOps(gitClient.Path()),
+		autoInject:      autoInject,
+		vaultName:       vaultName,
+		metricsInterval: metricsInterval,
+		index:           make(map[lib.TaskIdentifier][]string),
 	}
 }
 
@@ -126,6 +187,8 @@ func NewGitRestVaultScanner(
 	trigger <-chan struct{},
 	m metrics.Metrics,
 	autoInject bool,
+	vaultName string,
+	metricsInterval time.Duration,
 ) VaultScanner {
 	return &vaultScanner{
 		gitClient:    gitClient,
@@ -139,21 +202,60 @@ func NewGitRestVaultScanner(
 			readFile:  gitClient.ReadFile,
 			writeFile: gitClient.WriteFile,
 		},
-		autoInject: autoInject,
+		autoInject:      autoInject,
+		vaultName:       vaultName,
+		metricsInterval: metricsInterval,
+		index:           make(map[lib.TaskIdentifier][]string),
 	}
 }
 
 func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error {
-	ticker := time.NewTicker(v.pollInterval)
-	defer ticker.Stop()
+	// A non-positive poll interval disables the periodic scan: the vault is then
+	// scanned only when something sends on trigger. time.NewTicker panics on a
+	// non-positive duration, so no ticker is constructed at all and the nil
+	// channel blocks forever — which is exactly "never ticks".
+	var tick <-chan time.Time
+	if v.pollInterval > 0 {
+		ticker := time.NewTicker(v.pollInterval)
+		defer ticker.Stop()
+		tick = ticker.C
+	} else {
+		// Trigger-only mode has no cycle to publish the identifier→path index, and
+		// nothing in that deployment fires the trigger: the index then stays empty
+		// for the pod's whole life, every lookup misses, and each command pays the
+		// full directory walk. Build it once here so a lookup for a file that
+		// already existed is one read; a cycle, when one does run, still
+		// republishes it from its own bookkeeping.
+		v.buildIndex(ctx)
+	}
+	// A non-positive metrics interval constructs neither the ticker nor the start-up
+	// recompute, mirroring the poll-interval guard above: time.NewTicker panics on a
+	// non-positive duration. Only a caller can produce the value; no configuration
+	// exposes it.
+	var metricsTick <-chan time.Time
+	if v.metricsInterval > 0 {
+		// One recompute before the loop, so a fresh pod publishes both the age and
+		// the open-task census series immediately instead of reporting "no data"
+		// for the first interval. The two are siblings, not one folded pass: they
+		// have different definitions and different failure modes, and an early
+		// return in one must not blank the other.
+		v.recomputeTaskAgeMetrics(ctx)
+		v.recomputeOpenTaskCensus(ctx)
+		metricsTicker := time.NewTicker(v.metricsInterval)
+		defer metricsTicker.Stop()
+		metricsTick = metricsTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-tick:
 			v.RunCycle(ctx, results)
 		case <-v.trigger:
 			v.RunCycle(ctx, results)
+		case <-metricsTick:
+			v.recomputeTaskAgeMetrics(ctx)
+			v.recomputeOpenTaskCensus(ctx)
 		}
 	}
 }
@@ -192,7 +294,18 @@ func (v *vaultScanner) scanFiles(
 		glog.Warningf("list %s failed: %v", glob, err)
 		return nil, nil, nil, false
 	}
-	seen := make(map[string]struct{})
+	// Build the cycle's path set and prune vanished paths BEFORE processing any
+	// file. isIdentifierUnique answers against v.hashes, so a rename's old path
+	// must be gone from the bookkeeping before the new path is checked; otherwise
+	// the renamed file collides with its own former path and is re-minted.
+	seen := make(map[string]struct{}, len(paths))
+	for _, relPath := range paths {
+		seen[relPath] = struct{}{}
+	}
+	deleted, err := v.collectDeleted(ctx, seen)
+	if err != nil {
+		glog.V(4).Infof("collectDeleted: %v", err)
+	}
 	var changed []lib.Task
 	var written []string
 	writeError := false
@@ -202,7 +315,6 @@ func (v *vaultScanner) scanFiles(
 			return nil, nil, nil, false
 		default:
 		}
-		seen[relPath] = struct{}{}
 		task, wrote, werr := v.processFile(ctx, relPath)
 		if werr {
 			writeError = true
@@ -214,17 +326,233 @@ func (v *vaultScanner) scanFiles(
 			changed = append(changed, *task)
 		}
 	}
-	deleted, err := v.collectDeleted(ctx, seen)
-	if err != nil {
-		glog.V(4).Infof("collectDeleted: %v", err)
+	// Runs after the per-file loop so the index it walks is this cycle's. Escalating
+	// here, rather than inside processFile, is what reaches a record the executor has
+	// stopped touching: processFile returns early on an unchanged hash, so a stable
+	// capped record would otherwise never be looked at again.
+	escalated, escalateError := v.escalateCappedIdleTasks(ctx)
+	if escalateError {
+		writeError = true
 	}
+	if escalated > 0 {
+		glog.Infof("escalateCappedIdle: escalated %d capped task(s)", escalated)
+	}
+	v.metrics.UpdateGoStuckPlanningTasks().
+		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
+	v.publishIndex()
 	return changed, deleted, written, writeError
+}
+
+// publishIndex rebuilds the identifier→path index from the scanner's bookkeeping and
+// publishes it for readers, replacing the previous snapshot wholesale under the write
+// lock.
+//
+// It is called once per completed scan cycle, after the deleted-file collection has
+// returned, so a path that cycle deleted is already gone from the bookkeeping and the
+// published map never holds a deleted file. The map is built completely before the
+// swap, so a reader can never observe a partially built index.
+//
+// An entry whose identifier is empty is skipped: a halted repair stores an empty
+// identifier (injectAndStore), and an empty identifier is not a task — it must never
+// be resolvable, exactly as collectDeleted refuses to emit it downstream.
+//
+// A duplicate identifier keeps BOTH paths in the slice; Resolve reports the ambiguity
+// as an error rather than picking one. That branch is defence-in-depth rather than the
+// primary guard: isIdentifierUnique keeps hashes duplicate-free by repairing or
+// skipping a colliding file before it is stored, so two paths for one identifier are
+// unreachable while that invariant holds. The multimap exists so that relaxing the
+// invariant fails loudly instead of silently collapsing to one path.
+func (v *vaultScanner) publishIndex() {
+	index := make(map[lib.TaskIdentifier][]string, len(v.hashes))
+	for relPath, entry := range v.hashes {
+		if entry.taskIdentifier == "" {
+			continue
+		}
+		index[entry.taskIdentifier] = append(index[entry.taskIdentifier], relPath)
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	v.index = index
+}
+
+// buildIndex populates the identifier→path index from one read-only pass over the
+// task directory, without running a scan cycle.
+//
+// A scan cycle is the only other publisher of this index, and a deployment that sets
+// a non-positive POLL_INTERVAL never runs one: the vault is then scanned only on a
+// trigger, and nothing in that deployment fires the trigger. The index therefore
+// stays empty for the pod's whole life, every Resolve misses, and every command pays
+// the full directory walk — measured on the prod openclaw controller at 0 hits /
+// 606 misses and a median 18 s per lookup over 17 h, which serialized the
+// single-threaded command consumer and pushed tail commands past the 60-minute
+// expiry. Building it once at start costs that same single pass and turns every
+// later lookup for a file that already existed into one read.
+//
+// Deliberately narrower than scanFiles: it does not pull, inject a missing
+// task_identifier, write, commit or publish a changed task, so trigger-only
+// deployments keep their "no vault writes from the scanner" property and no
+// vault's full task set is republished as changed on every restart. A file without
+// a valid identifier is skipped rather than repaired — the index is a lookup cache,
+// not a repair path, and the walk stays the recovery. Files created after this pass
+// are added by Record — on create, or on their first walk; the bookkeeping (hashes)
+// is left untouched so a later cycle's change detection is unchanged.
+func (v *vaultScanner) buildIndex(ctx context.Context) {
+	// A log-only elapsed measurement, matching the direct time.Now scanFiles already
+	// uses for its own timing: no clock value reaches a task, a write or a decision.
+	start := time.Now()
+	glob := v.taskDir + "/*.md"
+	paths, err := v.ops.listFiles(ctx, glob)
+	if err != nil {
+		glog.Warningf("buildIndex: list %s failed: %v", glob, err)
+		return
+	}
+	index := make(map[lib.TaskIdentifier][]string, len(paths))
+	// Records already at their trigger cap with a live assignee, collected during
+	// the same parse this pass already does for task_identifier. This is the ONLY
+	// place the sweep can see them on a trigger-only controller.
+	var cappedAssigned []string
+	skipped := 0
+	for _, relPath := range paths {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		content, readErr := v.ops.readFile(ctx, relPath)
+		if readErr != nil {
+			skipped++
+			continue
+		}
+		fmYAML, fmErr := extractFrontmatter(ctx, content)
+		if fmErr != nil {
+			skipped++
+			continue
+		}
+		var fmMap map[string]interface{}
+		if umErr := yaml.Unmarshal([]byte(fmYAML), &fmMap); umErr != nil {
+			skipped++
+			continue
+		}
+		taskID, _ := fmMap["task_identifier"].(string)
+		if taskID == "" || !isValidUUID(taskID) {
+			skipped++
+			continue
+		}
+		id := lib.TaskIdentifier(taskID)
+		index[id] = append(index[id], relPath)
+		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) && fm.Assignee() != "" {
+			cappedAssigned = append(cappedAssigned, relPath)
+		}
+	}
+	v.indexMutex.Lock()
+	v.index = index
+	v.indexMutex.Unlock()
+	glog.V(2).Infof(
+		"buildIndex: %d identifier(s) from %d file(s) in %v (%d skipped)",
+		len(index),
+		len(paths),
+		time.Since(start),
+		skipped,
+	)
+	// A trigger-only controller never scans, so without this the sweep would never
+	// run where it is needed most. This pass has already read and parsed every file,
+	// so the candidate list costs nothing extra.
+	if escalated, werr := v.escalateCappedPaths(ctx, cappedAssigned); escalated > 0 || werr {
+		glog.Infof(
+			"escalateCappedIdle: escalated %d capped task(s) during index build (%d candidate(s))",
+			escalated,
+			len(cappedAssigned),
+		)
+	}
+}
+
+// Resolve returns the vault-relative path of the task file carrying id, from the
+// index the last completed scan cycle published.
+//
+// The empty identifier is never indexed, so it is always reported absent.
+// Two paths for one identifier is unresolvable — picking either one writes a result
+// onto a file that may belong to a different task (2026-08-31) — so it is reported as
+// an error naming both paths, never as a miss.
+func (v *vaultScanner) Resolve(
+	ctx context.Context,
+	id lib.TaskIdentifier,
+) (string, bool, error) {
+	if id == "" {
+		return "", false, nil
+	}
+	v.indexMutex.RLock()
+	paths := v.index[id]
+	v.indexMutex.RUnlock()
+	switch len(paths) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return paths[0], true, nil
+	default:
+		return "", false, errors.Errorf(
+			ctx,
+			"duplicate task_identifier %s in %s and %s",
+			id,
+			paths[0],
+			paths[1],
+		)
+	}
+}
+
+// Record adds one identifier→path entry to the published index between rebuilds, so
+// a task created after the last rebuild (or found by a walk) resolves with one read
+// instead of another full-vault walk. See result.TaskPathResolver.Record for the
+// contract.
+func (v *vaultScanner) Record(ctx context.Context, id lib.TaskIdentifier, relPath string) {
+	if id == "" || relPath == "" {
+		return
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	if len(v.index[id]) >= 2 {
+		// A known duplicate stays reported as one (2026-08-31 incident).
+		return
+	}
+	// Store a NEW slice: Resolve uses the slice it read after releasing the
+	// read lock, so an existing slice must never be modified in place.
+	v.index[id] = []string{relPath}
+	glog.V(2).Infof("index: recorded %s for task %s", relPath, id)
+}
+
+// RecordDuplicate adds relPath beside the path(s) the index already holds for id.
+// Record replaces a single entry, which is right after a walk proves a file unique
+// but hides a second file a create writes for an identifier already indexed
+// elsewhere: a trigger-only controller never rebuilds, so later writes for id would
+// keep landing on the old file (2026-10-27, identifier 9371a3d2: the spawn write hit
+// an aborted file while the live one stayed invisible). See
+// result.TaskPathResolver.RecordDuplicate for the contract.
+func (v *vaultScanner) RecordDuplicate(
+	ctx context.Context,
+	id lib.TaskIdentifier,
+	relPath string,
+) {
+	if id == "" || relPath == "" {
+		return
+	}
+	v.indexMutex.Lock()
+	defer v.indexMutex.Unlock()
+	known := v.index[id]
+	if slices.Contains(known, relPath) {
+		return
+	}
+	// Store a NEW slice, as Record does: Resolve uses the slice it read after
+	// releasing the read lock, so an existing slice must never be modified in place.
+	paths := make([]string, 0, len(known)+1)
+	paths = append(paths, known...)
+	paths = append(paths, relPath)
+	v.index[id] = paths
+	glog.V(2).Infof("index: recorded %s beside %v for task %s", relPath, known, id)
 }
 
 // processFile handles a single .md file during a scan cycle.
 // Returns (task, writtenRelPath, writeError).
 //
-//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.
+//nolint:funlen,gocognit // +5 statements from spec-043 counter calls at 5 skip sites; each site needs its own metric.; +21 lines from spec-001 per-site auto-inject gate; inlined per spec-001 prompt 2 to keep the parity-check awk range honest.; +4 lines from spec-008 present-but-invalid task_identifier branch (key-absent and present-invalid auto-inject gates kept separate; parity-check awk count was 9 at spec-008).; spec-009 adds no statements to processFile (the convergence guard lives in injectAndStore), but raises the parity-check awk count from 9 to 10 via the convergence-halt log+counter site.
 func (v *vaultScanner) processFile(
 	ctx context.Context,
 	relPath string,
@@ -261,9 +589,10 @@ func (v *vaultScanner) processFile(
 		return nil, "", false
 	}
 	frontmatter := lib.TaskFrontmatter(fmMap)
-	taskID, _ := fmMap["task_identifier"].(string)
+	rawTaskID, present := fmMap["task_identifier"]
+	taskID, isString := rawTaskID.(string)
 	currentFMAssignee := frontmatter.Assignee()
-	if taskID == "" {
+	if !present {
 		if !v.autoInject {
 			glog.Warningf(
 				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
@@ -272,9 +601,9 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		return v.injectAndStore(ctx, content, relPath, currentFMAssignee)
+		return v.injectAndStore(ctx, content, relPath, currentFMAssignee, hash)
 	}
-	if !isValidUUID(taskID) {
+	if !isString || !isValidUUID(taskID) {
 		if !v.autoInject {
 			glog.Warningf(
 				"AUTO_INJECT_TASK_IDENTIFIER=false; skipping task without valid task_identifier: %s",
@@ -283,8 +612,23 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		glog.Warningf("replacing non-UUID task_identifier %q in %s", taskID, relPath)
-		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
+		if isString {
+			// %T would print just "string" and lose the offending value, which
+			// is the only thing that tells an operator which file content to
+			// look for. Quoted so an empty or whitespace-only value is visible.
+			glog.Warningf("replacing non-UUID task_identifier %q in %s", taskID, relPath)
+		} else {
+			// Non-string values (sequences, mappings, ints) are logged by type
+			// only: a large sequence or mapping must not blow up a log line.
+			glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
+		}
+		return v.injectAndStore(
+			ctx,
+			removeTaskIdentifier(content),
+			relPath,
+			currentFMAssignee,
+			hash,
+		)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
 		if !v.autoInject {
@@ -296,13 +640,19 @@ func (v *vaultScanner) processFile(
 			return nil, "", false
 		}
 		glog.Warningf("replacing duplicate task_identifier %q in %s", taskID, relPath)
-		return v.injectAndStore(ctx, removeTaskIdentifier(content), relPath, currentFMAssignee)
+		return v.injectAndStore(
+			ctx,
+			removeTaskIdentifier(content),
+			relPath,
+			currentFMAssignee,
+			hash,
+		)
 	}
 	prevEntry := v.hashes[relPath]
 
 	// Detect empty → named assignee transition (operator re-delegated a parked task).
 	if currentFMAssignee != "" && prevEntry.taskIdentifier != "" && prevEntry.assignee == "" {
-		wrote, werr := v.writeCounterReset(ctx, relPath, content, fmMap)
+		wrote, werr := v.writeCounterReset(ctx, relPath)
 		if werr {
 			return nil, "", true
 		}
@@ -323,6 +673,7 @@ func (v *vaultScanner) processFile(
 		hash:           hash,
 		taskIdentifier: lib.TaskIdentifier(taskID),
 		assignee:       currentFMAssignee,
+		capped:         isCappedIdle(frontmatter),
 	}
 	if frontmatter.Status() == "" {
 		glog.Errorf("skipping %s: invalid frontmatter: status is empty", relPath)
@@ -342,18 +693,46 @@ func (v *vaultScanner) processFile(
 
 // injectAndStore generates a UUID, writes it into the file via ops.writeFile,
 // and records a sentinel hash entry with the file's current assignee.
+//
+// Before persisting, the candidate bytes are re-evaluated through the exact parse
+// pipeline processFile uses on the next cycle (repairConverges). A repair that
+// would not clear its own trigger is refused entirely — nothing written, nothing
+// committed, zero footprint in the vault — and the file is remembered by its
+// on-disk hash so processFile's content-hash short-circuit suppresses every
+// further attempt until the file's bytes change on disk.
+//
+// onDiskHash is the sha256 of the bytes processFile READ this cycle, not of the
+// candidate bytes. Storing the real on-disk hash is exactly what makes a halt ride
+// the existing short-circuit and re-arm on content change, and is what makes the
+// halt path behave differently from the zero-hash sentinel a successful write
+// stores.
+//
 // Returns (nil task, writtenRelPath, writeError).
 func (v *vaultScanner) injectAndStore(
 	ctx context.Context,
 	content []byte,
 	relPath string,
 	currentAssignee lib.TaskAssignee,
+	onDiskHash [32]byte,
 ) (*lib.Task, string, bool) {
 	id := uuid.New().String()
 	newContent, injectErr := InjectTaskIdentifier(ctx, content, id)
 	if injectErr != nil {
 		glog.Warningf("skipping %s: failed to inject task_identifier: %v", relPath, injectErr)
 		v.metrics.SkippedFilesTotal(metrics.ReasonInjectTaskIdentifierFailed).Inc()
+		return nil, "", false
+	}
+	if !repairConverges(ctx, newContent, id) {
+		// The offending value is deliberately NOT interpolated: a large sequence or
+		// mapping under task_identifier must not be usable to flood the log. The path
+		// is the only thing an operator needs to find the file.
+		glog.Errorf("task_identifier repair did not converge, halting repair for: %s", relPath)
+		v.metrics.SkippedFilesTotal(metrics.ReasonRepairNotConverging).Inc()
+		v.hashes[relPath] = fileEntry{
+			hash:           onDiskHash,
+			taskIdentifier: "",
+			assignee:       currentAssignee,
+		}
 		return nil, "", false
 	}
 	if writeErr := v.ops.writeFile(ctx, relPath, newContent); writeErr != nil {
@@ -368,37 +747,98 @@ func (v *vaultScanner) injectAndStore(
 	return nil, relPath, false
 }
 
-// writeCounterReset rewrites the task file with trigger_count: 0 and retry_count: 0.
-// fmMap is the already-parsed frontmatter map for this file.
+// repairConverges reports whether candidate — the exact bytes injectAndStore is
+// about to persist — clears the repair trigger. It re-evaluates the candidate
+// through the same pipeline processFile runs on the next cycle: frontmatter
+// extraction, duplicate-key deduplication (last-wins), and YAML unmarshal.
+// Reusing that exact pipeline, rather than inspecting the injected line, is what
+// catches the accumulator shape: post-injection the deduped view can resolve
+// task_identifier back to the stale value instead of the minted UUID.
+//
+// It returns true only when the re-evaluated task_identifier is present, is a
+// string, and equals id. Every failure inside the pipeline is non-convergence,
+// never an error to swallow: bytes that cannot be parsed cannot be proven to have
+// cleared the trigger, so they are refused (fail-closed). The V(3) diagnostics
+// carry the parse error only — never file content — so a crafted value cannot be
+// used to flood the log.
+func repairConverges(ctx context.Context, candidate []byte, id string) bool {
+	fmYAML, extractErr := extractFrontmatter(ctx, candidate)
+	if extractErr != nil {
+		glog.V(3).Infof("convergence guard: extract frontmatter failed: %v", extractErr)
+		return false
+	}
+	dedupedYAML, _, dedupErr := DeduplicateFrontmatter(ctx, fmYAML)
+	if dedupErr != nil {
+		glog.V(3).Infof("convergence guard: deduplicate frontmatter failed: %v", dedupErr)
+		return false
+	}
+	var fmMap map[string]interface{}
+	if unmarshalErr := yaml.Unmarshal([]byte(dedupedYAML), &fmMap); unmarshalErr != nil {
+		glog.V(3).Infof("convergence guard: unmarshal frontmatter failed: %v", unmarshalErr)
+		return false
+	}
+	raw, present := fmMap["task_identifier"]
+	if !present {
+		return false
+	}
+	resolved, isString := raw.(string)
+	if !isString {
+		return false
+	}
+	return resolved == id
+}
+
+// writeCounterReset resets trigger_count to 0 through the
+// controller's atomic read-modify-write path, so the reset is applied to the
+// file as it is on disk at write time rather than to the scan-time snapshot.
+// The previous whole-file write from that snapshot raced the executor's
+// trigger_count increment and produced the frontmatter conflict git-rest
+// quarantined (2026-10-19, merge 622e8c24b0: trigger_count 3 vs 0).
 // Returns (relPath, false) on success, ("", true) on write error.
 func (v *vaultScanner) writeCounterReset(
 	ctx context.Context,
 	relPath string,
-	content []byte,
-	fmMap map[string]interface{},
 ) (string, bool) {
-	resetFm := make(map[string]interface{}, len(fmMap))
-	for k, val := range fmMap {
-		resetFm[k] = val
-	}
-	resetFm["trigger_count"] = 0
-	resetFm["retry_count"] = 0
-
-	newFmYAML, err := yaml.Marshal(resetFm)
+	fullAbsPath := filepath.Join(v.gitClient.Path(), relPath)
+	err := v.gitClient.AtomicReadModifyWriteAndCommitPush(
+		ctx,
+		fullAbsPath,
+		func(current []byte) ([]byte, error) {
+			return resetCounters(ctx, current)
+		},
+		fmt.Sprintf("[agent-task-controller] reset counters for %s", relPath),
+	)
 	if err != nil {
-		glog.Warningf("writeCounterReset: marshal failed for %s: %v", relPath, err)
-		return "", false
-	}
-
-	body := extractBody(content)
-	newContent := []byte("---\n" + string(newFmYAML) + "---\n" + body)
-
-	if writeErr := v.ops.writeFile(ctx, relPath, newContent); writeErr != nil {
-		glog.Warningf("writeCounterReset: write failed for %s: %v", relPath, writeErr)
+		glog.Warningf("writeCounterReset: atomic reset failed for %s: %v", relPath, err)
 		return "", true
 	}
-	glog.V(2).Infof("writeCounterReset: reset trigger_count/retry_count for %s", relPath)
+	glog.V(2).Infof("writeCounterReset: reset trigger_count for %s", relPath)
 	return relPath, false
+}
+
+// resetCounters applies trigger_count: 0 to the frontmatter it is given,
+// preserving every other field and the body verbatim. It runs
+// inside AtomicReadModifyWriteAndCommitPush, so its input is the file as it is
+// on disk at write time, not the scanner's earlier read.
+func resetCounters(ctx context.Context, current []byte) ([]byte, error) {
+	frontmatterStr, err := extractFrontmatter(ctx, current)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "extract frontmatter")
+	}
+	var fm map[string]interface{}
+	if err := yaml.Unmarshal([]byte(frontmatterStr), &fm); err != nil {
+		return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
+	}
+	if fm == nil {
+		fm = make(map[string]interface{})
+	}
+	fm["trigger_count"] = 0
+
+	newFmYAML, err := yaml.Marshal(fm)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
+	}
+	return []byte("---\n" + string(newFmYAML) + "---\n" + extractBody(current)), nil
 }
 
 func (v *vaultScanner) collectDeleted(
@@ -413,8 +853,15 @@ func (v *vaultScanner) collectDeleted(
 		default:
 		}
 		if _, ok := seen[relPath]; !ok {
-			deleted = append(deleted, entry.taskIdentifier)
 			delete(v.hashes, relPath)
+			// A halted repair has no identifier to record, so its entry carries an
+			// empty lib.TaskIdentifier. Dropping the bookkeeping is correct; emitting
+			// the empty identifier downstream is not — an empty identifier is not a
+			// task, and it must never reach the deleted-tasks stream.
+			if entry.taskIdentifier == "" {
+				continue
+			}
+			deleted = append(deleted, entry.taskIdentifier)
 		}
 	}
 	return deleted, nil

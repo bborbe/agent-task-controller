@@ -87,6 +87,9 @@ func (s *syncLoop) processResult(ctx context.Context, result scanner.ScanResult)
 		glog.V(3).Infof("scan cycle: no changes")
 		s.metrics.ScanCyclesTotal("no_changes").Inc()
 	}
+	// Executors filter by cluster themselves. Dropping a foreign task here left
+	// the task topic's latest event on a stale pre-pin version, so an executor
+	// kept running a task the operator had since pinned to another cluster.
 	for _, task := range result.Changed {
 		glog.V(3).Infof("publishing changed task %s", task.TaskIdentifier)
 		if err := s.publisher.PublishChanged(ctx, task); err != nil {

@@ -5,6 +5,8 @@
 package factory
 
 import (
+	"time"
+
 	lib "github.com/bborbe/agent"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
@@ -18,38 +20,93 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
+// commandExpireDuration is the maximum age of a queued agent-task-v1-request
+// command before it is dropped as expired. Sized at 60 minutes to absorb the
+// worst-case queue residency of a 100+ task enqueue against a cap of 1
+// concurrent job (measured job runtimes 11-15 min): a burst of agent
+// completions, a slow git-rest round-trip, or a controller restart must not
+// push tail commands past the window and silently drop their frontmatter
+// writes. Stale-command protection is unchanged — a command older than 60
+// minutes still expires rather than clobbering newer state.
+const commandExpireDuration = 60 * time.Minute
+
 // CreateCommandConsumer wires a CQRS command consumer for agent-task-v1-request.
+//
+// batchSize bounds how many messages share one libkv.Tx. The handler composition
+// (cdb.CreateCommandMessageHandlerBatch) is already MessageHandlerBatchTx — one
+// db.Update per batch — so a batch size of 1 makes every message pay its own
+// BoltDB transaction and fsync. Raising it is the only lever that changes the
+// transaction count; the handler choice itself is already the batch variant.
 func CreateCommandConsumer(
 	saramaClientProvider libkafka.SaramaClientProvider,
 	syncProducer libkafka.SyncProducer,
 	db libkv.DB,
+	batchSize libkafka.BatchSize,
 	topicPrefix base.TopicPrefix,
 	resultWriter result.ResultWriter,
+	resolver result.TaskPathResolver,
 	gitClient gitclient.GitClient,
+	vaultClient vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
+	humans result.HumanAssignees,
 ) run.Func {
-	retryGate := command.NewPlanningRetryGate(gitClient, taskDir, currentDateTime, prCommenter, m)
+	retryGate := command.NewPlanningRetryGate(
+		gitClient,
+		taskDir,
+		vaultName,
+		currentDateTime,
+		prCommenter,
+		m,
+		resolver,
+		humans,
+	)
 	executors := cdb.CommandObjectExecutorTxs{
 		command.NewTaskResultExecutor(resultWriter, retryGate, vaultName),
-		command.NewIncrementFrontmatterExecutor(gitClient, taskDir, m),
-		command.NewUpdateFrontmatterExecutor(gitClient, taskDir, m),
-		command.NewCreateTaskExecutor(gitClient, taskDir, vaultName, currentDateTime, k),
-		command.NewCompleteTaskExecutor(gitClient, taskDir, currentDateTime, m),
+		// First executor ported to the typed surface: it addresses the task by
+		// identifier and PATCHes the fields it changes, instead of reading a
+		// vault-relative path, mutating the YAML and re-serialising the file.
+		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
+		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m, humans),
+		command.NewCreateTaskExecutor(
+			gitClient,
+			vaultClient,
+			taskDir,
+			vaultName,
+			currentDateTime,
+			k,
+			resolver,
+		),
+		command.NewCompleteTaskExecutor(vaultClient, vaultName, currentDateTime, m),
 	}
-	return cdb.RunCommandConsumerTxDefault(
-		saramaClientProvider,
-		syncProducer,
+	// Composed by hand rather than through cdb.RunCommandConsumerTx; the reasons live with the
+	// composition in newCommandConsumerFunc.
+	handler := cdb.CreateCommandMessageHandlerBatch(
 		db,
+		syncProducer,
 		lib.TaskV1SchemaID,
-		topicPrefix,
 		true, // ignoreUnsupported: skip commands with unknown operations
-		executors,
+		topicPrefix,
+		commandExpireDuration,
+		executors...,
+	)
+	return RetryConsumer(
+		newCommandConsumerFunc(
+			saramaClientProvider,
+			db,
+			batchSize,
+			topicPrefix,
+			handler,
+			command.NewLoggingExpiredCommandObserver(m),
+			currentDateTime,
+		),
+		retryConsumerDelay,
 	)
 }

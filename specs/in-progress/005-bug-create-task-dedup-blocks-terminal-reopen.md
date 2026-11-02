@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-08-27T18:28:45Z"
 generating: "2026-08-27T18:28:45Z"
 prompted: "2026-08-27T18:42:40Z"
+verifying: "2026-09-03T18:17:15Z"
 branch: dark-factory/bug-create-task-dedup-blocks-terminal-reopen
 ---
 
@@ -142,6 +143,8 @@ Reproduction replay — the mandatory bug check:
 3. When the existing `status` is any other value — including every non-terminal vault status (`next`, `in_progress`, `backlog`, `hold`, the legacy alias `todo`), the empty string, and any unrecognized value — the executor returns `ErrTaskAlreadyExists` and writes nothing, unchanged from today.
 4. When the executor cannot positively establish a status — frontmatter delimiters missing, YAML unparseable, or the `status` key absent — it fails closed: `ErrTaskAlreadyExists`, no write, and a WARNING log naming the path so the operator can see why the slot is held.
 5. A reopen is distinguishable from a first-ever create in two operator-greppable places: an unconditional INFO log line containing `create-task: reopening terminal task` with the path and the prior status, and a git commit message containing `reopen terminal task`. A first-ever create carries neither.
+
+   **Amended 2026-10-27 by the typed-API port.** Only the log line survives on the controller side, and it no longer carries the prior status. Both remaining halves moved into `bborbe/vault-api` when the create stopped writing the file itself: the commit message is now built there, and the create's success response reports only *that* it reopened, not *what* it replaced — so the controller has no prior status to log. The executor still emits the frozen substring `create-task: reopening terminal task` with the task and path at default verbosity, which is what an operator greps for; the commit-message half of this AC is now vault-api's to satisfy.
 
 ## Design Decision: overwrite in place
 

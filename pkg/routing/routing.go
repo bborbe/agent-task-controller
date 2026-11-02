@@ -54,11 +54,11 @@ func ShouldProcess(cmd task.CreateCommand, vaultName string) bool {
 }
 
 // ShouldProcessResult returns true iff the controller's vaultName owns this
-// result. The result's frontmatter carries target_vault — stamped at task
-// create (buildCreateTaskContent) and echoed back by the agent when it
-// publishes. A result whose target_vault differs from vaultName is cross-vault
-// traffic (both controllers consume the shared topic) and must be skipped
-// before the write scan so the owning vault alone writes it. An absent
+// result. The result's frontmatter carries target_vault — stamped by the typed
+// create and echoed back by the agent when it publishes. A result whose
+// target_vault differs from vaultName is cross-vault traffic (both controllers
+// consume the shared topic) and must be skipped before the write scan so the
+// owning vault alone writes it. An absent
 // target_vault (legacy task created before stamping) falls through to true:
 // the write path's not-found handling covers genuinely-missing tasks.
 func ShouldProcessResult(req lib.Task, vaultName string) bool {
@@ -66,4 +66,21 @@ func ShouldProcessResult(req lib.Task, vaultName string) bool {
 		return v == vaultName
 	}
 	return true
+}
+
+// ShouldProcessFrontmatterCommand returns true iff the controller's vaultName
+// owns this frontmatter command (update-frontmatter, increment-frontmatter,
+// complete). An empty targetVault falls through to true — matching
+// ShouldProcessResult's legacy semantics — so legacy unstamped commands are
+// attempted by every controller: the owning vault finds the file and heals it
+// (stamping target_vault in the same write), the non-owning vault drops it. A
+// non-empty targetVault is compared verbatim to vaultName (no case-folding).
+// Deliberately NOT defaulting to LegacyDefaultVault (unlike ShouldProcess):
+// routing legacy personal-vault tasks to the openclaw controller would
+// permanently orphan them.
+func ShouldProcessFrontmatterCommand(targetVault, vaultName string) bool {
+	if targetVault == "" {
+		return true
+	}
+	return targetVault == vaultName
 }

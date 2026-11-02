@@ -14,6 +14,7 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -78,8 +79,19 @@ var _ = Describe("Frontmatter sequence integration", func() {
 			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
 		}
 
-		incrementExec = command.NewIncrementFrontmatterExecutor(fakeGit, taskDir, metrics.New())
-		updateExec = command.NewUpdateFrontmatterExecutor(fakeGit, taskDir, metrics.New())
+		incrementExec = command.NewIncrementFrontmatterExecutor(
+			newFSTaskClient(tmpDir, taskDir),
+			"openclaw",
+			libtime.NewCurrentDateTime(),
+			metrics.New(),
+		)
+		updateExec = command.NewUpdateFrontmatterExecutor(
+			newFSTaskClient(tmpDir, taskDir),
+			"openclaw",
+			libtime.NewCurrentDateTime(),
+			metrics.New(),
+			nil,
+		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
 

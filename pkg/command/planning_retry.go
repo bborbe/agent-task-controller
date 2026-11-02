@@ -45,29 +45,43 @@ type PlanningRetryGate interface {
 	Handle(ctx context.Context, req lib.Task) (handled bool, err error)
 }
 
-// NewPlanningRetryGate constructs the gate.
+// NewPlanningRetryGate constructs the gate. vaultName is the controller's
+// VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
+// resolver is the scanner's identifier→path index, consulted by the lookup before
+// it walks the vault.
 func NewPlanningRetryGate(
 	gitClient gitclient.GitClient,
 	taskDir string,
+	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
+	resolver result.TaskPathResolver,
+	humans result.HumanAssignees,
 ) PlanningRetryGate {
 	return &planningRetryGate{
 		gitClient:       gitClient,
 		taskDir:         taskDir,
+		vaultName:       vaultName,
 		currentDateTime: currentDateTime,
 		prCommenter:     prCommenter,
 		metrics:         m,
+		resolver:        resolver,
+		humanAssignees:  humans,
 	}
 }
 
 type planningRetryGate struct {
 	gitClient       gitclient.GitClient
 	taskDir         string
+	vaultName       string
 	currentDateTime libtime.CurrentDateTimeGetter
 	prCommenter     prcomment.PRCommenter
 	metrics         metrics.Metrics
+	resolver        result.TaskPathResolver
+	// humanAssignees names the assignee values that are human owners, so the
+	// human_review chokepoint retains them instead of clearing them.
+	humanAssignees result.HumanAssignees
 }
 
 func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled bool, err error) {
@@ -76,13 +90,26 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	}
 
 	relPath, existingFrontmatter, findErr := result.FindTaskFilePath(
-		ctx, g.gitClient, g.taskDir, req.TaskIdentifier,
+		ctx, g.gitClient, g.taskDir, req.TaskIdentifier, g.resolver,
 	)
 	if findErr != nil {
 		return false, errors.Wrapf(ctx, findErr, "planning-retry: find task file")
 	}
 	if relPath == "" {
 		glog.Warningf("planning-retry: task file not found for %s; skipping", req.TaskIdentifier)
+		return false, nil
+	}
+
+	phase := existingFrontmatter.Phase()
+	phaseValue := ""
+	if phase != nil {
+		phaseValue = phase.String()
+	}
+	// phaseValue is "" when phase is nil, and "" never equals planning, so the
+	// single comparison covers the absent-phase case too.
+	if phaseValue != domain.TaskPhasePlanning.String() {
+		glog.V(3).
+			Infof("planning-retry: task %s on-disk phase=%s; skipping gate", req.TaskIdentifier, phaseValue)
 		return false, nil
 	}
 
@@ -136,12 +163,6 @@ func (g *planningRetryGate) matchesRetryGate(req lib.Task) bool {
 		req.Frontmatter.Assignee() != lib.TaskAssignee("pr-reviewer-agent") {
 		glog.V(3).
 			Infof("planning-retry: task %s is not pr-review (task_type=%q, assignee=%q); skipping gate", req.TaskIdentifier, taskType, req.Frontmatter.Assignee())
-		return false
-	}
-	phase := req.Frontmatter.Phase()
-	if phase == nil || phase.String() != domain.TaskPhasePlanning.String() {
-		glog.V(3).
-			Infof("planning-retry: task %s phase is not planning; skipping gate", req.TaskIdentifier)
 		return false
 	}
 	if !hasFailureMarker(string(req.Content)) {
@@ -222,6 +243,13 @@ func (g *planningRetryGate) buildRetryModifyFn(
 		if onDiskCount != count {
 			return current, nil
 		}
+		// Re-check the phase against THIS read, not the one Handle saw: the task
+		// may have moved past planning between FindTaskFilePath and here, and a
+		// stale read must never force it back to planning.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
+			return current, nil
+		}
 
 		retryLine := "retry " + strconv.Itoa(count+1) + "/3: " + reason + " at " + ts
 		retryLineBullet := "- " + retryLine
@@ -236,6 +264,13 @@ func (g *planningRetryGate) buildRetryModifyFn(
 		fm["planning_retry_count"] = count + 1
 		fm["phase"] = "planning"
 		fm["task_identifier"] = uuid.NewString()
+
+		// Heal-on-write: stamp target_vault on legacy files lacking it so the
+		// non-owning controller permanently stops falling through. The gate runs
+		// after the routing predicate in NewTaskResultExecutor and returns
+		// handled=true, so the executor returns before WriteResult and the
+		// result-path heal never fires for these writes.
+		result.HealTargetVault(fm, g.vaultName)
 
 		newBody := appendProgressLine(body, retryLineBullet)
 
@@ -310,6 +345,17 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
 		}
 
+		// Re-check the phase against THIS read: a task that moved past planning
+		// between FindTaskFilePath and here must not be escalated back into the
+		// human queue. Clearing firstEscalation keeps the caller from posting the
+		// escalation comment or bumping the "exhausted" metric for a write that
+		// did not happen.
+		if phase := fm.Phase(); phase == nil ||
+			phase.String() != domain.TaskPhasePlanning.String() {
+			*firstEscalation = false
+			return current, nil
+		}
+
 		// Idempotency: check if terminal retry line already present
 		for _, line := range strings.Split(body, "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "retry 3/3:") {
@@ -323,7 +369,12 @@ func (g *planningRetryGate) buildEscalationModifyFn(
 		}
 
 		fm["phase"] = "human_review"
-		result.ClearAssigneeIfHumanReview(fm)
+		result.ClearAssigneeIfHumanReview(fm, g.humanAssignees)
+
+		// Heal-on-write: stamp target_vault on legacy files lacking it (same
+		// rationale as buildRetryModifyFn — the gate's handled=true return
+		// bypasses the result-path heal).
+		result.HealTargetVault(fm, g.vaultName)
 
 		marshaled, err := yaml.Marshal(map[string]any(fm))
 		if err != nil {

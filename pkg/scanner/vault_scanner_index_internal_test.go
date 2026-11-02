@@ -1,0 +1,524 @@
+// Copyright (c) 2026 Benjamin Borbe All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package scanner
+
+// This spec file is internal (package scanner, not scanner_test) because the
+// multimap case has to seed the scanner's unexported bookkeeping (hashes) and then
+// drive the real publishIndex: the duplicate case it covers is unreachable through
+// a plain RunCycle, because processFile repairs a duplicate it processes. The
+// external test package's doubles live in scanner_test and are not visible here,
+// so the doubles below are hand-written.
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"time"
+
+	lib "github.com/bborbe/agent"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+)
+
+// indexGitClient is a gitclient.GitClient with real file I/O over a tmpdir and a read
+// counter, so a spec can prove a resolver lookup issues no read. It embeds
+// convergenceGitClient for the methods the index specs never exercise.
+type indexGitClient struct {
+	*convergenceGitClient
+	readFileCalls  int
+	writeFileCalls int
+}
+
+var _ gitclient.GitClient = (*indexGitClient)(nil)
+
+func (c *indexGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(c.path, glob))
+	if err != nil {
+		return nil, err
+	}
+	rel := make([]string, 0, len(matches))
+	for _, m := range matches {
+		r, relErr := filepath.Rel(c.path, m)
+		if relErr != nil {
+			return nil, relErr
+		}
+		rel = append(rel, r)
+	}
+	return rel, nil
+}
+
+func (c *indexGitClient) ReadFile(_ context.Context, relPath string) ([]byte, error) {
+	c.readFileCalls++
+	return os.ReadFile(filepath.Join(c.path, relPath)) // #nosec G304 -- test-only path
+}
+
+func (c *indexGitClient) WriteFile(_ context.Context, relPath string, content []byte) error {
+	c.writeFileCalls++
+	return os.WriteFile(
+		filepath.Join(c.path, relPath),
+		content,
+		0600,
+	) // #nosec G306 -- test-only file
+}
+
+// AtomicReadModifyWriteAndCommitPush performs the real read-modify-write against
+// the temp dir. The embedded convergenceGitClient's version is a no-op stub, which
+// is fine for specs that only build the index but would make the boot-sweep spec
+// pass against a write that never happened.
+func (c *indexGitClient) AtomicReadModifyWriteAndCommitPush(
+	_ context.Context,
+	absPath string,
+	modify func([]byte) ([]byte, error),
+	_ string,
+) error {
+	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
+	if err != nil {
+		return err
+	}
+	next, err := modify(current)
+	if err != nil {
+		return err
+	}
+	if string(next) == string(current) {
+		return nil
+	}
+	return os.WriteFile(absPath, next, 0600) // #nosec G306 -- test-only file
+}
+
+const (
+	alphaID = "11111111-1111-4111-8111-111111111111"
+	betaID  = "22222222-2222-4222-8222-222222222222"
+	dupID   = "33333333-3333-4333-8333-333333333333"
+)
+
+var _ = Describe("vaultScanner identifier index", func() {
+	var (
+		ctx     context.Context
+		dir     string
+		client  *indexGitClient
+		results chan ScanResult
+		s       *vaultScanner
+		r       ScanResult
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		dir, err = os.MkdirTemp("", "scanner-index-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		client = &indexGitClient{convergenceGitClient: &convergenceGitClient{path: dir}}
+		results = make(chan ScanResult, 1)
+		var ok bool
+		s, ok = NewGitRestVaultScanner(
+			client, ".", time.Hour, nil, metrics.New(), true, "test-vault", 0,
+		).(*vaultScanner)
+		Expect(ok).To(BeTrue())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(dir)).To(Succeed())
+	})
+
+	write := func(name, content string) {
+		Expect(os.WriteFile(filepath.Join(dir, name), []byte(content), 0600)).To(Succeed())
+	}
+
+	cycle := func() {
+		s.RunCycle(ctx, results)
+		Expect(results).To(Receive(&r))
+	}
+
+	taskFile := func(id string) string {
+		return "---\ntask_identifier: " + id +
+			"\nstatus: in_progress\nassignee: claude\n---\nbody\n"
+	}
+
+	It("builds the identifier to path mapping from a completed scan cycle", func() {
+		write("alpha.md", taskFile(alphaID))
+		write("beta.md", taskFile(betaID))
+		cycle()
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("alpha.md"))
+
+		path, found, err = s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("beta.md"))
+	})
+
+	It("reports an unknown identifier as absent, not as an error", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+	})
+
+	It("never indexes the empty identifier a halted repair stores", func() {
+		write("halted.md", "---\n{task_identifier: 501, status: in_progress}\n---\nbody\n")
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		Expect(s.hashes["halted.md"].taskIdentifier).To(Equal(lib.TaskIdentifier("")))
+		Expect(s.hashes["alpha.md"].taskIdentifier).To(Equal(lib.TaskIdentifier(alphaID)))
+		Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
+		Expect(s.index).To(HaveLen(1))
+
+		before := client.readFileCalls
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(""))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+		Expect(client.readFileCalls).To(Equal(before))
+
+		path, found, err = s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("alpha.md"))
+		Expect(client.readFileCalls).To(Equal(before))
+	})
+
+	It("resolves an identifier recorded after the index was built", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("beta.md"))
+	})
+
+	It("ignores an empty identifier or path", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, "", "x.md")
+		s.Record(ctx, lib.TaskIdentifier(betaID), "")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+	})
+
+	It("does not hide a known duplicate", func() {
+		s.hashes = map[string]fileEntry{
+			"first.md":  {taskIdentifier: lib.TaskIdentifier(dupID)},
+			"second.md": {taskIdentifier: lib.TaskIdentifier(dupID)},
+		}
+		s.publishIndex()
+
+		s.Record(ctx, lib.TaskIdentifier(dupID), "first.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+	})
+
+	It("replaces a single stale entry", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		s.Record(ctx, lib.TaskIdentifier(alphaID), "renamed.md")
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("renamed.md"))
+	})
+
+	Context("RecordDuplicate", func() {
+		It("reports a second path beside a known one as a duplicate naming both", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(path).To(Equal(""))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+			Expect(err.Error()).To(ContainSubstring("first.md"))
+			Expect(err.Error()).To(ContainSubstring("second.md"))
+		})
+
+		It("keeps the duplicate when a later Record would replace it", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+			s.Record(ctx, lib.TaskIdentifier(dupID), "first.md")
+
+			_, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("is a no-op for a path already known for the identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "alpha.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("records the path alone for an unknown identifier", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+		})
+
+		It("ignores an empty identifier or path", func() {
+			write("alpha.md", taskFile(alphaID))
+			cycle()
+
+			s.RecordDuplicate(ctx, "", "x.md")
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(alphaID), "")
+
+			Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+		})
+
+		It("never mutates the slice a reader already holds", func() {
+			write("first.md", taskFile(dupID))
+			cycle()
+			held := s.index[lib.TaskIdentifier(dupID)]
+
+			s.RecordDuplicate(ctx, lib.TaskIdentifier(dupID), "second.md")
+
+			recorded := s.index[lib.TaskIdentifier(dupID)]
+			Expect(held).To(Equal([]string{"first.md"}))
+			Expect(recorded).To(Equal([]string{"first.md", "second.md"}))
+			// A new backing array, not an append into the held one.
+			Expect(&recorded[0]).NotTo(BeIdenticalTo(&held[0]))
+		})
+	})
+
+	It("rebuilds the index per cycle instead of accumulating stale entries", func() {
+		write("mover.md", taskFile(alphaID))
+		cycle()
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("mover.md"))
+
+		Expect(os.Remove(filepath.Join(dir, "mover.md"))).To(Succeed())
+		cycle()
+		path, found, err = s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+		Expect(path).To(Equal(""))
+
+		write("newhome.md", taskFile(alphaID))
+		cycle()
+		path, found, err = s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("newhome.md"))
+	})
+
+	It(
+		"preserves duplicate identifiers and reports two paths for one identifier as an error",
+		func() {
+			s.hashes = map[string]fileEntry{
+				"first.md":  {taskIdentifier: lib.TaskIdentifier(dupID)},
+				"second.md": {taskIdentifier: lib.TaskIdentifier(dupID)},
+			}
+			s.publishIndex()
+
+			path, found, err := s.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(found).To(BeFalse())
+			Expect(path).To(Equal(""))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate task_identifier " + dupID))
+			Expect(err.Error()).To(ContainSubstring("first.md"))
+			Expect(err.Error()).To(ContainSubstring("second.md"))
+		},
+	)
+
+	// Requires ENABLE_RACE=true to be meaningful: Makefile.precommit sets
+	// TESTFLAGS_RACE = -race=false by default and CI runs only `make precommit`, so
+	// in CI this is a plain concurrency smoke test. The real detector run — and the
+	// evidence spec 016's race AC names — is
+	// `ENABLE_RACE=true go test -race -count=1 ./pkg/scanner/... ./pkg/result/...`.
+	// A green CI run is therefore not race coverage.
+	It("stays clean under the race detector when scanning and resolving concurrently", func() {
+		write("alpha.md", taskFile(alphaID))
+		cycle()
+
+		done := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			defer close(done)
+			for i := 0; i < 50; i++ {
+				s.RunCycle(ctx, results)
+				<-results
+			}
+		}()
+
+		for i := 0; i < 50; i++ {
+			s.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
+			_, found, resolveErr := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(resolveErr).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+		}
+
+		Eventually(done).Should(BeClosed())
+
+		path, found, err := s.Resolve(ctx, lib.TaskIdentifier(alphaID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(path).To(Equal("alpha.md"))
+	})
+
+	// A trigger-only deployment (POLL_INTERVAL=0s) runs no scan cycle at all, so the
+	// cycle is not the publisher the index can rely on. These specs pin the boot build
+	// that replaces it.
+	Context("trigger-only mode (poll interval zero)", func() {
+		triggerOnly := func() *vaultScanner {
+			built, ok := NewGitRestVaultScanner(
+				client, ".", 0, make(chan struct{}), metrics.New(), true, "test-vault", 0,
+			).(*vaultScanner)
+			Expect(ok).To(BeTrue())
+			return built
+		}
+
+		// The sweep has to run here because a trigger-only controller never scans:
+		// hanging it off the scan cycle alone made it dead code in exactly the
+		// deployment that needed it (measured on prod 2026-10-28, POLL_INTERVAL=0s,
+		// 15 capped records and no escalation).
+		It("escalates a capped record during the boot index build", func() {
+			const cappedID = "44444444-4444-4444-8444-444444444444"
+			write("capped.md", "---\ntask_identifier: "+cappedID+
+				"\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent"+
+				"\nref: \"0000000000000000000000000000000000000000\"\ntrigger_count: 3"+
+				"\n---\n\nBody prose.\n")
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			content, readErr := os.ReadFile(filepath.Join(dir, "capped.md"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			Expect(string(content)).To(ContainSubstring("status: hold"))
+			Expect(string(content)).To(ContainSubstring("previous_assignee: pr-reviewer-agent"))
+		})
+
+		It("builds the index at start without running a scan cycle", func() {
+			write("alpha.md", taskFile(alphaID))
+			write("beta.md", taskFile(betaID))
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+
+			path, found, err = built.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+
+			// A file created after the pass still misses, so the walk stays the
+			// recovery for it.
+			_, found, err = built.Resolve(ctx, lib.TaskIdentifier(dupID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+		})
+
+		It("resolves an identifier recorded after a trigger-only boot build", func() {
+			write("alpha.md", taskFile(alphaID))
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+			built.Record(ctx, lib.TaskIdentifier(betaID), "beta.md")
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(betaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("beta.md"))
+		})
+
+		It("skips a file with no valid task_identifier instead of repairing it", func() {
+			write("alpha.md", taskFile(alphaID))
+			write("plain.md", "---\nstatus: in_progress\nassignee: claude\n---\nbody\n")
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			path, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(path).To(Equal("alpha.md"))
+
+			// No injection: the identifier-less file is untouched on disk.
+			content, readErr := os.ReadFile(
+				filepath.Join(dir, "plain.md"),
+			) // #nosec G304 -- test-only path
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(content)).To(Equal(
+				"---\nstatus: in_progress\nassignee: claude\n---\nbody\n",
+			))
+		})
+
+		It("publishes no changed task and writes nothing while building", func() {
+			write("alpha.md", taskFile(alphaID))
+			before := client.readFileCalls
+
+			built := triggerOnly()
+			built.buildIndex(ctx)
+
+			Expect(client.readFileCalls).To(Equal(before + 1))
+			Expect(client.writeFileCalls).To(Equal(0))
+			Consistently(results).ShouldNot(Receive())
+		})
+
+		It("builds the index from Run before it starts waiting", func() {
+			write("alpha.md", taskFile(alphaID))
+
+			built := triggerOnly()
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go func() {
+				defer GinkgoRecover()
+				Expect(built.Run(runCtx, results)).To(Succeed())
+			}()
+
+			Eventually(func() bool {
+				_, found, err := built.Resolve(ctx, lib.TaskIdentifier(alphaID))
+				Expect(err).NotTo(HaveOccurred())
+				return found
+			}).Should(BeTrue())
+		})
+	})
+})

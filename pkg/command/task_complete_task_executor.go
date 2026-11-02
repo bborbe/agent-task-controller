@@ -6,8 +6,6 @@ package command
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,9 +17,8 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
-	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // CompleteTaskCommandOperation is the CQRS command operation name for task completion.
@@ -35,9 +32,11 @@ const CompleteTaskCommandOperation base.CommandOperation = task.CompleteCommandO
 // Idempotent: a task that already carries a # Resolution block is a no-op (second
 // completion does not append a duplicate block, matching the build-fix-close-obsolete-tasks
 // skill's existing guard).
+// vaultName is the controller's VAULT_NAME; a command whose non-empty TargetVault
+// differs is cross-vault traffic and is skipped before the task read.
 func NewCompleteTaskExecutor(
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
+	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 ) cdb.CommandObjectExecutorTx {
@@ -54,40 +53,39 @@ func NewCompleteTaskExecutor(
 					err,
 				)
 			}
+			if err := frontmatterCommandVaultMismatch(
+				ctx,
+				"complete-task",
+				cmd.TargetVault,
+				vaultName,
+				cmd.TaskIdentifier,
+			); err != nil {
+				return nil, nil, err
+			}
 			if err := cmd.TaskIdentifier.Validate(ctx); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate task_identifier")
 			}
-			matchedRelPath, _, err := result.FindTaskFilePath(
-				ctx,
-				gitClient,
-				taskDir,
-				cmd.TaskIdentifier,
-			)
-			if err != nil {
-				m.FrontmatterCommandsTotal("complete-task", "error").Inc()
-				return nil, nil, errors.Wrapf(ctx, err, "find task file for complete")
-			}
-			if matchedRelPath == "" {
+			// The identifier IS the address: no path lookup, no working copy.
+			found, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
+			if errors.Is(err, vaultapi.ErrNotFound) {
 				glog.Warningf(
-					"complete-task: task file not found for %s, skipping",
+					"complete-task: task not found for %s, skipping",
 					cmd.TaskIdentifier,
 				)
 				m.FrontmatterCommandsTotal("complete-task", "not_found").Inc()
 				return nil, nil, nil
 			}
-			fullAbsPath := filepath.Join(gitClient.Path(), matchedRelPath)
+			if err != nil {
+				m.FrontmatterCommandsTotal("complete-task", "error").Inc()
+				return nil, nil, errors.Wrapf(ctx, err, "read task for complete")
+			}
 			ts := currentDateTime.Now().UTC().Format(time.RFC3339)
-			if err := gitClient.AtomicReadModifyWriteAndCommitPush(
-				ctx,
-				fullAbsPath,
-				buildCompleteModifyFn(ctx, cmd, ts),
-				fmt.Sprintf("[agent-task-controller] complete task %s", cmd.TaskIdentifier),
-			); err != nil {
+			if err := closeTask(ctx, client, found, cmd, ts, vaultName); err != nil {
 				m.FrontmatterCommandsTotal("complete-task", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
 					err,
-					"atomic complete for task %s",
+					"complete task %s",
 					cmd.TaskIdentifier,
 				)
 			}
@@ -102,53 +100,107 @@ func NewCompleteTaskExecutor(
 	)
 }
 
-// buildCompleteModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
-// that transitions the task file to completed. It returns (nil, nil) — signalling the
-// caller to skip the write — when the task is already resolved (idempotency guard).
-func buildCompleteModifyFn(
+// closeTask transitions the task to completed. It is a no-op when the body
+// already carries a Resolution block, which is the idempotency guard: a task
+// closed twice must not gain a second Resolution section.
+//
+// ⚠️ Two writes, not one: PATCH sets the frontmatter fields, PUT appends the
+// Resolution body. The old shape merged both and committed once. A failure
+// between the two leaves the task marked completed with no Resolution section,
+// and a retry re-runs both halves — the guard reads the BODY, not the status,
+// so the second attempt still writes and still appends exactly one section.
+//
+// ⚠️ That recovery has a bound, and it is the command's expiry, not the guard: a
+// command that expires (commandExpireDuration, 60 min) before a retry leaves the
+// partial state — completed, no Resolution — permanently. PATCH-before-PUT is
+// still the right order: PUT-first would make the body guard skip the PATCH
+// forever, leaving the task open with a Resolution.
+//
+// ⚠️ PUT replaces the WHOLE body, so the section is merged onto a body re-read
+// immediately before the write. Merging onto the body captured at the top of the
+// command would silently drop any edit made in that window — the replaced
+// AtomicReadModifyWriteAndCommitPush re-read inside its modify closure, so it
+// could not. The re-read also re-checks the Resolution guard, so a concurrent
+// close in the same window does not produce a second section.
+func closeTask(
 	ctx context.Context,
+	client vaultapi.Client,
+	found *vaultapi.Task,
 	cmd task.CompleteCommand,
 	ts string,
-) func([]byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		fmStr, err := result.ExtractFrontmatter(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
-		}
-		body, err := result.ExtractBody(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract body")
-		}
-		if hasResolutionSection(body) {
-			glog.V(2).Infof(
-				"complete-task: task %s already resolved, skipping (idempotent)",
-				cmd.TaskIdentifier,
-			)
-			return nil, nil
-		}
-		fm, err := parseTaskFrontmatter(fmStr)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "parse frontmatter")
-		}
-		fm["status"] = "completed"
-		fm["phase"] = "done"
-		fm["completed_date"] = ts
-		fm["processed_at"] = ts
-		if cmd.RecoverySHA != "" {
-			fm["recovery_sha"] = cmd.RecoverySHA
-		}
-		closedBody := body
-		if strings.TrimSpace(closedBody) != "" && !strings.HasSuffix(closedBody, "\n") {
-			closedBody += "\n"
-		}
-		closedBody += "\n## Resolution\n\n"
-		closedBody += "- **Verdict:** green — build recovered; original failure no longer reproduces\n"
-		if cmd.RecoverySHA != "" {
-			closedBody += "- **Recovery SHA:** `" + cmd.RecoverySHA + "` (default-branch HEAD at close time)\n"
-		}
-		closedBody += "- **Closed at:** " + ts + " (by `complete-task`)\n"
-		return marshalFileContent(ctx, fm, closedBody)
+	vaultName string,
+) error {
+	if hasResolutionSection(found.Body) {
+		glog.V(2).Infof(
+			"complete-task: task %s already resolved, skipping (idempotent)",
+			cmd.TaskIdentifier,
+		)
+		return nil
 	}
+	if _, err := client.PatchTask(
+		ctx,
+		found.ID,
+		buildCompletePatch(cmd, found.Frontmatter, ts, vaultName),
+	); err != nil {
+		return errors.Wrapf(ctx, err, "patch frontmatter")
+	}
+	fresh, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
+	if err != nil {
+		return errors.Wrapf(ctx, err, "re-read task for resolution body")
+	}
+	if hasResolutionSection(fresh.Body) {
+		glog.V(2).Infof(
+			"complete-task: task %s gained a Resolution concurrently, skipping body write",
+			cmd.TaskIdentifier,
+		)
+		return nil
+	}
+	// Addressed by fresh.ID, not found.ID: the body being written is the fresh
+	// read's, so a task deleted and recreated under the same identifier between
+	// the two reads must not have this body written onto the stale record.
+	if err := client.PutBody(ctx, fresh.ID, resolutionBody(fresh.Body, cmd, ts)); err != nil {
+		return errors.Wrapf(ctx, err, "put resolution body")
+	}
+	return nil
+}
+
+// buildCompletePatch returns the fields completion sets.
+func buildCompletePatch(
+	cmd task.CompleteCommand,
+	frontmatter map[string]any,
+	ts string,
+	vaultName string,
+) map[string]any {
+	patch := map[string]any{
+		"status":         "completed",
+		"phase":          "done",
+		"completed_date": ts,
+		"processed_at":   ts,
+	}
+	if cmd.RecoverySHA != "" {
+		patch["recovery_sha"] = cmd.RecoverySHA
+	}
+	// Heal-on-write: stamp target_vault on legacy tasks lacking it so the
+	// non-owning controller permanently stops falling through.
+	if _, ok := frontmatter["target_vault"]; !ok {
+		patch["target_vault"] = vaultName
+	}
+	return patch
+}
+
+// resolutionBody appends the Resolution section to the task body.
+func resolutionBody(body string, cmd task.CompleteCommand, ts string) string {
+	closed := body
+	if strings.TrimSpace(closed) != "" && !strings.HasSuffix(closed, "\n") {
+		closed += "\n"
+	}
+	closed += "\n## Resolution\n\n"
+	closed += "- **Verdict:** green — build recovered; original failure no longer reproduces\n"
+	if cmd.RecoverySHA != "" {
+		closed += "- **Recovery SHA:** `" + cmd.RecoverySHA + "` (default-branch HEAD at close time)\n"
+	}
+	closed += "- **Closed at:** " + ts + " (by `complete-task`)\n"
+	return closed
 }
 
 // hasResolutionSection reports whether the task body already carries a # Resolution

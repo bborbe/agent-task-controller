@@ -49,8 +49,10 @@ status: aborted
 phase: done
 completed_date: <ISO8601>
 superseded_by: <relPath of the new instance>
-created_by: recurring-task-creator
+created_by: recurring-task-creator  # written only by the recurring mechanism
 ```
+
+The build-fix retirement writes the four fields above and never `created_by`, which names the recurring publisher and would be false on a build-fix task.
 
 ### Best-Effort Per File
 
