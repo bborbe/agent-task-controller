@@ -14,6 +14,7 @@ NAMESPACE="${NAMESPACE:-build}"
 PUSH="${PUSH:-true}"
 TIMEOUT="${TIMEOUT:-3600}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 
 die() {
 	echo "build-cluster: $*" >&2
@@ -57,6 +58,8 @@ printf '%s' "${DOCKERFILE}" | grep -qE '^[A-Za-z0-9._/-]+$' ||
 	die "DOCKERFILE '${DOCKERFILE}' contains characters outside [A-Za-z0-9._/-]"
 printf '%s' "${PUSH_SECRET}" | grep -qE '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$' ||
 	die "PUSH_SECRET '${PUSH_SECRET}' is not a valid Kubernetes secret name"
+printf '%s' "${DOCKER_REGISTRY}" | grep -qE '^[A-Za-z0-9._/:-]+$' ||
+	die "DOCKER_REGISTRY '${DOCKER_REGISTRY}' contains characters outside [A-Za-z0-9._/:-]"
 printf '%s' "${TIMEOUT}" | grep -qE '^[0-9]+$' ||
 	die "TIMEOUT '${TIMEOUT}' is not a number of seconds"
 case "${PUSH}" in
@@ -101,6 +104,7 @@ sed \
 	-e "s|__PUSH_SECRET__|${PUSH_SECRET}|g" \
 	-e "s|__DEADLINE_SECONDS__|${TIMEOUT}|g" \
 	-e "s|__SOURCE_DATE_EPOCH__|${SOURCE_DATE_EPOCH}|g" \
+	-e "s|__DOCKER_REGISTRY__|${DOCKER_REGISTRY}|g" \
 	"${TEMPLATE}" >"${rendered}"
 
 if kc -n "${NAMESPACE}" get job "${JOB_NAME}" --ignore-not-found -o name | grep -q .; then

@@ -98,6 +98,7 @@ spec:
                 --opt platform=linux/amd64 \
                 --opt build-arg:SOURCE_DATE_EPOCH=__SOURCE_DATE_EPOCH__ \
                 --opt build-arg:BUILD_GIT_VERSION="$(cat /meta/git-version)" \
+                --opt build-arg:DOCKER_REGISTRY=__DOCKER_REGISTRY__ \
                 --metadata-file /meta/metadata.json \
                 --output type=image,name=__IMAGE__:__TAG__,push=__PUSH__,rewrite-timestamp=true
               cat /meta/metadata.json
