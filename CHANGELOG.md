@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.25.1
 
 - fix: harden the cluster build runner — the namespace is read back from the rendered manifest instead of the environment, a kubectl error fails loudly instead of reading as an absent Job, `TIMEOUT` is parsed as base 10, `SOURCE_DATE_EPOCH` is covered by the newline rejection, both init containers drop all capabilities and cannot escalate, the build pod's memory requests are small enough to schedule on a busy node, and `upload` / `clean` say they did nothing when `BUILD_TARGET` is not `local`
 
