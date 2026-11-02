@@ -102,5 +102,7 @@ apply:
 # `make precommit`, never `buca`, so the unconditional push is safe. `apply` is a
 # no-op placeholder (no k8s in this repo — deployment lives in the quant config
 # repo as mirror + keel-pattern). Shape mirrors bborbe/kafka-topic-reader.
+# buca is the local path: with BUILD_TARGET set the image is pushed at $(VERSION)
+# and nothing is deployed, so run buca with the default local arm only.
 .PHONY: buca
 buca: build upload clean apply
