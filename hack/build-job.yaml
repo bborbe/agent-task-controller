@@ -78,6 +78,28 @@ spec:
               mountPath: /src
             - name: meta
               mountPath: /meta
+        # This repo builds with `-mod=vendor` while /vendor/ is gitignored, so the
+        # clone carries no vendor directory. The local arm regenerates it through
+        # `check-go-mod` before `docker build`; the cluster arm must do the same
+        # here, or `go build -mod=vendor` fails on an empty vendor/modules.txt.
+        - name: vendor
+          image: golang:1.27.3
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              cd /src
+              go mod vendor
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: src
+              mountPath: /src
       containers:
         - name: build
           image: moby/buildkit:v0.34.1-rootless@sha256:f68752a5a94acfcdad2d07867b7075601a421638e17fc5f28efc1c814d0c4f89
