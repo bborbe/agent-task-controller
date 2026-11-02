@@ -27,9 +27,7 @@ require() {
 }
 
 # BUILD_TARGET is resolved to a kubeconfig file and context by cluster-alias.sh,
-# which also defines the kc() helper every kubectl call goes through. It is
-# shared with hack/build-cluster-bootstrap.sh so the alias mapping cannot drift
-# between provisioning and building.
+# which also defines the kc() helper every kubectl call goes through.
 source "${SCRIPT_DIR}/cluster-alias.sh"
 
 # The equivalent invocation for messages the operator has to retype.
@@ -98,6 +96,12 @@ if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
 fi
 printf '%s' "${SOURCE_DATE_EPOCH}" | grep -qE '^[0-9]+$' ||
 	die "cannot resolve REF '${REF}' to a commit in the local repository; run git fetch and retry"
+# SOURCE_DATE_EPOCH is the one substituted value the loop above cannot cover: it
+# is derived here, after that loop runs, and is spliced into both the YAML and
+# the embedded `sh -c` script just like the rest.
+case "${SOURCE_DATE_EPOCH}" in
+*$'\n'*) die "SOURCE_DATE_EPOCH contains a newline, which is not allowed" ;;
+esac
 
 JOB_NAME="build-$(printf '%s' "${TAG}" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9.-]/-/g')"
 JOB_NAME="${JOB_NAME:0:63}"
@@ -122,9 +126,43 @@ sed \
 	-e "s|__NAMESPACE__|${NAMESPACE}|g" \
 	"${TEMPLATE}" >"${rendered}"
 
-if kc -n "${NAMESPACE}" get job "${JOB_NAME}" --ignore-not-found -o name | grep -q .; then
-	die "job ${NAMESPACE}/${JOB_NAME} already exists; delete it with: ${KUBE_HINT} -n ${NAMESPACE} delete job ${JOB_NAME}"
+# The rendered manifest, not the environment, decides the namespace. A template
+# may hardcode `namespace:` instead of carrying the token, and polling the
+# requested NAMESPACE would then watch a namespace the Job was never created in
+# until the deadline expired.
+#
+# Anchored to the metadata block and stopped at the first match: an unanchored
+# pattern would take a nested `namespace:` (a RoleBinding, a second document) as
+# metadata, and `sed | head -1` can die on SIGPIPE once a second match exists.
+rendered_namespace="$(awk '
+	/^metadata:/ { in_meta = 1; next }
+	in_meta && /^[^[:space:]]/ { exit }
+	in_meta && /^[[:space:]]*namespace:/ {
+		sub(/^[[:space:]]*namespace:[[:space:]]*/, "")
+		print
+		exit
+	}
+' "${rendered}")"
+printf '%s' "${rendered_namespace}" | grep -qE '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+	die "rendered manifest has no valid metadata.namespace (got '${rendered_namespace}')"
+NAMESPACE="${rendered_namespace}"
+
+# A kubectl failure must not read as "no such Job": an RBAC denial, a missing
+# namespace and a bad context otherwise look exactly like an absent object, and
+# the script would go on to apply.
+#
+# stdout is the existence signal and stderr is the diagnostic, kept apart: a
+# warning on a *successful* `get` — kubectl prints a client/server version-skew
+# warning on every server-contacting command — must not be read as an existing
+# Job, or a healthy cluster refuses every build with a false message.
+kubectl_err="$(mktemp)"
+trap 'rm -f "${rendered}" "${kubectl_err}"' EXIT
+if existing="$(kc -n "${NAMESPACE}" get job "${JOB_NAME}" --ignore-not-found -o name 2>"${kubectl_err}")"; then
+	[ -z "${existing}" ] || die "job ${NAMESPACE}/${JOB_NAME} already exists; delete it with: ${KUBE_HINT} -n ${NAMESPACE} delete job ${JOB_NAME}"
+else
+	die "cannot read job ${NAMESPACE}/${JOB_NAME}: $(cat "${kubectl_err}")"
 fi
+rm -f "${kubectl_err}"
 
 if ! kc apply -f "${rendered}"; then
 	echo "build-cluster: job ${NAMESPACE}/${JOB_NAME} was not accepted; events:" >&2
@@ -134,7 +172,9 @@ if ! kc apply -f "${rendered}"; then
 	die "could not create job ${NAMESPACE}/${JOB_NAME}"
 fi
 
-deadline=$(( $(date +%s) + TIMEOUT + 120 ))
+# 10# forces base 10: TIMEOUT is validated as digits only, but a value with a
+# leading zero (0800) would otherwise be parsed as octal and abort the arithmetic.
+deadline=$(( $(date +%s) + 10#${TIMEOUT} + 120 ))
 outcome=""
 while [ -z "${outcome}" ]; do
 	succeeded="$(kc -n "${NAMESPACE}" get job "${JOB_NAME}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
