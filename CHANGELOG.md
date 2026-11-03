@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.1
 
 - fix: publish a phase transition that the park path writes while clearing the assignee — `processFile` stored a file's new hash and then returned early on an empty assignee, so the record carrying the `human_review` transition was consumed and never published; the view kept the previous phase forever, `view_divergence` reported the task on every pass, and the reconcile gate `phase_not_triggered` suppressed the execution spawn. Only a transition is published (a record already parked at its phase still publishes nothing), so a full-vault scan does not flood the event topic, and the executor's trigger-phase gate still refuses to spawn a parked record
 
