@@ -52,26 +52,29 @@ An agent result always lands on the task that produced it, even when the scanner
 - Rewriting the 47 active task files that already carry a non-UUID identifier. The fix makes them resolvable; it does not re-mint them.
 - Preserving more than one predecessor. A second repair overwrites the alias, so only the most recent replaced value resolves.
 - Changing `WriteResult`'s retry/back-off, its `unowned` routing, or the `not_found` threshold.
+- A live prod replay of the full in-flight-result path. The Rung-3 AC covers the alias write; the resolution half is covered by AC2, and a live end-to-end replay is the follow-up named in Progress.
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — the scanner records the replaced value.** After one cycle over a file carrying a non-empty, single-line, non-UUID `task_identifier`, the written file contains exactly one `task_identifier_previous` key that round-trips to the original string. — evidence: Ginkgo `DescribeTable` in `pkg/scanner/` over two rows — `task_identifier: "501"` (spec 008 AC2 row 13) and `task_identifier: my-slug` (the live incident shape). Per row, on the written bytes: `grep -c '^task_identifier_previous:'` returns `1`; `yaml.Unmarshal` of the frontmatter yields `task_identifier_previous` equal to the original value; `repairConverges` returns true (the spec-009 guard still passes).
+- [ ] **AC1 — the scanner records the replaced value.** After one cycle over a file carrying a non-blank, single-line, non-UUID `task_identifier`, the written file contains exactly one `task_identifier_previous` key that round-trips to the original string. — evidence: Ginkgo `DescribeTable` in `pkg/scanner/` over two rows — `task_identifier: "501"` (spec 008 AC2 row 13, numeric-looking and therefore a quoting case) and `task_identifier: my-slug` (the live incident shape). Per row, on the written bytes: `grep -c '^task_identifier_previous:'` returns `1`; `yaml.Unmarshal` of the frontmatter yields `task_identifier_previous` equal to the original value; `repairConverges` returns true (the spec-009 guard still passes).
 - [ ] **AC2 — the walk resolves the replaced identifier.** `FindTaskFilePath` returns the file for the *old* identifier when that identifier appears only as `task_identifier_previous`. — evidence: a unit test over a task dir holding one file with `task_identifier: <uuid>`, `task_identifier_previous: my-slug`, `target_vault: personal`; `FindTaskFilePath(ctx, …, "my-slug")` returns that path; a `WriteResult` for a task carrying `my-slug` increments `ResultsWrittenTotal{outcome="success"}` and leaves both `not_found` and `unowned` unchanged.
-- [ ] **AC3 — no alias for values that were never in flight (negative).** — evidence: over spec 008's AC2 rows 1-5, 7, 8-12, 14-16 (non-string shapes, the empty string, the whitespace-only string, the block scalar, and the quoted-key integer rows) plus the key-absent fixture, `grep -c '^task_identifier_previous:'` on the written bytes returns `0` for every row; and `grep -c 'replacing invalid task_identifier of type'` over the captured log for rows 1-4 and 8-12 equals `9`.
+- [ ] **AC3 — no alias for values that were never in flight (negative).** — evidence: over spec 008's AC2 rows 1-12 and 14-16 (every row except the parity row 13) plus the key-absent fixture, `grep -c '^task_identifier_previous:'` on the written bytes returns `0` for every row; and `grep -c 'replacing invalid task_identifier of type'` over the captured log for rows 1-4 and 8-11 (the non-string shapes — row 12 is a block scalar, a Go `string`, and logs `replacing non-UUID task_identifier` instead) equals `8`.
 - [ ] **AC4 — the duplicate branch writes no alias.** A file whose `task_identifier` is a valid UUID that duplicates another file's is repaired without an alias. — evidence: the duplicate fixture's written bytes have `grep -c '^task_identifier_previous:'` returning `0`; the existing duplicate-repair log substring is unchanged.
-- [ ] **AC5 — spec 008's assertions pass unmodified.** — evidence: every existing spec-008 test passes with no edit, including the five-cycle write-count assertions (`== 1`), the byte-exact key-absent assertion (AC3), the byte-exact frontmatter-preservation assertion (AC5b), and the source-structure parity test. **AC5b is unaffected by construction**: its fixture's identifier is the unquoted integer `501`, which AC3 excludes from aliasing, so its written bytes gain no `task_identifier_previous` line. No spec-008 assertion is edited by this change.
-- [ ] **AC6 — a repeated repair leaves exactly one alias.** Two successive repairs of one file leave one `task_identifier_previous` key, holding the most recent predecessor. — evidence: a five-cycle fixture that rewrites the identifier twice ends with `grep -c '^task_identifier_previous:'` returning `1`.
+- [ ] **AC5 — spec 008's assertions pass unmodified.** — evidence: every existing spec-008 test passes with no edit, including the five-cycle write-count assertions (`== 1`), the byte-exact key-absent assertion (AC3), the byte-exact frontmatter-preservation assertion (AC5b), and the source-structure parity test. **AC5b is unaffected by construction**: its fixture (`pkg/scanner/vault_scanner_internal_test.go`, the exact-byte assertion) uses the unquoted integer `501`, which AC3 row 1 excludes from aliasing, so its written bytes gain no `task_identifier_previous` line. No spec-008 assertion is edited by this change.
+- [ ] **AC6 — a repeated repair leaves exactly one alias.** Two successive repairs of one file leave one `task_identifier_previous` key, holding the most recent predecessor. — evidence: a fixture written with `task_identifier: slug-a`, cycled, then overwritten on disk with `task_identifier: slug-b` and cycled again; the final bytes have `grep -c '^task_identifier_previous:'` returning `1` and the value `slug-b`.
 - [ ] **AC7 — a second file claiming the identifier is an error, not a preference.** An identifier present as `task_identifier` on one file and as `task_identifier_previous` on another makes the lookup fail. — evidence: `FindTaskFilePath` returns an error naming both paths; `WriteResult` returns that error and the write double records zero calls (no metric increment is asserted — the code does not increment one on this path, and this change adds none).
-- [ ] **AC8 — `make precommit` exits 0** at repo root.
-- [ ] **AC9 — CHANGELOG entry under `## Unreleased`.** — evidence: `## Unreleased` is created at the top (the file's first heading today is `## v0.26.1`); `awk '/^## v/{exit} /task_identifier_previous/{print}' CHANGELOG.md` prints the bullet, so it is positioned inside `## Unreleased`; `grep -c '^## Unreleased$' CHANGELOG.md` returns `1`.
-- [ ] **AC10 — the design doc records the amended address rule.** — evidence: `grep -n 'task_identifier_previous' docs/controller-design.md` returns a line stating that an identifier, or its recorded predecessor, resolves to the file.
-- [ ] **Post-Deploy (Rung-3):** the alias is written and an in-flight result lands on nuke **prod**, the only stage with the repair path enabled.
+- [ ] **AC8 — an alias match is never recorded in the index.** — evidence: after `FindTaskFilePath(ctx, …, "my-slug")` resolves via `task_identifier_previous`, the resolver double's `Record` call count for `my-slug` is `0`.
+- [ ] **AC9 — `make precommit` exits 0** at repo root.
+- [ ] **AC10 — CHANGELOG entry under `## Unreleased`.** — evidence: `## Unreleased` is created at the top (the file's first heading today is `## v0.26.1`); `awk '/^## v/{exit} /task_identifier_previous/{print}' CHANGELOG.md` prints the bullet, so it is positioned inside `## Unreleased`; `grep -c '^## Unreleased$' CHANGELOG.md` returns `1`.
+- [ ] **AC11 — the design doc records the amended address rule.** — evidence: `grep -n 'task_identifier_previous' docs/controller-design.md` returns a line stating that an identifier, or its recorded predecessor, resolves to the file.
+- [ ] **Post-Deploy (Rung-3):** the alias is written on nuke **prod**, the only stage with the repair path enabled.
   - `deploy_check:` `kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.spec.containers[0].image}'`
-  - `deploy_target:` `v<the tag released by this change>`
-  - Probe: in the vault worktree create `25 Tasks/_test-probe-remint-<ts>.md` with `page_type: task`, `status: in_progress`, `assignee: ""`, `target_vault: personal`, and the slug `task_identifier: probe-<ts>`; commit and push. Wait three poll cycles (~180 s). Then `git pull` **before** any grep, and capture: `grep -c '^task_identifier_previous: probe-<ts>$'` returns `1`, the file's `task_identifier` is a UUID, and `kubectlnukeprod -n prod logs agent-task-controller-personal-0 --since=10m | grep -c 'not found for identifier probe-<ts>'` returns `0`. Only then remove the probe file, commit and push.
-  - Abort condition: if the alias line is absent or the `not_found` count is non-zero, the fix did not land — delete the probe file and mark this AC failed. Do not leave the probe running.
+  - `deploy_target:` `v0.27.0` — a **literal**, edited by the verifying operator to the tag this change releases. Never a command substitution.
+  - Probe: in the vault worktree create `25 Tasks/_test-probe-remint-<ts>.md` with `page_type: task`, `status: in_progress`, `assignee: ""`, `target_vault: personal`, and the slug `task_identifier: probe-<ts>`; commit and push. Wait 180 s (prod is event-driven, `pollInterval: "0s"` — there is no poll cycle to count). Then `git pull` **before** any grep, and capture: the frontmatter parses and carries a valid UUID under `task_identifier` **and** `task_identifier_previous` equal to `probe-<ts>` (assert via `yaml.Unmarshal`, not a line grep — the value may be quoted). Only then remove the probe file, commit and push.
+  - Scope note: this AC proves the **write** half on the deployed binary. The resolution half is proven by AC2 at unit level; a live end-to-end replay needs a job spawned under a slug, which this AC deliberately does not buy.
+  - Abort condition: if the alias key is absent or `task_identifier` is not a UUID, the fix did not land — delete the probe file and mark this AC failed. Do not leave the probe running.
 
-**Scenario coverage: NO new scenario.** AC1-AC7 reach every branch of the change through the existing in-package harness. The deployed path is covered by the Rung-3 AC.
+**Scenario coverage: NO new scenario.** AC1-AC8 reach every branch of the change through the existing in-package harness. The deployed path is covered by the Rung-3 AC.
 
 ## Verification
 
@@ -80,7 +83,7 @@ An agent result always lands on the task that produced it, even when the scanner
 ```
 make precommit
 go test -v ./pkg/scanner/... ./pkg/result/...
-grep -n 'task_identifier_previous' pkg/scanner/vault_scanner.go pkg/result/result_writer.go
+grep -rn 'task_identifier_previous' pkg/
 grep -n 'task_identifier_previous' CHANGELOG.md docs/controller-design.md
 ```
 
@@ -89,7 +92,17 @@ grep -n 'task_identifier_previous' CHANGELOG.md docs/controller-design.md
 ```
 # This repo is STANDALONE (split out of bborbe/agent) and uses the mirrored-semver
 # deploy model. Never run `make buca` here.
+
+# 1. Cut the release tag by hand (autoRelease is false), then publish the image —
+#    ci.yml has no docker step, so the tag alone ships nothing.
 git checkout <tag> && make build && make upload
+
+# 2. Bump the image tag in FIVE places in nuke/agent/: the MIRROR_IMAGES entry in
+#    Makefile plus the four controllers[].image.tag entries (openclaw + personal,
+#    values-dev.yaml AND values-prod.yaml). Confirm:
+grep -rn 'v<old>' Makefile values-*.yaml   # must return nothing
+
+# 3. Apply. `make apply` alone redeploys the OLD tag — step 2 is what makes it new.
 cd ~/Documents/workspaces/nuke/agent && BRANCH=prod make apply
 kubectlnukeprod -n prod rollout status sts/agent-task-controller-personal
 kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.spec.containers[0].image}'
@@ -99,11 +112,11 @@ kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.
 
 ## Desired Behavior
 
-1. When the scanner replaces a `task_identifier` that is a non-empty, single-line string and not a valid UUID, it writes the replaced value into the same frontmatter as `task_identifier_previous`, in the same single write as the new UUID.
-2. The alias value is written as a YAML scalar that round-trips to the exact original string — quoted when the value is not a safe plain scalar — so a value containing `#`, `: `, or leading/trailing spaces survives unchanged and `repairConverges` still accepts the write.
+1. When the scanner replaces a `task_identifier` that is a string, non-blank after trimming, single-line, and not a valid UUID, it writes the replaced value into the same frontmatter as `task_identifier_previous`, in the same single write as the new UUID.
+2. The alias value is written as a YAML scalar that round-trips to the exact original string — quoted when the value is not a safe plain scalar, including numeric-looking strings such as `501`, so it does not round-trip as an integer — so a value containing `#`, `: `, or leading/trailing spaces survives unchanged and `repairConverges` still accepts the write.
 3. A file carries at most one `task_identifier_previous` key. A second repair replaces its value; it never appends a second key.
 4. The replacement itself is unchanged from spec 008: exactly one `task_identifier` key, a valid UUID, one write, no repeat on the next cycle.
-5. No alias is written when the replaced value was not a non-empty single-line string, when the key was absent, or when the repair was the duplicate branch's (a valid UUID) — a duplicated UUID is already indexed, so an alias would let the index resolve it to the wrong file before the walk's duplicate check could run.
+5. No alias is written when the replaced value was not a non-blank single-line string, when the key was absent, or when the repair was the duplicate branch's (a valid UUID) — a duplicated UUID is already indexed, so an alias would let the index resolve it to the wrong file before the walk's duplicate check could run.
 6. `FindTaskFilePath` accepts a file as a match when the requested identifier equals either `task_identifier` or a non-empty `task_identifier_previous`.
 7. An alias match is never recorded in the identifier→path index: the index stays keyed on the current `task_identifier` only, and `resolveFromIndex`'s existing "no longer carries" guard keeps rejecting an alias hit, so recording one would only add a dead entry and a full walk per lookup.
 8. Two files resolving the same identifier — one by `task_identifier`, one by `task_identifier_previous` — is an error naming both paths, and nothing is written.
@@ -116,7 +129,8 @@ kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.
 - **The alias is never written on the key-absent path** — there is no replaced value to record, and spec 008 AC3 asserts that path's bytes exactly.
 - **The duplicate branch writes no alias** — a valid UUID is indexed, so an alias there would resolve through `resolveFromIndex` to the other file and bypass the duplicate guard (`pkg/result/result_writer.go:400`).
 - **No bulk repair of existing files.** 47 active tasks carry a non-UUID identifier today; the fix makes them resolvable, not rewritten.
-- **`typedTaskFields` allowlist (vault-api) is not touched.** The scanner writes files through git-rest and the controller reads frontmatter directly, so a new key crosses no command API.
+- **`typedTaskFields` allowlist (vault-api) is not touched.** The scanner writes files through git-rest and the controller reads frontmatter directly, so a new key crosses no command API. Verified: no `DisallowUnknownFields` in this repo's parsing, and `vault-cli`'s lint inspects `task_identifier` only, so the new key trips no existing rule.
+- **The alias helper's location is not frozen** — it may live in `pkg/scanner/task_identifier.go` beside `InjectTaskIdentifier` rather than in `vault_scanner.go`.
 
 ## Design Decisions
 
@@ -129,12 +143,12 @@ kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.
 
 | Trigger | Expected behavior | Recovery | Detection | Reversibility |
 |---|---|---|---|---|
-| A result arrives for an identifier replaced twice (slug → uuid A → uuid B) | The alias holds only `uuid A` (the most recent predecessor), so the older slug does not resolve | Operator re-files the task under its current identifier | `task file not found … skipping` naming the slug | Reversible — the alias is one frontmatter line |
+| A result arrives for an identifier replaced twice (slug → uuid A → uuid B) | The alias holds only `uuid A` (the most recent predecessor), so the older slug does not resolve | Operator edits the file's `task_identifier_previous` back to the missing slug, confirms `grep -c '^task_identifier_previous:'` returns `1`, and re-publishes the result | `task file not found … skipping` naming the slug | Reversible — the alias is one frontmatter line |
 | A file legitimately carries `task_identifier_previous` from an earlier repair, and a new task is filed with that same value | Both files resolve the identifier → duplicate error, nothing written | Operator deletes the `task_identifier_previous` line, confirms `grep -c '^task_identifier_previous:'` returns `0`, then re-runs the result | `duplicate task_identifier … in <a> and <b>` | Reversible |
 | The alias value contains characters that make it an unsafe plain YAML scalar | The value is quoted so it round-trips; `repairConverges` still accepts the write | None needed | AC1's `yaml.Unmarshal` equality assertion | Reversible |
-| Two controllers (`openclaw`, `personal`) run different versions during a rollout, and the older one repairs a file the newer one would have aliased | The older controller writes no alias; that file's in-flight result still misses until the rollout completes | Complete the rollout; no data is lost that the old version did not already lose | The repair log line carries no `task_identifier_previous` in the written bytes | Reversible |
+| Two controllers (`openclaw`, `personal`) run different versions during a rollout, and the older one repairs a file the newer one would have aliased | The older controller writes no alias; that file's in-flight result still misses until the rollout completes | Complete the rollout; no data is lost that the old version did not already lose | The written bytes carry no `task_identifier_previous` | Reversible |
 | A malformed file is repaired while a result is in flight and the alias write fails | `injectAndStore` returns the write error; nothing is committed; the next cycle retries | Unchanged from today — the next cycle retries | `failed to write %s` warn log | Reversible — nothing was committed |
-| YAML drift introduces a value shape not in the tables | Routed by the same validity predicate; the alias is written only for non-empty single-line strings, so an unknown shape takes the no-alias path | None needed | Warn log names the Go type | Reversible |
+| YAML drift introduces a value shape not in the tables | Routed by the same validity predicate; the alias is written only for non-blank single-line strings, so an unknown shape takes the no-alias path | None needed | Warn log names the Go type | Reversible |
 
 ## Security / Abuse
 
@@ -144,10 +158,10 @@ Frontmatter is untrusted input: any agent or operator can author a task file. Th
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | Write the alias on the non-UUID repair path and match it in the walk, with tests, doc and CHANGELOG, and `make precommit` | 1-8 | AC1-AC10 | — |
+| 1 | Write the alias on the non-UUID repair path and match it in the walk, with tests, doc and CHANGELOG, and `make precommit` | 1-8 | AC1-AC11 | — |
 
 Rationale: a single prompt. The alias is inert without the walk match and the walk match is unreachable without the alias, so splitting them would leave a half-landed state whose ACs cannot pass until both exist. One package boundary each side, both small, and the regression lock (AC5) is only meaningful against the combined diff. The Rung-3 AC is operator-executed after the prod deploy and is not a prompt.
 
 ## Do-Nothing Option
 
-Not acceptable, but the cost is bounded and worth naming. The loss is silent and per-task: each occurrence parks one task in `human_review` with no result and produces an alert that names only an identifier. The operator's recovery is to read the pod log, discover the identifier mismatch by hand, and re-file the task — roughly the hours this task's Impact records. It does not corrupt the vault and it does not repeat unboundedly for one task, which is why this is a fix and not an incident.
+Not acceptable, but the cost is bounded and worth naming. The loss is silent and per-task: each occurrence parks one task in `human_review` with no result and produces an alert that names only an identifier. The operator's recovery is to read the pod log, discover the identifier mismatch by hand, and re-file the task — roughly the hours the 2026-11-03 incident cost. It does not corrupt the vault and it does not repeat unboundedly for one task, which is why this is a fix and not an incident.
