@@ -43,7 +43,7 @@ func TestCreateVaultScannerPassesVaultNameAndMetricsInterval(t *testing.T) {
 	if gotMetricsInterval != metricsInterval {
 		t.Errorf("metrics interval = %v, want %v", gotMetricsInterval, metricsInterval)
 	}
-	if metricsInterval != 60*time.Second {
-		t.Errorf("metricsInterval = %v, want 60s", metricsInterval)
+	if metricsInterval != 5*time.Minute {
+		t.Errorf("metricsInterval = %v, want 5m", metricsInterval)
 	}
 }
