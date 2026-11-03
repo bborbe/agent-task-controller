@@ -475,6 +475,78 @@ var _ = Describe("VaultScanner", func() {
 		)
 	})
 
+	Describe("parked phase transition → view convergence", func() {
+		It(
+			"publishes the human_review transition that the park writes while clearing the assignee",
+			func() {
+				taskID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+				absPath := filepath.Join(tmpDir, taskDir, "parked-transition.md")
+				// Baseline: named assignee, published normally.
+				planning := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: github-dark-factory-agent\n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(planning), 0600)).To(Succeed())
+
+				s.RunCycle(ctx, results)
+				var r1 scanner.ScanResult
+				Expect(results).To(Receive(&r1))
+				Expect(r1.Changed).To(HaveLen(1))
+
+				// The park moves the phase and clears the assignee in one write
+				// (result.ClearAssigneeIfHumanReview). On the unfixed scanner this
+				// cycle published nothing, so the view kept phase=planning forever
+				// and view_divergence reported the task on every pass.
+				parked := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: human_review\nassignee: \n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(parked), 0600)).To(Succeed())
+
+				s.RunCycle(ctx, results)
+				var r2 scanner.ScanResult
+				Expect(results).To(Receive(&r2))
+				Expect(r2.Changed).To(HaveLen(1))
+				published := r2.Changed[0].Frontmatter.Phase()
+				Expect(published).NotTo(BeNil())
+				Expect(string(*published)).To(Equal("human_review"))
+
+				// Publishing is not spawning: nothing is written back to the vault.
+				written, _ := os.ReadFile(absPath) // #nosec G304 -- test-only path
+				Expect(string(written)).To(Equal(parked))
+
+				// A record already parked at this phase publishes nothing, so a
+				// full-vault scan cannot flood the event topic with parked records.
+				Expect(os.WriteFile(absPath, []byte(parked+"\n"), 0600)).To(Succeed())
+				s.RunCycle(ctx, results)
+				var r3 scanner.ScanResult
+				Expect(results).To(Receive(&r3))
+				Expect(r3.Changed).To(BeEmpty())
+			},
+		)
+
+		It(
+			"publishes the inverse transition when a parked record returns to planning",
+			func() {
+				taskID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+				absPath := filepath.Join(tmpDir, taskDir, "parked-inverse.md")
+				parked := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: human_review\nassignee: \n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(parked), 0600)).To(Succeed())
+
+				// First scan: parked, no previous phase recorded — publish nothing.
+				s.RunCycle(ctx, results)
+				var r1 scanner.ScanResult
+				Expect(results).To(Receive(&r1))
+				Expect(r1.Changed).To(BeEmpty())
+
+				replan := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: \n---\n# body\n"
+				Expect(os.WriteFile(absPath, []byte(replan), 0600)).To(Succeed())
+
+				s.RunCycle(ctx, results)
+				var r2 scanner.ScanResult
+				Expect(results).To(Receive(&r2))
+				Expect(r2.Changed).To(HaveLen(1))
+				published := r2.Changed[0].Frontmatter.Phase()
+				Expect(published).NotTo(BeNil())
+				Expect(string(*published)).To(Equal("planning"))
+			},
+		)
+	})
+
 	Describe("processFile edge cases", func() {
 		It("processes file with duplicate task_identifier (last wins)", func() {
 			content := "---\ntask_identifier: 11111111-1111-4111-8111-111111111121\nstatus: todo\nassignee: claude\ntask_identifier: 22222222-2222-4222-8222-222222222221\n---\n# Dup task"
