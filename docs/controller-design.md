@@ -1,6 +1,6 @@
 # Controller Design (task/controller)
 
-The controller is the single writer to the vault git repo. It has two responsibilities: detecting task changes in git and publishing them to Kafka, and consuming commands from Kafka and writing results back to git. It has no K8s API access.
+The controller is the only service that decides what a task file says. It has two responsibilities: detecting task changes in git and publishing them to Kafka, and consuming commands from Kafka and writing results back. It has no K8s API access and no local git clone — every read and write goes over HTTP, either to git-rest directly or to vault-api's typed task API, which writes through that same git-rest. `## Vault Writes via git-rest` states both paths and what makes them converge.
 
 ## Inputs / Outputs
 
@@ -48,7 +48,8 @@ On agent-task-v1-request (operation: "update"):
   │     └── if agent emits needs_input → clear assignee: "" (phase unchanged; spec-039 supersedes spec-021 for this row)
   ├── sanitize content (escape bare --- lines to prevent YAML corruption)
   ├── write frontmatter + content to file
-  ├── git add + commit + push
+  ├── POST the whole file to git-rest, which commits and pushes — the controller
+  │   holds no clone, so it never runs git add/commit/push itself
   └── CQRS framework publishes success/failure result to agent-task-v1-result
 ```
 
@@ -192,11 +193,11 @@ and prompt 075 for the same reorder pattern applied to `applyTriggerCap` on
 
 ## Empty-to-Named Reset (spec 021)
 
-When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` back to the file atomically and queues a git commit. The write goes through `AtomicReadModifyWriteAndCommitPush`: its modify closure re-reads the live file and changes only the `trigger_count` field, so a concurrent write to any other field survives. (The reset no longer touches `retry_count`, which is retired — a legacy record's counter is left exactly as the file carries it.) (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
+When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` back to the file atomically and queues a commit — through git-rest, like every other write. The write goes through `AtomicReadModifyWriteAndCommitPush`: its modify closure re-reads the live file and changes only the `trigger_count` field, so a concurrent write to any other field survives. (The reset no longer touches `retry_count`, which is retired — a legacy record's counter is left exactly as the file carries it.) (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
 
 ## Typed Frontmatter Commands
 
-In addition to the `"update"` operation (full result write), the controller handles three frontmatter operations on `agent-task-v1-request`. Each is guarded by `pkg/routing.ShouldProcessFrontmatterCommand` — a non-empty `TargetVault` differing from `VAULT_NAME` is skipped before the task read (one `glog.V(2)` line, no metric increment, no write, error wrapping `cdb.ErrCommandObjectSkipped`); an empty `TargetVault` falls through (legacy unstamped commands are attempted by every controller, the owner heals, the non-owner drops). The `increment-frontmatter` and `update-frontmatter` executors address the task by `task_identifier` through the typed vault API and write with a field-level `PATCH`, so they hold no clone, resolve no path, and cannot rewrite a frontmatter key they did not name. Each of them heals `target_vault` when the key is absent (stamping `VAULT_NAME`, never overriding an existing value).
+In addition to the `"update"` operation (full result write), the controller handles three frontmatter operations on `agent-task-v1-request`. Each is guarded by `pkg/routing.ShouldProcessFrontmatterCommand` — a non-empty `TargetVault` differing from `VAULT_NAME` is skipped before the task read (one `glog.V(2)` line, no metric increment, no write, error wrapping `cdb.ErrCommandObjectSkipped`); an empty `TargetVault` falls through (legacy unstamped commands are attempted by every controller, the owner heals, the non-owner drops). The `increment-frontmatter` and `update-frontmatter` executors address the task by `task_identifier` through the typed vault API and write with a field-level `PATCH`, so they hold no clone, resolve no path, and cannot rewrite a frontmatter key they did not name. The resulting commit is vault-api's, made against git-rest — see `## Vault Writes via git-rest` for both routes and why they converge. Each of them heals `target_vault` when the key is absent (stamping `VAULT_NAME`, never overriding an existing value).
 
 ### `"increment-frontmatter"` (IncrementFrontmatterExecutor)
 
@@ -214,7 +215,8 @@ On agent-task-v1-request (operation: "increment-frontmatter"):
   │     ├── cap escalation: if Field == "trigger_count" AND newVal >= max_triggers
   │     │     └── add assignee: "" to the same patch (phase unchanged; spec-039 supersedes spec-021 for this row)
   │     └── heal-on-write: if target_vault absent → add target_vault: VAULT_NAME (never overrides an existing value)
-  ├── PatchTask(task.ID, patch) — one field-level request, no path, no clone, no commit
+  ├── PatchTask(task.ID, patch) — one field-level request, no path, no clone, no commit by
+  │   the controller (vault-api renders and writes it to git-rest, which commits)
   └── increment FrontmatterCommandsTotal{operation, outcome}
 ```
 
@@ -262,8 +264,9 @@ On agent-task-v1-request (operation: "complete-task"):
   │     ├── set status: completed, phase: done, completed_date/processed_at: now, recovery_sha (when provided)
   │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
   │     ├── append ## Resolution body section (verdict, recovery SHA, closed-at)
-  │     ├── write updated file (under mutex)
-  │     └── git commit + push (under mutex)
+  │     ├── write updated file (under mutex) — a POST to git-rest, which commits and
+  │     │   pushes; the controller holds no clone and runs no git command
+  │     └── (the commit is git-rest's, still under the mutex the closure holds)
   └── increment FrontmatterCommandsTotal{operation, outcome}
 ```
 
@@ -271,17 +274,44 @@ The complete executor has no subsection of its own elsewhere in this document; t
 
 ## Vault Writes via git-rest
 
-The controller holds no local git clone. All vault file operations flow through the
-`vault-obsidian-openclaw` git-rest StatefulSet via HTTP:
+The controller holds no local git clone. **Every** vault file operation — read or write,
+whichever executor issues it — ends at the vault's git-rest StatefulSet (`vault-obsidian-<vault>`)
+over HTTP. There are two routes to it, and only one of them is direct:
 
-| Operation | HTTP call | Who commits |
-|-----------|-----------|-------------|
-| Read file | `GET /api/v1/files/{relPath}` | N/A |
-| Write file | `POST /api/v1/files/{relPath}` | git-rest (auto-commit) |
-| Delete file | `DELETE /api/v1/files/{relPath}` | git-rest (auto-commit) |
-| List files | `GET /api/v1/files/?glob={pattern}` | N/A |
+| Route | Used by | HTTP call | Who commits |
+|-------|---------|-----------|-------------|
+| Direct to git-rest | scanner reads, result write-back, `complete-task`, empty-to-named reset | `GET`/`POST`/`DELETE /api/v1/files/{relPath}` | git-rest (auto-commit) |
+| Through vault-api | `update-frontmatter`, `increment-frontmatter` | `GET /api/v1/tasks/{id}`, `PATCH /api/v1/tasks/{id}`, `PUT /api/v1/tasks/{id}/content` | vault-api writes the rendered file to git-rest, so **git-rest** still commits |
 
-git-rest ensures one commit per write. The controller's `/readiness` endpoint reflects
+git-rest ensures one commit per write, so **the controller never runs `git add`, `git commit`
+or `git push`** — it has nothing to commit from. The typed route's `PATCH` is described
+elsewhere in this document as "no path, no clone, no commit" and that is exact: the
+controller supplies field names and values, and vault-api renders, writes and commits.
+A commit still results; it is simply not the controller's.
+
+**Which copy serves reads.** Two services hold a copy of the vault, and both are clones of
+the same repository — neither is an independent source of truth:
+
+- **git-rest** — the scanner reads this one (`GET /api/v1/files/`), and it is where every
+  write lands and is committed.
+- **vault-api** — the typed executors read this one (`GET /api/v1/tasks/{id}`). vault-api
+  pulls on its own schedule and, when a pull diverges, resolves the file and writes the
+  result back **through git-rest** (`ResolveDivergedPull` → `FileWriter.WriteFile`), so a
+  resolved merge lands exactly like an API edit.
+
+The controller itself holds neither.
+
+**What makes the two routes converge.** Every write, by either route, ends as a git-rest
+commit against the shared repository, and git-rest is the only component that commits.
+From there two independent synchronisations run, and both are bounded by pull cadence
+rather than by anything the controller schedules: git-rest flushes and pushes its clone,
+and vault-api pulls to refresh its own. The scanner's change detection hashes what it reads
+each cycle, so a committed write becomes a `Changed` entry on the next scan after it
+reaches git-rest. Divergence between the two copies is therefore possible — it is what
+`ResolveDivergedPull` exists to handle — but it is a delay resolved by a pull and a merge,
+not a state the controller has to reconcile.
+
+The controller's `/readiness` endpoint reflects
 git-rest readiness: if git-rest returns 503 (push stuck), the controller reports 503
 and the Kafka consumer goroutine blocks inside the write retry loop until git-rest
 recovers. Kafka offsets are not advanced during this block.
