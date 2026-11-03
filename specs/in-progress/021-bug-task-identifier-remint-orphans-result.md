@@ -1,6 +1,7 @@
 ---
-status: draft
-kind: bug
+status: approved
+approved: "2026-11-03T20:35:44Z"
+branch: dark-factory/bug-task-identifier-remint-orphans-result
 ---
 
 ## Summary
