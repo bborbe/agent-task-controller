@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.2
 
 - perf: publish the task-age series and the open-task census from one pass over the task directory, and recompute both every 5 minutes instead of every 60 seconds — the two instruments each listed `TASK_DIR/*.md` and then fetched every file over the vault API, which on the openclaw vault's ~22,000 task files cost ~730 `GET /api/v1/files/{path}` per second; the published values are unchanged, only the number of reads
 
