@@ -8,7 +8,6 @@ import (
 	"context"
 
 	"github.com/golang/glog"
-	"gopkg.in/yaml.v3"
 )
 
 // openTaskPair is the label triple, minus the vault, one census sample counts.
@@ -56,6 +55,13 @@ func (v *vaultScanner) publishOpenTaskCensus(ctx context.Context, paths []string
 		}
 		counts[pair]++
 	}
+	v.publishCensusCounts(counts)
+}
+
+// publishCensusCounts writes the accumulated census. Split out so the single-pass
+// recompute (recomputeVaultMetrics) publishes exactly this board from facts it has
+// already parsed, instead of reading every file a second time.
+func (v *vaultScanner) publishCensusCounts(counts map[openTaskPair]int) {
 	census := v.metrics.OpenTasks()
 	for pair, count := range counts {
 		census.WithLabelValues(v.vaultName, pair.phase, pair.taskType).Set(float64(count))
@@ -91,18 +97,16 @@ func (v *vaultScanner) openTaskPairFromFile(
 	if err != nil {
 		return openTaskPair{}, false
 	}
-	fmYAML, err := extractFrontmatter(ctx, content)
-	if err != nil {
+	fmMap, ok := parseFrontmatterMap(ctx, content)
+	if !ok {
 		return openTaskPair{}, false
 	}
-	deduped, _, err := DeduplicateFrontmatter(ctx, fmYAML)
-	if err != nil {
-		return openTaskPair{}, false
-	}
-	var fmMap map[string]interface{}
-	if err := yaml.Unmarshal([]byte(deduped), &fmMap); err != nil {
-		return openTaskPair{}, false
-	}
+	return openTaskPairFromMap(fmMap)
+}
+
+// openTaskPairFromMap classifies an already-parsed frontmatter map. Pure — no I/O
+// — so the single-pass recompute can share one parse between both instruments.
+func openTaskPairFromMap(fmMap map[string]interface{}) (openTaskPair, bool) {
 	status := stringField(fmMap, "status")
 	if status == "completed" || status == "aborted" {
 		return openTaskPair{}, false

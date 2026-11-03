@@ -242,11 +242,11 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 	if v.metricsInterval > 0 {
 		// One recompute before the loop, so a fresh pod publishes both the age and
 		// the open-task census series immediately instead of reporting "no data"
-		// for the first interval. The two are siblings, not one folded pass: they
-		// have different definitions and different failure modes, and an early
-		// return in one must not blank the other.
-		v.recomputeTaskAgeMetrics(ctx)
-		v.recomputeOpenTaskCensus(ctx)
+		// for the first interval. One pass publishes both: they are still separate
+		// instruments with separate definitions and separate skip rules, but they
+		// read the same file facts, so a second listing and a second read of every
+		// task file bought nothing and cost a full extra pass over the vault.
+		v.recomputeVaultMetrics(ctx)
 		metricsTicker := time.NewTicker(v.metricsInterval)
 		defer metricsTicker.Stop()
 		metricsTick = metricsTicker.C
@@ -260,8 +260,7 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 		case <-v.trigger:
 			v.RunCycle(ctx, results)
 		case <-metricsTick:
-			v.recomputeTaskAgeMetrics(ctx)
-			v.recomputeOpenTaskCensus(ctx)
+			v.recomputeVaultMetrics(ctx)
 		}
 	}
 }

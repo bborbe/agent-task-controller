@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
@@ -85,6 +84,17 @@ func (v *vaultScanner) publishTaskAgeMetrics(
 			}
 		}
 	}
+	v.publishTaskAgeCounts(counts, oldest, vaultName)
+}
+
+// publishTaskAgeCounts writes the accumulated task-age gauges. Split out so the
+// single-pass recompute (recomputeVaultMetrics) publishes exactly these series
+// from facts it has already parsed, instead of reading every file a second time.
+func (v *vaultScanner) publishTaskAgeCounts(
+	counts map[metrics.TaskAgeBucket]int,
+	oldest time.Duration,
+	vaultName string,
+) {
 	v.metrics.TaskOldestAgeSeconds(vaultName).Set(float64(oldest / time.Second))
 	for _, bucket := range metrics.AvailableTaskAgeBuckets {
 		v.metrics.TaskAgeBucketTasks(vaultName, bucket).Set(float64(counts[bucket]))
@@ -102,18 +112,19 @@ func (v *vaultScanner) taskAgeFromFile(
 	if err != nil {
 		return 0, taskAgeSkipped
 	}
-	fmYAML, err := extractFrontmatter(ctx, content)
-	if err != nil {
+	fmMap, ok := parseFrontmatterMap(ctx, content)
+	if !ok {
 		return 0, taskAgeSkipped
 	}
-	deduped, _, err := DeduplicateFrontmatter(ctx, fmYAML)
-	if err != nil {
-		return 0, taskAgeSkipped
-	}
-	var fmMap map[string]interface{}
-	if err := yaml.Unmarshal([]byte(deduped), &fmMap); err != nil {
-		return 0, taskAgeSkipped
-	}
+	return taskAgeFromMap(fmMap, now)
+}
+
+// taskAgeFromMap classifies an already-parsed frontmatter map. Pure — no I/O — so
+// the single-pass recompute can share one parse between both instruments.
+func taskAgeFromMap(
+	fmMap map[string]interface{},
+	now time.Time,
+) (age time.Duration, state taskAgeState) {
 	status := stringField(fmMap, "status")
 	if status == "completed" || status == "aborted" {
 		return 0, taskAgeTerminal
