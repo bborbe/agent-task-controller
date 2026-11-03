@@ -29,6 +29,8 @@ The result carries the slug `service-analysis-needs-input-probe-missing-path`. T
 
 Deterministic, unit-level: a `vaultScanner` with `autoInject=true` over a file whose frontmatter carries `task_identifier: my-slug` replaces it with a UUID on the first cycle. A `WriteResult` for `my-slug` afterwards finds no file.
 
+`dark-factory --version` is not applicable — this is a service defect in the controller binary, not a dark-factory pipeline defect.
+
 ## Expected vs Actual
 
 | | Expected | Actual |
@@ -43,19 +45,33 @@ Deterministic, unit-level: a `vaultScanner` with `autoInject=true` over a file w
 
 ## Goal
 
-An agent result always lands on the task that produced it, even when the scanner has since replaced that task's identifier. The replacement itself is unchanged: still one write, still exactly one `task_identifier` key, still a valid UUID (spec 008's contract holds byte-for-byte for every shape it enumerates).
+An agent result always lands on the task that produced it, even when the scanner has since replaced that task's identifier. The replacement itself is unchanged: still one write, still exactly one `task_identifier` key, still a valid UUID (spec 008's contract holds for every shape it enumerates).
+
+## Non-goals
+
+- Rewriting the 47 active task files that already carry a non-UUID identifier. The fix makes them resolvable; it does not re-mint them.
+- Preserving more than one predecessor. A second repair overwrites the alias, so only the most recent replaced value resolves.
+- Changing `WriteResult`'s retry/back-off, its `unowned` routing, or the `not_found` threshold.
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — the scanner records the replaced value.** After one cycle over a file carrying a string-shaped, non-empty, non-UUID `task_identifier`, the written file contains exactly one `task_identifier_previous` key whose value is the replaced identifier verbatim. — evidence: Ginkgo `DescribeTable` in `pkg/scanner/` over each string shape from spec 008's AC2 table (rows 5, 7, 13, 14, 15, 16); per row, `grep -c '^task_identifier_previous:'` on the written bytes returns `1` and the value equals the original.
-- [ ] **AC2 — the walk resolves the replaced identifier.** `FindTaskFilePath` returns the file for the *old* identifier when that identifier appears only as `task_identifier_previous`. — evidence: a unit test over a task dir holding one file with `task_identifier: <uuid>` and `task_identifier_previous: my-slug`; `FindTaskFilePath(ctx, …, "my-slug")` returns that path, and `WriteResult` for a task carrying `my-slug` increments `ResultsWrittenTotal{outcome="success"}` and leaves `not_found` unchanged.
-- [ ] **AC3 — no alias for shapes that were never in flight (negative).** — evidence: the key-absent path (spec 008 AC3) and every non-string shape (spec 008 AC2 rows 1-4, 8-12) write `grep -c '^task_identifier_previous:'` returning `0`; `grep -c 'replacing invalid task_identifier of type'` over the captured log is unchanged from master.
-- [ ] **AC4 — spec 008's contract is unbroken (regression lock).** — evidence: every existing spec-008 test passes unmodified, including the write-count assertions (`== 1` across five cycles), the byte-exact key-absent and frontmatter-preservation assertions (AC3, AC5b), and the source-structure parity test's `skipCount`/`counterCount` values updated in the same commit if the site count moved.
-- [ ] **AC5 — the two-key match cannot be satisfied by a stale entry.** An identifier present as `task_identifier_previous` on one file and as `task_identifier` on another is a duplicate, not a preference. — evidence: a unit test with two such files makes `FindTaskFilePath` return an error naming both paths, and `WriteResult` increments `ResultsWrittenTotal{outcome="error"}`, writing nothing.
-- [ ] **AC6 — `make precommit` exits 0** at repo root.
-- [ ] **AC7 — CHANGELOG entry under `## Unreleased`.** — evidence: `grep -n 'task_identifier_previous' CHANGELOG.md` returns a line between `## Unreleased` and the next `## ` heading; `grep -c '^## Unreleased$' CHANGELOG.md` returns `1`.
+- [ ] **AC1 — the scanner records the replaced value.** After one cycle over a file carrying a non-empty, single-line, non-UUID `task_identifier`, the written file contains exactly one `task_identifier_previous` key that round-trips to the original string. — evidence: Ginkgo `DescribeTable` in `pkg/scanner/` over two rows — `task_identifier: "501"` (spec 008 AC2 row 13) and `task_identifier: my-slug` (the live incident shape). Per row, on the written bytes: `grep -c '^task_identifier_previous:'` returns `1`; `yaml.Unmarshal` of the frontmatter yields `task_identifier_previous` equal to the original value; `repairConverges` returns true (the spec-009 guard still passes).
+- [ ] **AC2 — the walk resolves the replaced identifier.** `FindTaskFilePath` returns the file for the *old* identifier when that identifier appears only as `task_identifier_previous`. — evidence: a unit test over a task dir holding one file with `task_identifier: <uuid>`, `task_identifier_previous: my-slug`, `target_vault: personal`; `FindTaskFilePath(ctx, …, "my-slug")` returns that path; a `WriteResult` for a task carrying `my-slug` increments `ResultsWrittenTotal{outcome="success"}` and leaves both `not_found` and `unowned` unchanged.
+- [ ] **AC3 — no alias for values that were never in flight (negative).** — evidence: over spec 008's AC2 rows 1-5, 7, 8-12, 14-16 (non-string shapes, the empty string, the whitespace-only string, the block scalar, and the quoted-key integer rows) plus the key-absent fixture, `grep -c '^task_identifier_previous:'` on the written bytes returns `0` for every row; and `grep -c 'replacing invalid task_identifier of type'` over the captured log for rows 1-4 and 8-12 equals `9`.
+- [ ] **AC4 — the duplicate branch writes no alias.** A file whose `task_identifier` is a valid UUID that duplicates another file's is repaired without an alias. — evidence: the duplicate fixture's written bytes have `grep -c '^task_identifier_previous:'` returning `0`; the existing duplicate-repair log substring is unchanged.
+- [ ] **AC5 — spec 008's assertions pass unmodified.** — evidence: every existing spec-008 test passes with no edit, including the five-cycle write-count assertions (`== 1`), the byte-exact key-absent assertion (AC3), the byte-exact frontmatter-preservation assertion (AC5b), and the source-structure parity test. **AC5b is unaffected by construction**: its fixture's identifier is the unquoted integer `501`, which AC3 excludes from aliasing, so its written bytes gain no `task_identifier_previous` line. No spec-008 assertion is edited by this change.
+- [ ] **AC6 — a repeated repair leaves exactly one alias.** Two successive repairs of one file leave one `task_identifier_previous` key, holding the most recent predecessor. — evidence: a five-cycle fixture that rewrites the identifier twice ends with `grep -c '^task_identifier_previous:'` returning `1`.
+- [ ] **AC7 — a second file claiming the identifier is an error, not a preference.** An identifier present as `task_identifier` on one file and as `task_identifier_previous` on another makes the lookup fail. — evidence: `FindTaskFilePath` returns an error naming both paths; `WriteResult` returns that error and the write double records zero calls (no metric increment is asserted — the code does not increment one on this path, and this change adds none).
+- [ ] **AC8 — `make precommit` exits 0** at repo root.
+- [ ] **AC9 — CHANGELOG entry under `## Unreleased`.** — evidence: `## Unreleased` is created at the top (the file's first heading today is `## v0.26.1`); `awk '/^## v/{exit} /task_identifier_previous/{print}' CHANGELOG.md` prints the bullet, so it is positioned inside `## Unreleased`; `grep -c '^## Unreleased$' CHANGELOG.md` returns `1`.
+- [ ] **AC10 — the design doc records the amended address rule.** — evidence: `grep -n 'task_identifier_previous' docs/controller-design.md` returns a line stating that an identifier, or its recorded predecessor, resolves to the file.
+- [ ] **Post-Deploy (Rung-3):** the alias is written and an in-flight result lands on nuke **prod**, the only stage with the repair path enabled.
+  - `deploy_check:` `kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.spec.containers[0].image}'`
+  - `deploy_target:` `v<the tag released by this change>`
+  - Probe: in the vault worktree create `25 Tasks/_test-probe-remint-<ts>.md` with `page_type: task`, `status: in_progress`, `assignee: ""`, `target_vault: personal`, and the slug `task_identifier: probe-<ts>`; commit and push. Wait three poll cycles (~180 s). Then `git pull` **before** any grep, and capture: `grep -c '^task_identifier_previous: probe-<ts>$'` returns `1`, the file's `task_identifier` is a UUID, and `kubectlnukeprod -n prod logs agent-task-controller-personal-0 --since=10m | grep -c 'not found for identifier probe-<ts>'` returns `0`. Only then remove the probe file, commit and push.
+  - Abort condition: if the alias line is absent or the `not_found` count is non-zero, the fix did not land — delete the probe file and mark this AC failed. Do not leave the probe running.
 
-**Scenario coverage: NO new scenario.** AC1-AC5 reach every branch of the change through the existing in-package harness. The behaviour is internal to two packages and the deployed path cannot exercise it on dev (see Verification).
+**Scenario coverage: NO new scenario.** AC1-AC7 reach every branch of the change through the existing in-package harness. The deployed path is covered by the Rung-3 AC.
 
 ## Verification
 
@@ -65,7 +81,7 @@ An agent result always lands on the task that produced it, even when the scanner
 make precommit
 go test -v ./pkg/scanner/... ./pkg/result/...
 grep -n 'task_identifier_previous' pkg/scanner/vault_scanner.go pkg/result/result_writer.go
-grep -n 'task_identifier_previous' CHANGELOG.md
+grep -n 'task_identifier_previous' CHANGELOG.md docs/controller-design.md
 ```
 
 ### Operator-executable (runs on the host after PR merge)
@@ -74,52 +90,64 @@ grep -n 'task_identifier_previous' CHANGELOG.md
 # This repo is STANDALONE (split out of bborbe/agent) and uses the mirrored-semver
 # deploy model. Never run `make buca` here.
 git checkout <tag> && make build && make upload
-cd ~/Documents/workspaces/nuke/agent && BRANCH=dev make apply
-kubectlnukedev -n agent get pod agent-task-controller-personal-0 -o jsonpath='{.spec.containers[0].image}'
+cd ~/Documents/workspaces/nuke/agent && BRANCH=prod make apply
+kubectlnukeprod -n prod rollout status sts/agent-task-controller-personal
+kubectlnukeprod -n prod get pod agent-task-controller-personal-0 -o jsonpath='{.spec.containers[0].image}'
 ```
 
-⚠️ **A dev deploy cannot exercise this fix.** `AUTO_INJECT_TASK_IDENTIFIER=false` on nuke dev (verified live 2026-11-03 against the StatefulSet env), so the repair path never runs there and the alias is never written. The fix is inert on dev by construction. Live confirmation requires a prod deploy, which is a separate task — recorded as an open item rather than claimed here.
+⚠️ **A dev deploy cannot exercise this fix.** `AUTO_INJECT_TASK_IDENTIFIER=false` on nuke dev (verified live 2026-11-03 against the StatefulSet env), so the repair path never runs there and the alias is never written. The Rung-3 AC targets prod for that reason. The prod apply is operator-only (`hooks/deny-prod-deploy.sh` refuses it to an agent).
 
 ## Desired Behavior
 
-1. When the scanner replaces a string-shaped, non-empty `task_identifier`, it writes the replaced value into the same frontmatter as `task_identifier_previous`, in the same single write as the new UUID.
-2. The replacement itself is byte-for-byte what spec 008 specifies: exactly one `task_identifier` key, a valid UUID, one write, no repeat on the next cycle.
-3. When the replaced value was not a non-empty string — an unquoted integer, a sequence, a mapping, a block scalar, or the key absent entirely — no `task_identifier_previous` key is written.
-4. `FindTaskFilePath` accepts a file as a match when the requested identifier equals either `task_identifier` or a non-empty `task_identifier_previous`.
-5. Two files resolving the same identifier — one by `task_identifier`, one by `task_identifier_previous` — is an error naming both paths, and nothing is written.
-6. The identifier→path index is unchanged: it continues to index files by their current `task_identifier` only, so a replaced identifier misses the index and is served by the walk.
+1. When the scanner replaces a `task_identifier` that is a non-empty, single-line string and not a valid UUID, it writes the replaced value into the same frontmatter as `task_identifier_previous`, in the same single write as the new UUID.
+2. The alias value is written as a YAML scalar that round-trips to the exact original string — quoted when the value is not a safe plain scalar — so a value containing `#`, `: `, or leading/trailing spaces survives unchanged and `repairConverges` still accepts the write.
+3. A file carries at most one `task_identifier_previous` key. A second repair replaces its value; it never appends a second key.
+4. The replacement itself is unchanged from spec 008: exactly one `task_identifier` key, a valid UUID, one write, no repeat on the next cycle.
+5. No alias is written when the replaced value was not a non-empty single-line string, when the key was absent, or when the repair was the duplicate branch's (a valid UUID) — a duplicated UUID is already indexed, so an alias would let the index resolve it to the wrong file before the walk's duplicate check could run.
+6. `FindTaskFilePath` accepts a file as a match when the requested identifier equals either `task_identifier` or a non-empty `task_identifier_previous`.
+7. An alias match is never recorded in the identifier→path index: the index stays keyed on the current `task_identifier` only, and `resolveFromIndex`'s existing "no longer carries" guard keeps rejecting an alias hit, so recording one would only add a dead entry and a full walk per lookup.
+8. Two files resolving the same identifier — one by `task_identifier`, one by `task_identifier_previous` — is an error naming both paths, and nothing is written.
 
 ## Constraints
 
-- **Spec 008's repair is frozen.** `pkg/scanner/vault_scanner.go:612-638` keeps stripping and minting; the alias is additive. No AC in spec 008 may be edited to accommodate this change.
+- **Spec 008's repair is frozen.** `pkg/scanner/vault_scanner.go:612-638` keeps stripping and minting; the alias is additive. No spec-008 assertion is edited.
 - **No new skip reason, no new metric.** The alias rides the existing repair path and its existing log line. `pkg/metrics/metrics.go:229-249` is untouched, so the parity test's `skipCount`/`counterCount` do not move.
 - **`AUTO_INJECT_TASK_IDENTIFIER` semantics are unchanged.** When `false`, every shape still skips without writing, and no alias is written either.
 - **The alias is never written on the key-absent path** — there is no replaced value to record, and spec 008 AC3 asserts that path's bytes exactly.
-- **No bulk repair of existing files.** 47 active tasks carry a non-UUID identifier today; the fix makes them resolvable, not rewritten. Rewriting them is a separate decision.
+- **The duplicate branch writes no alias** — a valid UUID is indexed, so an alias there would resolve through `resolveFromIndex` to the other file and bypass the duplicate guard (`pkg/result/result_writer.go:400`).
+- **No bulk repair of existing files.** 47 active tasks carry a non-UUID identifier today; the fix makes them resolvable, not rewritten.
 - **`typedTaskFields` allowlist (vault-api) is not touched.** The scanner writes files through git-rest and the controller reads frontmatter directly, so a new key crosses no command API.
+
+## Design Decisions
+
+- **A durable frontmatter alias, not an in-memory map.** The identifier→path index is in-process, rebuilt from file content every cycle and never persisted (`docs/controller-design.md:31`), so an alias recorded there is wiped on the next cycle. The alias has to live where it survives a restart, and the task file is the only durable place the scanner already writes.
+- **Keep the repair, do not pause it.** Pausing repair while a job is in flight requires the scanner to know about jobs — it has no cluster client, and the executor's job lifecycle is not visible to it. Rejected as a new coupling.
+- **Refuse to repair a file with a live job.** Same reason, plus it would reintroduce the unbounded-rewrite risk for that file. Rejected.
+- **Frontmatter key, not a body section.** A body section would need the walk to parse markdown rather than frontmatter, and the walk already parses frontmatter. The key name was chosen so spec 008's own key-count regex `^[[:space:]]*['\"]?task_identifier['\"]?[[:space:]]*:` does not match it.
 
 ## Failure Modes
 
 | Trigger | Expected behavior | Recovery | Detection | Reversibility |
 |---|---|---|---|---|
-| A result arrives for an identifier replaced twice (slug → uuid A → uuid B) | The alias is overwritten by the second replacement, so only the most recent predecessor resolves; an older in-flight result misses | Operator resolves from the log line naming the identifier | `task file not found … skipping` for that identifier | Reversible — the alias is one frontmatter line |
-| A file legitimately carries `task_identifier_previous` from an earlier repair, and a new task is filed with that same value | Both files resolve the identifier → duplicate error, nothing written | Operator clears the stale alias | `duplicate task_identifier … in <a> and <b>` | Reversible |
-| The alias line is written but the walk change is not yet deployed (partial rollout) | Result still misses — the alias is inert until the reader ships | Deploy both halves together; they are in one prompt by design | AC2 fails against the deployed pod | Reversible |
+| A result arrives for an identifier replaced twice (slug → uuid A → uuid B) | The alias holds only `uuid A` (the most recent predecessor), so the older slug does not resolve | Operator re-files the task under its current identifier | `task file not found … skipping` naming the slug | Reversible — the alias is one frontmatter line |
+| A file legitimately carries `task_identifier_previous` from an earlier repair, and a new task is filed with that same value | Both files resolve the identifier → duplicate error, nothing written | Operator deletes the `task_identifier_previous` line, confirms `grep -c '^task_identifier_previous:'` returns `0`, then re-runs the result | `duplicate task_identifier … in <a> and <b>` | Reversible |
+| The alias value contains characters that make it an unsafe plain YAML scalar | The value is quoted so it round-trips; `repairConverges` still accepts the write | None needed | AC1's `yaml.Unmarshal` equality assertion | Reversible |
+| Two controllers (`openclaw`, `personal`) run different versions during a rollout, and the older one repairs a file the newer one would have aliased | The older controller writes no alias; that file's in-flight result still misses until the rollout completes | Complete the rollout; no data is lost that the old version did not already lose | The repair log line carries no `task_identifier_previous` in the written bytes | Reversible |
 | A malformed file is repaired while a result is in flight and the alias write fails | `injectAndStore` returns the write error; nothing is committed; the next cycle retries | Unchanged from today — the next cycle retries | `failed to write %s` warn log | Reversible — nothing was committed |
-| YAML drift introduces a shape not in the tables | Routed by the same validity predicate; the alias is written only for non-empty strings, so an unknown scalar shape takes the no-alias path | None needed | Warn log names the Go type | Reversible |
+| YAML drift introduces a value shape not in the tables | Routed by the same validity predicate; the alias is written only for non-empty single-line strings, so an unknown shape takes the no-alias path | None needed | Warn log names the Go type | Reversible |
 
 ## Security / Abuse
 
-Frontmatter is untrusted input: any agent or operator can author a task file. The alias is a second identifier a file may claim, so it widens the set of identifiers that resolve to a given file. Two consequences are pinned: the duplicate case is an error rather than a preference (AC5), so an alias cannot steal another task's result; and the alias is only ever written by the scanner from a value that was already present in the file, so it adds no write path an attacker did not already control.
+Frontmatter is untrusted input: any agent or operator can author a task file. The alias is a second identifier a file may claim, so it widens the set of identifiers that resolve to a given file. Three properties keep that bounded: the duplicate case is an error rather than a preference (AC7), so an alias cannot steal another task's result; the alias is only ever written by the scanner from a value already present in the file, so it adds no write path an attacker did not already control; and the alias is excluded from the duplicate branch, so it cannot be used to shadow an indexed UUID.
 
 ## Suggested Decomposition
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | Write the alias on the repair path and match it in the walk, with tests, CHANGELOG and `make precommit` | 1-6 | AC1-AC7 | — |
+| 1 | Write the alias on the non-UUID repair path and match it in the walk, with tests, doc and CHANGELOG, and `make precommit` | 1-8 | AC1-AC10 | — |
 
-Rationale: a single prompt. The alias is inert without the walk match and the walk match is unreachable without the alias, so splitting them would leave a half-landed state whose ACs cannot pass until both exist. One package boundary each side, both small, and the regression lock (AC4) is only meaningful against the combined diff.
+Rationale: a single prompt. The alias is inert without the walk match and the walk match is unreachable without the alias, so splitting them would leave a half-landed state whose ACs cannot pass until both exist. One package boundary each side, both small, and the regression lock (AC5) is only meaningful against the combined diff. The Rung-3 AC is operator-executed after the prod deploy and is not a prompt.
 
 ## Do-Nothing Option
 
-Not acceptable, but the cost is bounded and it is worth naming. The loss is silent and per-task: each occurrence parks one task in `human_review` with no result and produces an alert that names only an identifier. The operator's recovery is to read the pod log, discover the identifier mismatch by hand, and re-file the task — roughly the hours this task's Impact records. It does not corrupt the vault and it does not repeat unboundedly for one task, which is why this is a fix and not an incident.
+Not acceptable, but the cost is bounded and worth naming. The loss is silent and per-task: each occurrence parks one task in `human_review` with no result and produces an alert that names only an identifier. The operator's recovery is to read the pod log, discover the identifier mismatch by hand, and re-file the task — roughly the hours this task's Impact records. It does not corrupt the vault and it does not repeat unboundedly for one task, which is why this is a fix and not an incident.
