@@ -70,6 +70,12 @@ type fileEntry struct {
 	// needs, because a capped record stops changing precisely when the executor
 	// stops writing to it.
 	capped bool
+	// phase is the lifecycle phase last published for this file. It exists so a
+	// phase transition is still published after the park path clears the assignee:
+	// without it processFile stored the new hash and then returned early on an
+	// empty assignee, so the view never learned the phase moved and
+	// view_divergence reported the task forever (2026-11-03).
+	phase string
 }
 
 // fileOps holds pluggable file I/O functions so the scanner can operate over
@@ -649,6 +655,7 @@ func (v *vaultScanner) processFile(
 		)
 	}
 	prevEntry := v.hashes[relPath]
+	currentPhase := phaseString(frontmatter)
 
 	// Detect empty → named assignee transition (operator re-delegated a parked task).
 	if currentFMAssignee != "" && prevEntry.taskIdentifier != "" && prevEntry.assignee == "" {
@@ -674,6 +681,7 @@ func (v *vaultScanner) processFile(
 		taskIdentifier: lib.TaskIdentifier(taskID),
 		assignee:       currentFMAssignee,
 		capped:         isCappedIdle(frontmatter),
+		phase:          currentPhase,
 	}
 	if frontmatter.Status() == "" {
 		glog.Errorf("skipping %s: invalid frontmatter: status is empty", relPath)
@@ -681,7 +689,21 @@ func (v *vaultScanner) processFile(
 		return nil, "", false
 	}
 	if currentFMAssignee == "" {
-		return nil, "", false
+		// The park path clears the assignee in the same write that moves the phase
+		// to human_review (result.ClearAssigneeIfHumanReview), so the record
+		// carrying the transition is exactly the one this gate used to drop — and
+		// the hash was already stored above, so the file was never looked at again.
+		// The view could therefore never converge, which is what view_divergence
+		// reported.
+		//
+		// Publish the transition, but only a transition: a record already parked at
+		// this phase publishes nothing, so a full-vault scan does not flood the
+		// event topic with every parked, escalated and terminal task. Publishing is
+		// not spawning — the executor's trigger-phase gate refuses a human_review
+		// record before the parked-assignee restore is reached.
+		if prevEntry.phase == "" || prevEntry.phase == currentPhase {
+			return nil, "", false
+		}
 	}
 	body := extractBody(content)
 	return &lib.Task{
@@ -689,6 +711,17 @@ func (v *vaultScanner) processFile(
 		Frontmatter:    frontmatter,
 		Content:        lib.TaskContent(body),
 	}, "", false
+}
+
+// phaseString renders the frontmatter's lifecycle phase as a comparable string,
+// or "" when the key is absent. Phase() returns a pointer so an absent key is
+// distinguishable from an empty one; both collapse to "" here because the only
+// consumer compares one scan's value against the previous scan's.
+func phaseString(frontmatter lib.TaskFrontmatter) string {
+	if p := frontmatter.Phase(); p != nil {
+		return string(*p)
+	}
+	return ""
 }
 
 // injectAndStore generates a UUID, writes it into the file via ops.writeFile,
