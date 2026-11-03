@@ -48,10 +48,22 @@ const vaultLocalPath = "/data/vault"
 
 const githubAPIBaseURL = "https://api.github.com"
 
-// metricsInterval is the fixed cadence of the task-age metrics recompute. It is a
-// package constant, not configuration: the alert contract is "at most 60 s", and a
-// knob that could widen or disable it would be an opt-out on the shipped behaviour.
-const metricsInterval = 60 * time.Second
+// metricsInterval is the fixed cadence of the task-age and open-task-census
+// recompute. It is a package constant, not configuration: a knob that could widen
+// or disable it would be an opt-out on the shipped behaviour.
+//
+// It was 60s while the two instruments recomputed in independent passes, each
+// listing the task directory and fetching every file over the vault API — ~730
+// GET /api/v1/files/{path} per second on the openclaw vault's ~22,000 task files
+// (measured 2026-11-03). One pass now publishes both, and 5m cuts the remaining
+// rate a further fivefold.
+//
+// The freshness the alerts need is unchanged: TaskAge is `for: 15m` against a
+// 604800 s (7-day) threshold, and UnreachablePhase joins a gauge whose values
+// change on task transitions, not on the second. Both are level alerts over
+// gauges that persist between recomputes, so a longer cadence delays a value's
+// refresh without ever blanking a series.
+const metricsInterval = 5 * time.Minute
 
 func main() {
 	app := &application{}
