@@ -1,8 +1,10 @@
 ---
-status: draft
+status: approved
 tags:
-  - dark-factory
-  - spec
+    - dark-factory
+    - spec
+approved: "2026-11-04T16:16:28Z"
+branch: dark-factory/bug-command-guard-drops-armed-max-triggers
 ---
 
 ## Summary
