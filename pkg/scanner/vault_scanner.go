@@ -606,7 +606,7 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		return v.injectAndStore(ctx, content, relPath, currentFMAssignee, hash)
+		return v.injectAndStore(ctx, content, relPath, currentFMAssignee, hash, "")
 	}
 	if !isString || !isValidUUID(taskID) {
 		if !v.autoInject {
@@ -627,12 +627,14 @@ func (v *vaultScanner) processFile(
 			// only: a large sequence or mapping must not blow up a log line.
 			glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
 		}
+		previous := recordablePrevious(taskID, isString)
 		return v.injectAndStore(
 			ctx,
 			removeTaskIdentifier(content),
 			relPath,
 			currentFMAssignee,
 			hash,
+			previous,
 		)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
@@ -651,6 +653,7 @@ func (v *vaultScanner) processFile(
 			relPath,
 			currentFMAssignee,
 			hash,
+			"",
 		)
 	}
 	prevEntry := v.hashes[relPath]
@@ -724,7 +727,10 @@ func phaseString(frontmatter lib.TaskFrontmatter) string {
 }
 
 // injectAndStore generates a UUID, writes it into the file via ops.writeFile,
-// and records a sentinel hash entry with the file's current assignee.
+// and records a sentinel hash entry with the file's current assignee. When
+// previous is non-empty it is recorded as task_identifier_previous in the same
+// single write, so a result that was already in flight under the replaced
+// identifier can still resolve to this file.
 //
 // Before persisting, the candidate bytes are re-evaluated through the exact parse
 // pipeline processFile uses on the next cycle (repairConverges). A repair that
@@ -746,9 +752,10 @@ func (v *vaultScanner) injectAndStore(
 	relPath string,
 	currentAssignee lib.TaskAssignee,
 	onDiskHash [32]byte,
+	previous string,
 ) (*lib.Task, string, bool) {
 	id := uuid.New().String()
-	newContent, injectErr := InjectTaskIdentifier(ctx, content, id)
+	newContent, injectErr := injectTaskIdentifierWithPrevious(ctx, content, id, previous)
 	if injectErr != nil {
 		glog.Warningf("skipping %s: failed to inject task_identifier: %v", relPath, injectErr)
 		v.metrics.SkippedFilesTotal(metrics.ReasonInjectTaskIdentifierFailed).Inc()

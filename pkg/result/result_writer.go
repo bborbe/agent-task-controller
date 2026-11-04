@@ -413,7 +413,10 @@ func resolveFromIndex(
 }
 
 // FindTaskFilePath returns the relative path of the .md file whose frontmatter has
-// task_identifier == id, plus the parsed existing frontmatter.
+// task_identifier == id or a non-empty task_identifier_previous == id, plus the
+// parsed existing frontmatter. A match through task_identifier_previous is never
+// recorded in the identifier→path index: that index is keyed on the current
+// task_identifier only, so an alias identifier falls through to the walk.
 //
 // It consults resolver first: on a hit it reads exactly that one file — no directory
 // listing — and on a miss, on a nil resolver, and on a hit whose single read or
@@ -444,6 +447,7 @@ func FindTaskFilePath(
 		return "", nil, errors.Wrapf(ctx, err, "list task files with glob %s", glob)
 	}
 	var matchedRelPath string
+	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
 	for _, relPath := range paths {
 		content, readErr := gitClient.ReadFile(ctx, relPath)
@@ -457,7 +461,8 @@ func FindTaskFilePath(
 			continue
 		}
 		var fm struct {
-			TaskIdentifier string `yaml:"task_identifier"`
+			TaskIdentifier         string `yaml:"task_identifier"`
+			TaskIdentifierPrevious string `yaml:"task_identifier_previous"`
 		}
 		if umErr := yaml.Unmarshal([]byte(frontmatter), &fm); umErr != nil {
 			glog.V(3).Infof("FindTaskFilePath: skip %s (unmarshal error: %v)", relPath, umErr)
@@ -465,34 +470,68 @@ func FindTaskFilePath(
 		}
 		glog.V(3).
 			Infof("FindTaskFilePath: file %s has task_identifier=%s", relPath, fm.TaskIdentifier)
-		if lib.TaskIdentifier(fm.TaskIdentifier) == id {
-			// Two files sharing one task_identifier is never resolvable: picking
-			// either one writes an agent's result onto a file that may belong to a
-			// different task. The previous behaviour silently kept the LAST match
-			// from an unsorted ListFiles, which on 2026-08-31 marked
-			// `Sentry Alert Fan-Out - 2026-08-31` done/completed carrying another
-			// task's analysis, for a run no executor ever performed. Fail loudly
-			// instead — the caller must not write anything.
-			if matchedRelPath != "" {
-				return "", nil, errors.Errorf(
-					ctx,
-					"duplicate task_identifier %s in %s and %s",
-					id, matchedRelPath, relPath,
-				)
-			}
-			matchedRelPath = relPath
-			glog.V(2).Infof("FindTaskFilePath: matched file %s for task %s", matchedRelPath, id)
-			var existingFm lib.TaskFrontmatter
-			if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFm); umErr != nil {
-				glog.V(3).
-					Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
-			} else {
-				existingFrontmatter = existingFm
-			}
+		matched, viaPrevious := taskIdentifierMatch(
+			fm.TaskIdentifier, fm.TaskIdentifierPrevious, id,
+		)
+		if !matched {
+			continue
+		}
+		// Two files sharing one identifier — whether by the current key or the
+		// recorded predecessor — is never resolvable: picking either one writes
+		// an agent's result onto a file that may belong to a different task. The
+		// previous behaviour silently kept the LAST match from an unsorted
+		// ListFiles, which on 2026-08-31 marked `Sentry Alert Fan-Out -
+		// 2026-08-31` done/completed carrying another task's analysis, for a run
+		// no executor ever performed. Fail loudly instead — the caller must not
+		// write anything.
+		if matchedRelPath != "" {
+			return "", nil, errors.Errorf(
+				ctx,
+				"duplicate task_identifier %s in %s and %s",
+				id, matchedRelPath, relPath,
+			)
+		}
+		matchedRelPath = relPath
+		matchedByPrevious = viaPrevious
+		logTaskFileMatch(relPath, id, viaPrevious)
+		var existingFm lib.TaskFrontmatter
+		if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFm); umErr != nil {
+			glog.V(3).
+				Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
+		} else {
+			existingFrontmatter = existingFm
 		}
 	}
-	recordWalkMatch(ctx, resolver, id, matchedRelPath)
+	if !matchedByPrevious {
+		recordWalkMatch(ctx, resolver, id, matchedRelPath)
+	}
 	return matchedRelPath, existingFrontmatter, nil
+}
+
+// taskIdentifierMatch reports whether current or previous names id, and whether
+// the match came through the recorded predecessor. The predecessor is only
+// consulted when non-empty, so an absent key never matches an empty request.
+func taskIdentifierMatch(current, previous string, id lib.TaskIdentifier) (bool, bool) {
+	if lib.TaskIdentifier(current) == id {
+		return true, false
+	}
+	if previous != "" && lib.TaskIdentifier(previous) == id {
+		return true, true
+	}
+	return false, false
+}
+
+// logTaskFileMatch logs a walk match at V(2), distinguishing a match through
+// the recorded predecessor from one through the current identifier.
+func logTaskFileMatch(relPath string, id lib.TaskIdentifier, viaPrevious bool) {
+	if viaPrevious {
+		glog.V(2).Infof(
+			"FindTaskFilePath: matched file %s for task %s via task_identifier_previous",
+			relPath, id,
+		)
+		return
+	}
+	glog.V(2).Infof("FindTaskFilePath: matched file %s for task %s", relPath, id)
 }
 
 // recordWalkMatch records a unique walk match in the identifier→path index. The walk

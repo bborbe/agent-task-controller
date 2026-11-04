@@ -152,6 +152,7 @@ var _ = Describe("injectAndStore", func() {
 				"rel.md",
 				"",
 				[32]byte{},
+				"",
 			)
 			Expect(task).To(BeNil())
 			Expect(written).To(Equal(""))

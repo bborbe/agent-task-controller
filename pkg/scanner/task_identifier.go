@@ -19,6 +19,24 @@ func isValidUUID(s string) bool {
 	return err == nil
 }
 
+// shouldRecordPrevious reports whether a replaced task_identifier value is a
+// candidate for task_identifier_previous: a non-blank, single-line string.
+// A blank value was never a live identifier, and a multi-line value (a block
+// scalar) cannot be rendered as one frontmatter line. Non-string shapes never
+// reach this predicate: the caller's branch excludes them.
+func shouldRecordPrevious(id string) bool {
+	return strings.TrimSpace(id) != "" && !strings.ContainsAny(id, "\r\n")
+}
+
+// recordablePrevious returns id when it is a string shape worth recording as
+// task_identifier_previous, and "" otherwise.
+func recordablePrevious(id string, isString bool) string {
+	if isString && shouldRecordPrevious(id) {
+		return id
+	}
+	return ""
+}
+
 // isIdentifierUnique returns true if no other file in v.hashes uses the same task identifier.
 func (v *vaultScanner) isIdentifierUnique(id string, relPath string) bool {
 	for path, entry := range v.hashes {
@@ -29,9 +47,9 @@ func (v *vaultScanner) isIdentifierUnique(id string, relPath string) bool {
 	return true
 }
 
-// taskIdentifierKeyLines parses the frontmatter region (content lines
-// 1..closing-1) with yaml.v3 into a node tree and returns the content line index
-// of every top-level key whose parsed Value is task_identifier.
+// frontmatterKeyLines parses the frontmatter region (content lines 1..closing-1)
+// with yaml.v3 into a node tree and returns the content line index of every
+// top-level key whose parsed Value is wanted.
 //
 // The boolean result is false — and the caller must leave content unchanged —
 // when the region cannot be parsed, when the top-level node is not a mapping, or
@@ -44,7 +62,7 @@ func (v *vaultScanner) isIdentifierUnique(id string, relPath string) bool {
 // yaml.v3 Line still equals its content line index (body line 1 == content index
 // 1). Decoding into a yaml.Node keeps duplicate keys in the node's Content, so
 // every spelling of a repeated key is reported.
-func taskIdentifierKeyLines(lines []string, closing int) ([]int, bool) {
+func frontmatterKeyLines(lines []string, closing int, wanted string) ([]int, bool) {
 	body := make([]string, 0, closing-1)
 	for i := 1; i < closing; i++ {
 		body = append(body, strings.TrimRight(lines[i], "\r"))
@@ -62,11 +80,11 @@ func taskIdentifierKeyLines(lines []string, closing int) ([]int, bool) {
 	}
 	var out []int
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		key := root.Content[i]
-		if key.Value != "task_identifier" {
+		keyNode := root.Content[i]
+		if keyNode.Value != wanted {
 			continue
 		}
-		out = append(out, key.Line)
+		out = append(out, keyNode.Line)
 	}
 	return out, true
 }
@@ -84,12 +102,20 @@ func taskIdentifierKeyLines(lines []string, closing int) ([]int, bool) {
 // whitespace-before-colon, and escaped characters inside a quoted key, e.g.
 // "task_identifier" — resolves to the same parsed key and is removed.
 func removeTaskIdentifier(content []byte) []byte {
+	return removeFrontmatterKey(content, "task_identifier")
+}
+
+// removeFrontmatterKey removes every top-level key line named wanted from the
+// frontmatter region of content, together with the full indentation span of
+// each key's value (block sequences, block mappings and block scalars). Lines
+// outside the frontmatter region are preserved byte-for-byte.
+func removeFrontmatterKey(content []byte, wanted string) []byte {
 	lines := strings.Split(string(content), "\n")
 	closing := frontmatterClosingIndex(lines)
 	if closing == -1 {
 		return content
 	}
-	keyLines, ok := taskIdentifierKeyLines(lines, closing)
+	keyLines, ok := frontmatterKeyLines(lines, closing, wanted)
 	if !ok {
 		return content
 	}
@@ -178,4 +204,43 @@ func InjectTaskIdentifier(ctx context.Context, content []byte, id string) ([]byt
 		ctx,
 		"content does not start with frontmatter delimiter",
 	)
+}
+
+// injectTaskIdentifierWithPrevious injects task_identifier id into content's
+// frontmatter and, when previous is non-empty, also writes
+// task_identifier_previous: previous in the same frontmatter. Any existing
+// task_identifier_previous key is removed first, so a file carries at most one
+// such key and a repeated repair replaces its value instead of appending a
+// second. previous is rendered with yaml.Marshal so a value such as "501" is
+// quoted and round-trips as a string rather than as an integer. When previous
+// is empty this is exactly InjectTaskIdentifier.
+func injectTaskIdentifierWithPrevious(
+	ctx context.Context,
+	content []byte,
+	id string,
+	previous string,
+) ([]byte, error) {
+	if previous == "" {
+		return InjectTaskIdentifier(ctx, content, id)
+	}
+	s := string(content)
+	var lineEnd string
+	switch {
+	case strings.HasPrefix(s, "---\r\n"):
+		lineEnd = "\r\n"
+	case strings.HasPrefix(s, "---\n"):
+		lineEnd = "\n"
+	default:
+		return nil, errors.Errorf(ctx, "content does not start with frontmatter delimiter")
+	}
+	scalar, marshalErr := yaml.Marshal(previous)
+	if marshalErr != nil {
+		return nil, errors.Wrapf(ctx, marshalErr, "marshal task_identifier_previous")
+	}
+	stripped := removeFrontmatterKey(content, "task_identifier_previous")
+	rest := string(stripped)[len("---"+lineEnd):]
+	withAlias := "---" + lineEnd +
+		"task_identifier_previous: " + strings.TrimSuffix(string(scalar), "\n") + lineEnd +
+		rest
+	return InjectTaskIdentifier(ctx, []byte(withAlias), id)
 }
