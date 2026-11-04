@@ -954,7 +954,7 @@ var _ = Describe("VaultScanner", func() {
 			written, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
 			Expect(err).To(BeNil())
 			Expect(string(written)).To(ContainSubstring("task_identifier:"))
-			Expect(string(written)).NotTo(ContainSubstring("my-custom-id"))
+			Expect(string(written)).To(ContainSubstring("task_identifier_previous: my-custom-id"))
 
 			// Second cycle: publishes with generated UUID
 			s.RunCycle(ctx, results)

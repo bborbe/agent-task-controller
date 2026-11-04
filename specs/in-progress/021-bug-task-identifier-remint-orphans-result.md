@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-11-03T20:35:44Z"
+generating: "2026-11-04T01:26:38Z"
+prompted: "2026-11-04T01:42:19Z"
 branch: dark-factory/bug-task-identifier-remint-orphans-result
 ---
 
