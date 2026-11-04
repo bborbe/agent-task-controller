@@ -6,6 +6,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
@@ -283,12 +284,74 @@ func buildUpdatePatch(
 	return patch, escalation
 }
 
-// capDefinitionFields are the operator's definition of the cap itself. An agent
-// snapshot may neither raise one nor introduce one where the task has none:
-// `applyUpdateTriggerCap` reads the merged map, so a snapshot that raises
-// max_triggers in the same write would suppress the very escalation this path
-// exists to produce. Only a task's own create sets it.
+// capDefinitionFields are the cap's definition. The command-path guard keeps an
+// existing on-disk value over a differing incoming value in both directions, so
+// a command can neither raise nor lower an operator's budget. An incoming value
+// MAY introduce the key when the task carries none — but only at or below
+// defaultMaxTriggers: the executor's arm publishes `max_triggers: 3` exactly that
+// way, and refusing the introduction left the cap permanently disarmed. The
+// result path keeps its own refusal (see result.controllerOwnedFields): an agent
+// result payload never introduces the key.
 var capDefinitionFields = []string{"max_triggers"}
+
+// defaultMaxTriggers is the cap a task carrying no explicit `max_triggers` falls
+// back to. Introduction above this value would RAISE the effective cap rather
+// than define it, which is the one thing this guard exists to prevent, so the
+// command path cannot be left unbounded: an agent CAN emit an
+// UpdateFrontmatterCommand (docs/controller-design.md, the `Agent emits
+// UpdateFrontmatterCommand` row of the assignee table), which is why the
+// introduction is bounded at all. Introducing exactly the default is a no-op on
+// the effective cap, which is why it is allowed.
+//
+// Derived from the library rather than restated as a literal. The executor's arm
+// writes the library's own default, so a literal here would refuse a raised
+// upstream default — silently re-disarming the cap this guard exists to arm, with
+// no log line. `MaxTriggers()` falls back to that default on an empty frontmatter,
+// so an empty map reads the default without naming it.
+var defaultMaxTriggers = lib.TaskFrontmatter(nil).MaxTriggers()
+
+// withinDefaultCap reports whether an incoming max_triggers may introduce the key
+// on a task that carries none. Only values at or below the default are safe: a
+// higher value would let the caller raise its own cap and escape the escalation.
+//
+// Every numeric shape a decoder can hand us is accepted rather than only the ones
+// today's JSON path happens to produce. A type outside this list would fall
+// through to false and delete the key — the same silent disarm this guard exists
+// to prevent — so a decoder switched to `UseNumber`, or an in-process producer
+// using an unsigned type, must not be able to reintroduce the bug with no log
+// line. A zero or negative value tightens rather than raises the cap, so it is
+// allowed: it cannot be used to escape the runaway-task control.
+func withinDefaultCap(v any) bool {
+	n, ok := asFloat(v)
+	return ok && n <= float64(defaultMaxTriggers)
+}
+
+// asFloat normalises the numeric types a frontmatter value can hold. It reports
+// false for anything non-numeric, which the caller treats as a refusal.
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
 
 // applyControllerOwnedGuard keeps the controller's frontmatter keys over a stale
 // value the command carries.
@@ -298,9 +361,10 @@ var capDefinitionFields = []string{"max_triggers"}
 // has a `scopeChanged` arm that writes `trigger_count: 1` on purpose, to grant a
 // fresh budget when the task's scope moves (planning → execution), and that write
 // arrives through this executor. Guarding the count would cap a task that had
-// legitimately earned a new budget. The guard therefore covers only what an agent
-// has no business writing at all — the cap's definition, and a scope without the
-// count that always travels with it.
+// legitimately earned a new budget. The guard therefore covers an existing cap
+// value (a differing incoming value loses) and a scope without the count that
+// always travels with it; it deliberately does not refuse the introduction of an
+// absent `max_triggers` on the command path.
 //
 // The consequence is stated rather than hidden: an agent echo that names a lower
 // trigger_count still lands, so this path does not defend the counter against a
@@ -319,7 +383,12 @@ func applyControllerOwnedGuard(
 			merged[field] = onDisk
 			continue
 		}
-		delete(merged, field)
+		// Absent on disk: introduction is allowed only within the default cap.
+		// Above it the command is trying to RAISE the cap, and an agent can emit
+		// this command shape, so the key is dropped rather than trusted.
+		if !withinDefaultCap(updates[field]) {
+			delete(merged, field)
+		}
 	}
 
 	// trigger_scope travels only with a trigger_count: `triggerBudgetWrite` writes

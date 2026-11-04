@@ -239,9 +239,9 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			)
 
 			It("does not let a snapshot raise max_triggers out from under the cap", func() {
-				// max_triggers is the cap's definition. A snapshot that raises it in
+				// max_triggers is the cap's definition. A command that raises it in
 				// the same write would suppress the escalation, so the on-disk value
-				// wins and an absent one stays absent.
+				// wins over a differing incoming value.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: raise-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nmax_triggers: 3\n---\nbody\n",
@@ -261,9 +261,11 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
 			})
 
-			It("does not let a snapshot introduce max_triggers on a ref-only task", func() {
-				// A ref-bearing task has no max_triggers and falls back to the lib
-				// default 3. An incoming max_triggers would raise that default.
+			It("refuses to introduce a max_triggers above the default cap", func() {
+				// An agent CAN emit an UpdateFrontmatterCommand, so an unbounded
+				// introduction would let it raise its own cap and escape the
+				// runaway-task escalation. 99 is above the default 3 and must be
+				// dropped, leaving the task exactly as it was.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: intro-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
@@ -277,7 +279,70 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 
 				fm := parseFrontmatter(taskFile)
 				Expect(fm).NotTo(HaveKey("max_triggers"))
+			})
+
+			It("introduces max_triggers: 3 when the executor arms a task that has none", func() {
+				// The arm decision publishes Updates{"max_triggers": 3} for a task with
+				// no max_triggers and no ref. The command path must land the key, and
+				// the introduced value governs the predicate: trigger_count 3 against a
+				// cap of 3 escalates on THIS write — assignee cleared, section appended.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: arm-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: replay-probe-agent\ntrigger_count: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("arm-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 3},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(3))
 				Expect(fm["assignee"]).To(Equal(""))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("refuses to introduce one above the default at the boundary", func() {
+				// Pins the boundary the security control rests on: 3 is accepted
+				// (previous spec) and 4 is refused. An off-by-one such as `n <= 4`
+				// would pass both of those specs while widening the introduction
+				// beyond the library default.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: boundary-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\ntrigger_count: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("boundary-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 4},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm).NotTo(HaveKey("max_triggers"))
+			})
+
+			It("introduces a value below the default", func() {
+				// A value under the default tightens rather than raises the cap, so
+				// it is allowed — and it must actually land, not be refused by a
+				// bound that only ever accepts the default itself.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: below-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\ntrigger_count: 1\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("below-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 2},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(2))
+				Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
 			})
 
 			It("lets a command that names the counter win — that is how the charge lands", func() {
