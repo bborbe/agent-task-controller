@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- fix: let the command path introduce `max_triggers` when the task carries none, so the executor's arm actually arms the trigger cap; an existing value still wins and an agent result payload still cannot introduce or change it
+- fix: let the command path introduce `max_triggers` when the task carries none, so the executor's arm actually arms the trigger cap; an existing value still wins, an agent result payload still cannot introduce or change it, and the introduction is bounded at the library default — a command naming a higher cap is refused rather than arming it
 
 ## v0.26.3
 

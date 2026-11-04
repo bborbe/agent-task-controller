@@ -305,6 +305,46 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
 			})
 
+			It("refuses to introduce one above the default at the boundary", func() {
+				// Pins the boundary the security control rests on: 3 is accepted
+				// (previous spec) and 4 is refused. An off-by-one such as `n <= 4`
+				// would pass both of those specs while widening the introduction
+				// beyond the library default.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: boundary-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\ntrigger_count: 3\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("boundary-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 4},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm).NotTo(HaveKey("max_triggers"))
+			})
+
+			It("introduces a value below the default", func() {
+				// A value under the default tightens rather than raises the cap, so
+				// it is allowed — and it must actually land, not be refused by a
+				// bound that only ever accepts the default itself.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: below-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\ntrigger_count: 1\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("below-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 2},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(2))
+				Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
+			})
+
 			It("lets a command that names the counter win — that is how the charge lands", func() {
 				taskFile := writeTaskFile(
 					"task.md",

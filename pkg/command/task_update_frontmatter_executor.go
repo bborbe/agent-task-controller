@@ -6,6 +6,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
@@ -294,30 +295,62 @@ func buildUpdatePatch(
 var capDefinitionFields = []string{"max_triggers"}
 
 // defaultMaxTriggers is the cap a task carrying no explicit `max_triggers` falls
-// back to (the library default-3). Introduction above this value would RAISE the
-// effective cap rather than define it, which is the one thing this guard exists
-// to prevent — and an agent CAN emit an UpdateFrontmatterCommand
-// (docs/controller-design.md § "what each guard covers", spec 042), so the
-// introduction cannot be left unbounded on the assumption that the executor is
-// the only publisher. Introducing exactly the default is a no-op on the effective
-// cap, which is why it is allowed.
-const defaultMaxTriggers = 3
+// back to. Introduction above this value would RAISE the effective cap rather
+// than define it, which is the one thing this guard exists to prevent, so the
+// command path cannot be left unbounded: an agent CAN emit an
+// UpdateFrontmatterCommand (docs/controller-design.md, the `Agent emits
+// UpdateFrontmatterCommand` row of the assignee table), which is why the
+// introduction is bounded at all. Introducing exactly the default is a no-op on
+// the effective cap, which is why it is allowed.
+//
+// Derived from the library rather than restated as a literal. The executor's arm
+// writes the library's own default, so a literal here would refuse a raised
+// upstream default — silently re-disarming the cap this guard exists to arm, with
+// no log line. `MaxTriggers()` falls back to that default on an empty frontmatter,
+// so an empty map reads the default without naming it.
+var defaultMaxTriggers = lib.TaskFrontmatter(nil).MaxTriggers()
 
 // withinDefaultCap reports whether an incoming max_triggers may introduce the key
 // on a task that carries none. Only values at or below the default are safe: a
 // higher value would let the caller raise its own cap and escape the escalation.
+//
+// Every numeric shape a decoder can hand us is accepted rather than only the ones
+// today's JSON path happens to produce. A type outside this list would fall
+// through to false and delete the key — the same silent disarm this guard exists
+// to prevent — so a decoder switched to `UseNumber`, or an in-process producer
+// using an unsigned type, must not be able to reintroduce the bug with no log
+// line. A zero or negative value tightens rather than raises the cap, so it is
+// allowed: it cannot be used to escape the runaway-task control.
 func withinDefaultCap(v any) bool {
+	n, ok := asFloat(v)
+	return ok && n <= float64(defaultMaxTriggers)
+}
+
+// asFloat normalises the numeric types a frontmatter value can hold. It reports
+// false for anything non-numeric, which the caller treats as a refusal.
+func asFloat(v any) (float64, bool) {
 	switch n := v.(type) {
 	case int:
-		return n <= defaultMaxTriggers
+		return float64(n), true
 	case int32:
-		return int(n) <= defaultMaxTriggers
+		return float64(n), true
 	case int64:
-		return int(n) <= defaultMaxTriggers
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
 	case float64:
-		return n <= defaultMaxTriggers
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
 	}
-	return false
+	return 0, false
 }
 
 // applyControllerOwnedGuard keeps the controller's frontmatter keys over a stale
