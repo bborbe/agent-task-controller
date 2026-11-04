@@ -10,25 +10,32 @@ tags:
 - The frontmatter-command guard deletes `max_triggers` from an update whenever the record does not already carry the key, so the executor's arm can never introduce the cap.
 - That rule was written when nothing but a task's own create set the key. The executor's arm gate is now the intended setter, and it writes `max_triggers: 3` into a record that by definition has none — exactly the shape the arm exists for.
 - The arm decision is logged and the rest of the same command lands (`current_job`, the `## Failure` body); the one key that stops the loop is silently discarded and the task keeps re-queueing.
-- The fix allows the **command** path to introduce the key when the record carries none, while the **result** path keeps its refusal — so an agent result payload still cannot introduce or raise the cap.
+- The fix lets the **command** path introduce the key when the record carries none, while the **result** path keeps its refusal — so an agent result payload still cannot introduce or change the cap.
 
 ## Problem
 
-The executor arms the trigger cap by publishing an `UpdateFrontmatterCommand` whose `Updates` carry `max_triggers: 3` (`crashFailureUpdates` in `bborbe/agent-task-executor`). The controller applies that command through `applyControllerOwnedGuard` (`pkg/command/task_update_frontmatter_executor.go`), which for every key in `capDefinitionFields` does:
+The executor arms the trigger cap by publishing an `UpdateFrontmatterCommand` whose `Updates` carry `max_triggers` (`crashFailureUpdates` in `bborbe/agent-task-executor@v0.56.2`: it sets `updates["max_triggers"] = defaultMaxTriggers` only when the task's frontmatter has no such key). The controller applies that command through `applyControllerOwnedGuard` (`pkg/command/task_update_frontmatter_executor.go:309`), which for every key in `capDefinitionFields` (`:291`, `["max_triggers"]`) does:
 
 ```go
-if onDisk, ok := frontmatter[field]; ok {
-    merged[field] = onDisk
-    continue
+for _, field := range capDefinitionFields {
+    if _, named := updates[field]; !named {
+        continue
+    }
+    if onDisk, ok := frontmatter[field]; ok {
+        merged[field] = onDisk
+        continue
+    }
+    delete(merged, field)     // ← :322, the branch this spec removes
 }
-delete(merged, field)
 ```
 
-`capDefinitionFields` is `["max_triggers"]`. The doc above it says the guard covers "what an agent has no business writing at all — the cap's definition". That is right for an agent result payload and wrong for the executor's arm, which is the controller's own fleet component publishing a deliberate decision.
+The doc above the guard says it covers "what an agent has no business writing at all — the cap's definition". That is right for an agent result payload and wrong for the executor's arm, which is the controller's own fleet component publishing a deliberate decision.
 
 The operator-visible effect is the original defect unchanged: a Job whose pod can never be scheduled re-queues until a human clears the assignee, while the executor log says the cap was armed.
 
-**There are two guards, and they are not the same code.** `MergeFrontmatter` (`pkg/result/result_writer.go`) has exactly one call site — the result write-back at `:729` — and owns `controllerOwnedFields` = `{trigger_count, trigger_scope, max_triggers}`. The frontmatter-command path does **not** go through it; it has its own guard, `applyControllerOwnedGuard`, with its own list. `docs/controller-design.md:107` states this correctly. This spec changes **only** the command-path guard.
+**There are two guards, and they are not the same code.** `MergeFrontmatter` (`pkg/result/result_writer.go:1307`) has exactly one call site — the result write-back at `:729` — and owns `controllerOwnedFields` (`:1198`). The frontmatter-command path does **not** go through it; `buildUpdatePatch` (`:255`, sole caller `:172`) calls `applyControllerOwnedGuard`, which has its own list. This spec changes **only** the command-path guard.
+
+⚠️ `docs/controller-design.md:107` currently states that the typed frontmatter commands "are therefore *not* subject to the guard". **That sentence is wrong** — there is a guard on this path, and it is the one that dropped the arm. Correcting that sentence is part of this work (AC 5), not optional documentation polish: leaving it will re-create this same bug report.
 
 ## Reproduction
 
@@ -50,7 +57,7 @@ current_job: ""
 
 No `max_triggers`. The sweeper re-published every 60 s afterwards, each suppressed by the executor's per-job dedupe (1 h TTL), so the gate never ran again and the arm was never retried.
 
-Unit-level, deterministic: the existing spec `pkg/command/task_update_frontmatter_executor_test.go:264` — "does not let a snapshot introduce max_triggers on a ref-only task", asserting `Expect(fm).NotTo(HaveKey("max_triggers"))` — reproduces the defect directly. **That spec is expected to invert.**
+Unit-level, deterministic: `pkg/command/task_update_frontmatter_executor_test.go:264` — "does not let a snapshot introduce max_triggers on a ref-only task", a task with `ref: abc123`, `trigger_count: 3` and `Updates{"max_triggers": 99}`, asserting `Expect(fm).NotTo(HaveKey("max_triggers"))` — reproduces the defect directly. **That spec inverts, and its payload stays `99`** so the widening below is pinned rather than hidden.
 
 ## Expected vs Actual
 
@@ -58,48 +65,53 @@ Unit-level, deterministic: the existing spec `pkg/command/task_update_frontmatte
 
 **Actual** — `TriggerCapEngaged` stays false, `trigger_count` accrues without bound, and the escalation never fires.
 
-## Goal
+## Desired Behavior
 
-An `UpdateFrontmatterCommand` that names `max_triggers` introduces it when the record has none, and is still refused when the record already carries a value. The result path is unchanged: an agent result payload can neither introduce the key nor change it.
+1. An `UpdateFrontmatterCommand` that names `max_triggers` introduces **the value it names** when the record has no such key. The guard no longer constrains the introduced value; the executor's arm is the only producer and it writes `defaultMaxTriggers` (3).
+2. When the record already carries `max_triggers`, the on-disk value wins over a differing incoming value in both directions — a command can neither raise nor lower an operator's budget.
+3. An agent result payload can neither introduce `max_triggers` nor change an existing one; the result-path guard is unchanged.
+4. `trigger_count` and `trigger_scope` keep their current command-path handling, including the deliberate non-guarding of the counter.
+5. `TriggerCapEngaged` still reads the key as a presence check. The cap engages on **this** write or the next controller pass — `applyUpdateTriggerCap` runs after the guard on the same merged map, so a record already at `trigger_count >= 3` escalates in the same write.
 
 ## Non-goals
 
-- **Changing the result-path guard.** `controllerOwnedFields` in `pkg/result/result_writer.go` keeps `max_triggers` with both halves of its rule. An agent result payload is built from a spawn-time snapshot and must never introduce or raise the cap — that guard stays exactly as it is.
-- **Removing the command-path guard.** The "on-disk wins" half is load-bearing: a stale snapshot must not lower an operator's budget of 5 to 3, and must not raise it either. Only the introduction half changes.
+- **Changing the result-path guard.** `controllerOwnedFields` in `pkg/result/result_writer.go` keeps `max_triggers` with both halves of its rule. An agent result payload is built from a spawn-time snapshot and must never introduce or change the cap.
+- **Removing the command-path guard.** The "on-disk wins" half is load-bearing. Only the introduction branch changes.
+- **Constraining the introduced value.** Rejected: a rule keyed to the constant 3 would break the moment `defaultMaxTriggers` changes or another controller component legitimately arms a different cap. The widening is stated in § Security / Abuse Cases instead.
 - **`trigger_count` / `trigger_scope`.** Both keep their current command-path handling, including the deliberate refusal to guard the counter (`triggerBudgetWrite`'s `scopeChanged` arm writes `trigger_count: 1` on purpose).
 - **A new command type.** The executor already publishes `UpdateFrontmatterCommand`; a second shape for one key duplicates the write path for no benefit.
 - **Fixing the executor side.** That half is shipped and verified on dev `v0.56.2`.
 
 ## Assumptions
 
-- The only producer that carries `max_triggers` on an `UpdateFrontmatterCommand` is the executor's `crashFailureUpdates`, and it writes only when the key is absent. Verified in `bborbe/agent-task-executor`.
+- The only producer that carries `max_triggers` on an `UpdateFrontmatterCommand` is the executor's `crashFailureUpdates`, and it writes only when the key is absent, with `defaultMaxTriggers` = 3. Source cited in § Problem; the executor repo is not mounted in this container.
 - `applyControllerOwnedGuard` is the sole command-path guard; `MergeFrontmatter` is not reachable from it (one call site, `result_writer.go:729`).
-- `TriggerCapEngaged` reads the key as a presence check, so introduction is sufficient — no value semantics change.
+- `TriggerCapEngaged` reads the key as a presence check (`result_writer.go:848`), so introduction is sufficient — no value semantics change.
 
 ## Security / Abuse Cases
 
-The introduction path is a widening, so the threat is stated rather than assumed away:
+The introduction branch is a widening, so the residual risk is stated rather than assumed away:
 
-| Actor | Can it now introduce `max_triggers`? | Why |
-|---|---|---|
-| An agent **result payload** | **No** | It merges through `MergeFrontmatter`, whose `controllerOwnedFields` still deletes an absent key. Unchanged by this spec. |
-| An agent-authored `UpdateFrontmatterCommand` naming the key | **Yes** | This is the residual widening. Bounded by the fact that only the executor publishes this command shape; an agent cannot reach the command topic. Detection is nil — introduction emits no `GuardDecision` and no log line on either path, which is pre-existing behaviour for this guard. |
-| A stale executor snapshot | **Yes** | Introduces the default 3, never a value of the snapshot's choosing; a later operator value still wins because on-disk beats incoming. |
+| Actor | Can it now introduce `max_triggers`? | At what value | Detection |
+|---|---|---|---|
+| An agent **result payload** | **No** | — | `GuardDecision` on the result path (unchanged) |
+| An agent-authored `UpdateFrontmatterCommand` naming the key | **Yes** | **Whatever value the command names** — the guard no longer constrains it | None; this path logs only discards |
+| A stale executor snapshot | **Yes** | The value in `Updates`, which for the arm is always 3 | None |
 
-Accepted risk: the widening is confined to the command path, whose only legitimate publisher is the controller's own executor. The alternative — a dedicated command type — was rejected as duplicating the write path for one key.
+Accepted risk, named: the guard's protection on this path reduces to "an existing value is never changed". Introduction is unconstrained in value. That is acceptable **only** because the command topic's sole publisher is the controller's own executor, and an agent cannot reach it; the blast radius if that premise breaks is a task whose cap is set arbitrarily high, which suppresses the escalation the cap exists to produce, with no log line. If a second producer ever appears on this topic, this decision must be revisited.
 
 ## Acceptance Criteria
 
-- [ ] The command path introduces `max_triggers` when the record has none — evidence: a `pkg/command` spec drives the update executor with `Updates{"max_triggers": 3}` against a frontmatter carrying no `max_triggers`, and asserts the merged frontmatter carries `max_triggers: 3`; `go test ./pkg/command/...` exits 0
+- [ ] The command path introduces `max_triggers` when the record has none — evidence: the inverted ref-only spec at `pkg/command/task_update_frontmatter_executor_test.go:264` (payload `Updates{"max_triggers": 99}`, task with no `max_triggers`) asserts the resulting frontmatter carries `max_triggers: 99`, and the spec is renamed to say it introduces; `go test ./pkg/command/...` exits 0
 - [ ] The command path still refuses an existing value — evidence: a spec with on-disk `max_triggers: 3` and `Updates{"max_triggers": 99}` asserts the merged value is `3`; `go test ./pkg/command/...` exits 0
-- [ ] The ref-only regression spec is inverted, not deleted — evidence: `task_update_frontmatter_executor_test.go:264` now asserts `Expect(fm).To(HaveKeyWithValue("max_triggers", 3))` for an arm-shaped payload and is renamed to say so; `go test ./pkg/command/...` exits 0
-- [ ] The result path is unchanged — evidence: the existing `pkg/result` `MergeFrontmatter` specs for `max_triggers`, `trigger_count` and `trigger_scope` all pass with no edit; `go test ./pkg/result/...` exits 0
-- [ ] `docs/controller-design.md` § field ownership lists `max_triggers` with the command-path rule — evidence: `grep -n 'max_triggers' docs/controller-design.md` returns ≥1 line and the section states the two-guard split
+- [ ] The arm shape works end to end — evidence: a spec driving `HandleCommand` with `Updates{"max_triggers": 3}` on a task with no `max_triggers` asserts the file carries `max_triggers: 3`; `go test ./pkg/command/...` exits 0
+- [ ] The result path is unchanged — evidence: the existing `pkg/result` `MergeFrontmatter` specs for `max_triggers`, `trigger_count` and `trigger_scope` pass with no edit; `go test ./pkg/result/...` exits 0
+- [ ] `docs/controller-design.md` records the two-guard split — evidence: the sentence at `:107` no longer claims the command path is unguarded, and the field-ownership table carries a `max_triggers` row stating "command path introduces, result path refuses"; `grep -c 'not subject to the guard' docs/controller-design.md` returns `0`
 - [ ] `make precommit` exits 0
-- [ ] CHANGELOG carries the fix — evidence: `grep -A2 '## Unreleased' CHANGELOG.md | grep -i max_triggers` returns ≥1 line
+- [ ] CHANGELOG carries the fix — evidence: an `## Unreleased` section is created above the newest version heading and carries a `max_triggers` bullet; `grep -A2 '## Unreleased' CHANGELOG.md | grep -i max_triggers` returns ≥1 line
 - [ ] **Post-Deploy (Rung-2):** on nuke dev, a replay task with no `max_triggers` whose pod can never schedule carries `max_triggers: 3` after the executor's arm decision — evidence: the executor logs `decision=arm max_triggers=3` and the record's frontmatter shows `max_triggers: 3`
   - `deploy_check:` `kubectlnukedev -n agent get deploy agent-task-controller-personal -o jsonpath='{.spec.template.spec.containers[0].image}' | awk -F: '{print $NF}'`
-  - `deploy_target:` `$(git describe --tags --abbrev=0 origin/master)` — resolved at verification time to the tag the release cut produced.
+  - `deploy_target:` `v0.26.4` — the tag this change's release cuts; confirm with `git tag --contains <merge-sha>` before reading the deploy as correct.
 
 ## Verification
 
@@ -107,43 +119,35 @@ Accepted risk: the widening is confined to the command path, whose only legitima
 
 - `make precommit` — exits 0
 - `go test ./pkg/command/... ./pkg/result/...` — exits 0; the inverted ref-only spec and the untouched result-path specs are green
-- `grep -n 'capDefinitionFields' pkg/command/task_update_frontmatter_executor.go` — returns ≥1 line
+- `grep -c 'delete(merged, field)' pkg/command/task_update_frontmatter_executor.go` — returns `0` (the `trigger_scope` branch deletes a literal key and is unaffected)
 
 ### Operator-executable
 
 - `kubectlnukedev -n agent logs deploy/agent-task-executor-personal --since=30m | grep 'decision=arm'` — names the replay task
 - the replay record's frontmatter carries `max_triggers: 3`
 
-## Desired Behavior
-
-1. An `UpdateFrontmatterCommand` that names `max_triggers` is never discarded merely because the record lacks the key; it is discarded only when the record already carries one.
-2. When the record carries `max_triggers`, the on-disk value wins over a differing incoming value, in both directions — a stale snapshot can neither raise nor lower an operator's budget.
-3. An agent result payload can neither introduce `max_triggers` nor change an existing one; the result-path guard is unchanged.
-4. `trigger_count` and `trigger_scope` keep their current command-path handling, including the deliberate non-guarding of the counter.
-5. `TriggerCapEngaged` still reads the key as a presence check, so an introduced `max_triggers: 3` engages the cap on the next controller pass.
-
 ## Constraints
 
-- **Two guards, one change.** `applyControllerOwnedGuard` (`pkg/command/task_update_frontmatter_executor.go`) owns the command path and is the only thing this spec changes. `MergeFrontmatter` (`pkg/result/result_writer.go`) owns the result path and keeps `max_triggers` in `controllerOwnedFields`. `docs/controller-design.md:107` already documents the split correctly; the doc's field-ownership table needs `max_triggers` added with the new rule.
-- The command-path guard emits **no** `GuardDecision` and logs only discards, so introduction is silent. That is pre-existing for this path and is recorded in § Security / Abuse Cases rather than changed here.
+- **Two guards, one change.** `applyControllerOwnedGuard` (`pkg/command/task_update_frontmatter_executor.go`) owns the command path and is the only thing this spec changes. `MergeFrontmatter` (`pkg/result/result_writer.go`) owns the result path and keeps `max_triggers` in `controllerOwnedFields`.
+- The command-path guard emits **no** `GuardDecision` and logs only discards, so introduction is silent. Pre-existing for this path; recorded in § Security / Abuse Cases rather than changed here.
 - Repo conventions are frozen: Ginkgo/Gomega v2, `github.com/bborbe/errors` wrapping, counterfeiter mocks, glog `V(n)` gating.
-- CHANGELOG: add an `## Unreleased` bullet.
+- CHANGELOG: the repo's newest section is a released version, so create `## Unreleased` above it rather than editing a released section.
 
 ## Failure Modes
 
-| Trigger | Expected behavior | Detection |
-|---|---|---|
-| A stale executor snapshot names `max_triggers` on a record with none | Introduced as the default 3 | None — silent by design on this path |
-| A stale snapshot names a different value than on disk | On-disk value kept, incoming discarded | None on this path (the result path reports a `GuardDecision`) |
-| An agent result payload names `max_triggers` | Refused, key stays absent | `GuardDecision` on the result path |
-| A legitimate budget reset to a lower value | Operator sets it directly; the guard does not block an on-disk value | None needed |
-| The key is introduced on a terminal record | The terminal-status pin and `restoreExistingPhase` do not read `max_triggers` | None needed |
+| Trigger | Expected behavior | Recovery | Detection |
+|---|---|---|---|
+| A stale executor snapshot names `max_triggers` on a record with none | Introduced at the named value (the arm writes 3) | Operator overrides with an explicit budget | None — silent on this path |
+| A command names a different value than the record carries | On-disk value kept, incoming discarded | None needed | None on this path (result path reports a `GuardDecision`) |
+| An agent result payload names `max_triggers` | Refused, key stays absent | None needed | `GuardDecision` on the result path |
+| The record already sits at `trigger_count >= 3` when the arm introduces the cap | Escalation fires in the same write — assignee cleared, `## Trigger Cap Escalation` appended | None — this is the intended end state | The escalation section appears |
+| The key is introduced on a terminal record | The terminal-status pin and `restoreExistingPhase` do not read `max_triggers` | None needed | None |
 
 ## Suggested Decomposition
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | Drop the introduction-refusal from `applyControllerOwnedGuard`, invert the ref-only spec and add the refusal spec, add the doc row, add the CHANGELOG bullet | 1-5 | 1-7 | — |
+| 1 | Drop the introduction branch from `applyControllerOwnedGuard`, invert the ref-only spec, add the refusal and arm-shape specs, correct `docs/controller-design.md:107` and its ownership table, create `## Unreleased` with the bullet | 1-5 | 1-7 | — |
 
 ## Do-Nothing Option
 
