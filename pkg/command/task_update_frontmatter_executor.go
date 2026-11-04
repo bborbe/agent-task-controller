@@ -286,11 +286,39 @@ func buildUpdatePatch(
 // capDefinitionFields are the cap's definition. The command-path guard keeps an
 // existing on-disk value over a differing incoming value in both directions, so
 // a command can neither raise nor lower an operator's budget. An incoming value
-// MAY introduce the key when the task carries none: the executor's arm publishes
-// `max_triggers: 3` exactly that way, and refusing the introduction left the cap
-// permanently disarmed. The result path keeps its own refusal (see
-// result.controllerOwnedFields): an agent result payload never introduces the key.
+// MAY introduce the key when the task carries none — but only at or below
+// defaultMaxTriggers: the executor's arm publishes `max_triggers: 3` exactly that
+// way, and refusing the introduction left the cap permanently disarmed. The
+// result path keeps its own refusal (see result.controllerOwnedFields): an agent
+// result payload never introduces the key.
 var capDefinitionFields = []string{"max_triggers"}
+
+// defaultMaxTriggers is the cap a task carrying no explicit `max_triggers` falls
+// back to (the library default-3). Introduction above this value would RAISE the
+// effective cap rather than define it, which is the one thing this guard exists
+// to prevent — and an agent CAN emit an UpdateFrontmatterCommand
+// (docs/controller-design.md § "what each guard covers", spec 042), so the
+// introduction cannot be left unbounded on the assumption that the executor is
+// the only publisher. Introducing exactly the default is a no-op on the effective
+// cap, which is why it is allowed.
+const defaultMaxTriggers = 3
+
+// withinDefaultCap reports whether an incoming max_triggers may introduce the key
+// on a task that carries none. Only values at or below the default are safe: a
+// higher value would let the caller raise its own cap and escape the escalation.
+func withinDefaultCap(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return n <= defaultMaxTriggers
+	case int32:
+		return int(n) <= defaultMaxTriggers
+	case int64:
+		return int(n) <= defaultMaxTriggers
+	case float64:
+		return n <= defaultMaxTriggers
+	}
+	return false
+}
 
 // applyControllerOwnedGuard keeps the controller's frontmatter keys over a stale
 // value the command carries.
@@ -320,6 +348,13 @@ func applyControllerOwnedGuard(
 		}
 		if onDisk, ok := frontmatter[field]; ok {
 			merged[field] = onDisk
+			continue
+		}
+		// Absent on disk: introduction is allowed only within the default cap.
+		// Above it the command is trying to RAISE the cap, and an agent can emit
+		// this command shape, so the key is dropped rather than trusted.
+		if !withinDefaultCap(updates[field]) {
+			delete(merged, field)
 		}
 	}
 

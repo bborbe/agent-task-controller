@@ -261,10 +261,11 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
 			})
 
-			It("introduces max_triggers when the command names it and the task has none", func() {
-				// The executor's arm writes max_triggers: 3 into a record that by
-				// definition carries none. The introduced value governs the predicate:
-				// 99 is above trigger_count 3, so nothing escalates on this write.
+			It("refuses to introduce a max_triggers above the default cap", func() {
+				// An agent CAN emit an UpdateFrontmatterCommand, so an unbounded
+				// introduction would let it raise its own cap and escape the
+				// runaway-task escalation. 99 is above the default 3 and must be
+				// dropped, leaving the task exactly as it was.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: intro-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
@@ -277,20 +278,17 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				fm := parseFrontmatter(taskFile)
-				Expect(fm["max_triggers"]).To(BeEquivalentTo(99))
-				Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
-				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
-				Expect(readErr).NotTo(HaveOccurred())
-				Expect(string(content)).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+				Expect(fm).NotTo(HaveKey("max_triggers"))
 			})
 
 			It("introduces max_triggers: 3 when the executor arms a task that has none", func() {
 				// The arm decision publishes Updates{"max_triggers": 3} for a task with
-				// no max_triggers and no ref. The command path must land the key; the
-				// executor's arm is the only producer of this shape.
+				// no max_triggers and no ref. The command path must land the key, and
+				// the introduced value governs the predicate: trigger_count 3 against a
+				// cap of 3 escalates on THIS write — assignee cleared, section appended.
 				taskFile := writeTaskFile(
 					"task.md",
-					"---\ntask_identifier: arm-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: replay-probe-agent\ntrigger_count: 2\n---\nbody\n",
+					"---\ntask_identifier: arm-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: replay-probe-agent\ntrigger_count: 3\n---\nbody\n",
 				)
 				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
 					TaskIdentifier: lib.TaskIdentifier("arm-cap-uuid"),
@@ -301,6 +299,10 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 
 				fm := parseFrontmatter(taskFile)
 				Expect(fm["max_triggers"]).To(BeEquivalentTo(3))
+				Expect(fm["assignee"]).To(Equal(""))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
 			})
 
 			It("lets a command that names the counter win — that is how the charge lands", func() {
