@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.3
 
 - fix: record a replaced `task_identifier` as `task_identifier_previous` and match that key in `FindTaskFilePath`'s walk, so a result that was already in flight when the scanner repaired a non-UUID identifier still resolves to its task file instead of being dropped
 
