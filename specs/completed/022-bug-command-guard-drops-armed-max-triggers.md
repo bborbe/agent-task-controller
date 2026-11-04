@@ -1,11 +1,13 @@
 ---
-status: prompted
+status: completed
 tags:
     - dark-factory
     - spec
 approved: "2026-11-04T16:16:28Z"
 generating: "2026-11-04T16:22:04Z"
 prompted: "2026-11-04T16:29:59Z"
+verifying: "2026-11-04T16:45:22Z"
+completed: "2026-11-04T16:45:30Z"
 branch: dark-factory/bug-command-guard-drops-armed-max-triggers
 ---
 
