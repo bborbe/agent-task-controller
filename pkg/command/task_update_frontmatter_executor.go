@@ -283,11 +283,13 @@ func buildUpdatePatch(
 	return patch, escalation
 }
 
-// capDefinitionFields are the operator's definition of the cap itself. An agent
-// snapshot may neither raise one nor introduce one where the task has none:
-// `applyUpdateTriggerCap` reads the merged map, so a snapshot that raises
-// max_triggers in the same write would suppress the very escalation this path
-// exists to produce. Only a task's own create sets it.
+// capDefinitionFields are the cap's definition. The command-path guard keeps an
+// existing on-disk value over a differing incoming value in both directions, so
+// a command can neither raise nor lower an operator's budget. An incoming value
+// MAY introduce the key when the task carries none: the executor's arm publishes
+// `max_triggers: 3` exactly that way, and refusing the introduction left the cap
+// permanently disarmed. The result path keeps its own refusal (see
+// result.controllerOwnedFields): an agent result payload never introduces the key.
 var capDefinitionFields = []string{"max_triggers"}
 
 // applyControllerOwnedGuard keeps the controller's frontmatter keys over a stale
@@ -298,9 +300,10 @@ var capDefinitionFields = []string{"max_triggers"}
 // has a `scopeChanged` arm that writes `trigger_count: 1` on purpose, to grant a
 // fresh budget when the task's scope moves (planning → execution), and that write
 // arrives through this executor. Guarding the count would cap a task that had
-// legitimately earned a new budget. The guard therefore covers only what an agent
-// has no business writing at all — the cap's definition, and a scope without the
-// count that always travels with it.
+// legitimately earned a new budget. The guard therefore covers an existing cap
+// value (a differing incoming value loses) and a scope without the count that
+// always travels with it; it deliberately does not refuse the introduction of an
+// absent `max_triggers` on the command path.
 //
 // The consequence is stated rather than hidden: an agent echo that names a lower
 // trigger_count still lands, so this path does not defend the counter against a
@@ -317,9 +320,7 @@ func applyControllerOwnedGuard(
 		}
 		if onDisk, ok := frontmatter[field]; ok {
 			merged[field] = onDisk
-			continue
 		}
-		delete(merged, field)
 	}
 
 	// trigger_scope travels only with a trigger_count: `triggerBudgetWrite` writes

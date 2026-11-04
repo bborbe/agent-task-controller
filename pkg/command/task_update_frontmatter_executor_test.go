@@ -239,9 +239,9 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			)
 
 			It("does not let a snapshot raise max_triggers out from under the cap", func() {
-				// max_triggers is the cap's definition. A snapshot that raises it in
+				// max_triggers is the cap's definition. A command that raises it in
 				// the same write would suppress the escalation, so the on-disk value
-				// wins and an absent one stays absent.
+				// wins over a differing incoming value.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: raise-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\nmax_triggers: 3\n---\nbody\n",
@@ -261,9 +261,10 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(string(content)).To(ContainSubstring("## Trigger Cap Escalation"))
 			})
 
-			It("does not let a snapshot introduce max_triggers on a ref-only task", func() {
-				// A ref-bearing task has no max_triggers and falls back to the lib
-				// default 3. An incoming max_triggers would raise that default.
+			It("introduces max_triggers when the command names it and the task has none", func() {
+				// The executor's arm writes max_triggers: 3 into a record that by
+				// definition carries none. The introduced value governs the predicate:
+				// 99 is above trigger_count 3, so nothing escalates on this write.
 				taskFile := writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: intro-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: pr-reviewer-agent\nref: abc123\ntrigger_count: 3\n---\nbody\n",
@@ -276,8 +277,30 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				fm := parseFrontmatter(taskFile)
-				Expect(fm).NotTo(HaveKey("max_triggers"))
-				Expect(fm["assignee"]).To(Equal(""))
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(99))
+				Expect(fm["assignee"]).To(Equal("pr-reviewer-agent"))
+				content, readErr := os.ReadFile(taskFile) // #nosec G304 -- test helper
+				Expect(readErr).NotTo(HaveOccurred())
+				Expect(string(content)).NotTo(ContainSubstring("## Trigger Cap Escalation"))
+			})
+
+			It("introduces max_triggers: 3 when the executor arms a task that has none", func() {
+				// The arm decision publishes Updates{"max_triggers": 3} for a task with
+				// no max_triggers and no ref. The command path must land the key; the
+				// executor's arm is the only producer of this shape.
+				taskFile := writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: arm-cap-uuid\nstatus: in_progress\nphase: planning\nassignee: replay-probe-agent\ntrigger_count: 2\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("arm-cap-uuid"),
+					Updates:        lib.TaskFrontmatter{"max_triggers": 3},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				fm := parseFrontmatter(taskFile)
+				Expect(fm["max_triggers"]).To(BeEquivalentTo(3))
 			})
 
 			It("lets a command that names the counter win — that is how the charge lands", func() {
