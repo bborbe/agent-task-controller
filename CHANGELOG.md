@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: recognize the hourly period token `YYYYMMDDHH` in `parsePeriodTokenOrdinal`, so `auto_abort_prior` supersedes the prior hour's instance instead of skipping every hourly row as an unrecognized shape
+
 ## v0.26.4
 
 - fix: let the command path introduce `max_triggers` when the task carries none, so the executor's arm actually arms the trigger cap; an existing value still wins, an agent result payload still cannot introduce or change it, and the introduction is bounded at the library default — a command naming a higher cap is refused rather than arming it

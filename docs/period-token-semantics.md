@@ -8,19 +8,26 @@ Token shapes and firing rules are defined in the Obsidian KB page [[Per-Kind Fir
 
 The controller identifies the recurrence kind by matching the suffix against these shapes in recognition order:
 
-1. Daily (`YYYY-MM-DD`)
-2. Weekday (`YYYYWww-<3-letter-abbrev>`)
-3. Weekly (`YYYYWww`)
-4. Monthly (`YYYY-MM`)
-5. Quarterly (`YYYYQq`)
-6. Yearly (`YYYY`)
+1. Hourly (`YYYYMMDDHH`)
+2. Daily (`YYYY-MM-DD`)
+3. Weekday (`YYYYWww-<3-letter-abbrev>`)
+4. Weekly (`YYYYWww`)
+5. Monthly (`YYYY-MM`)
+6. Quarterly (`YYYYQq`)
+7. Yearly (`YYYY`)
 
 Each shape yields a comparable **ordinal**: a value such that a more-recent period produces a larger ordinal. This lets the controller sort same-slug instances most-recent-first regardless of recurrence kind. Because the ordinal is monotonic with calendar time, the ordering is consistent across ISO-week and year boundaries:
 
+- `2025123123 < 2026010100` (hourly year-boundary)
 - `2025W52 < 2026W01` (ISO-week boundary)
 - `2025Q4 < 2026Q1` (quarterly boundary)
 - `2025-12 < 2026-01` (monthly boundary)
 - `2025-12-31 < 2026-01-01` (daily boundary)
+
+The hourly shape is the only 10-digit token, and every other shape is anchored and
+distinct in length or carries a literal separator (`-`, `W`, `Q`), so the shapes
+cannot collide. Its ordinal is hour-resolution: `2026110412` ranks strictly after
+`2026-11-04` (midnight) and strictly before `2026-11-05`.
 
 If no shape matches, the hook logs a warning and is a no-op (non-recurring or unrecognized title).
 

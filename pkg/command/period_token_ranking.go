@@ -18,6 +18,7 @@ import (
 
 // Regexps compiled at package scope (not inside functions).
 var (
+	hourlyRe    = regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})(\d{2})$`)
 	dailyRe     = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
 	weekdayRe   = regexp.MustCompile(`^(\d{4})W(\d{2})-([a-z]{3})$`)
 	weeklyRe    = regexp.MustCompile(`^(\d{4})W(\d{2})$`)
@@ -42,10 +43,20 @@ func isoWeekMonday(isoYear, week int) time.Time {
 // parsePeriodTokenOrdinal parses a single period-token string into a
 // monotonically-increasing ordinal: a more-recent period yields a strictly
 // larger ordinal than any earlier period of the same recurrence kind.
-// Recognition order matches docs/period-token-semantics.md (Daily, Weekday,
-// Weekly, Monthly, Quarterly, Yearly). Returns an error if the token matches
-// no recognized shape (caller must skip such candidates).
+// Recognition order matches docs/period-token-semantics.md (Hourly, Daily,
+// Weekday, Weekly, Monthly, Quarterly, Yearly). Returns an error if the token
+// matches no recognized shape (caller must skip such candidates).
 func parsePeriodTokenOrdinal(ctx context.Context, token string) (int64, error) {
+	// Hourly: YYYYMMDDHH
+	if m := hourlyRe.FindStringSubmatch(token); m != nil {
+		year, _ := strconv.Atoi(m[1])
+		month, _ := strconv.Atoi(m[2])
+		day, _ := strconv.Atoi(m[3])
+		hour, _ := strconv.Atoi(m[4])
+		t := time.Date(year, time.Month(month), day, hour, 0, 0, 0, time.UTC)
+		return t.UTC().Unix(), nil
+	}
+
 	// Daily: YYYY-MM-DD
 	if m := dailyRe.FindStringSubmatch(token); m != nil {
 		year, _ := strconv.Atoi(m[1])

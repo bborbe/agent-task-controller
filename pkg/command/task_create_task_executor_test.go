@@ -1126,6 +1126,52 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
 			})
 
+			// Hourly: YYYYMMDDHH — the prior hour's instance must abort.
+			It("aborts the prior hour's instance when a new hourly instance fires", func() {
+				newTitle := "Check BigQuery Export - 2026110413"
+				cmdObj := buildCmdObj(task.CreateCommand{
+					TaskIdentifier: lib.TaskIdentifier("bq-2026110413"),
+					Title:          newTitle,
+					Frontmatter: lib.TaskFrontmatter{
+						"assignee":         "claude",
+						"status":           "next",
+						"created_by":       "recurring-task-creator",
+						"auto_abort_prior": true,
+					},
+				})
+
+				candidatePaths := []string{
+					"tasks/Check BigQuery Export - 2026110412.md",
+					"tasks/Check BigQuery Export - 2026110411.md",
+				}
+				fakeGit.ListFilesReturns(candidatePaths, nil)
+				fileContents := map[string][]byte{
+					"tasks/Check BigQuery Export - 2026110412.md": inProgress("bq-2026110412"),
+					"tasks/Check BigQuery Export - 2026110411.md": inProgress("bq-2026110411"),
+				}
+				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
+					if content, ok := fileContents[relPath]; ok {
+						return content, nil
+					}
+					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				}
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+
+				// Most recent first: 2026110412 then 2026110411.
+				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
+				Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
+				Expect(absPath).To(HaveSuffix("Check BigQuery Export - 2026110412.md"))
+				resultContent, parseErr := modify(
+					fileContents["tasks/Check BigQuery Export - 2026110412.md"],
+				)
+				Expect(parseErr).NotTo(HaveOccurred())
+				Expect(string(resultContent)).To(ContainSubstring("status: aborted"))
+				Expect(string(resultContent)).To(ContainSubstring("phase: done"))
+			})
+
 			// AC: look-back cap with small K
 			It("honors look-back bound k and only closes the k most-recent candidates", func() {
 				smallK := 2
