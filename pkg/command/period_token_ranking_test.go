@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -41,9 +42,32 @@ var _ = Describe("parsePeriodTokenOrdinal", func() {
 			Entry("Monthly boundary", "2025-12", "2026-01"),
 			// Daily boundary
 			Entry("Daily boundary", "2025-12-31", "2026-01-01"),
+			// Hourly boundary
+			Entry("Hourly year-boundary", "2025123123", "2026010100"),
+			// Hourly steady
+			Entry("Hourly steady", "2026110412", "2026110413"),
 			// Yearly
 			Entry("Yearly", "2025", "2026"),
 		)
+	})
+
+	Describe("hourly token YYYYMMDDHH", func() {
+		It("parses to an hour-resolution UTC ordinal", func() {
+			ord, err := command.ParsePeriodTokenOrdinal(ctx, "2026110412")
+			Expect(err).To(BeNil())
+			Expect(ord).To(Equal(time.Date(2026, time.November, 4, 12, 0, 0, 0, time.UTC).Unix()))
+		})
+
+		It("sits after the same day's daily ordinal and before the next day's", func() {
+			hourly, err := command.ParsePeriodTokenOrdinal(ctx, "2026110412")
+			Expect(err).To(BeNil())
+			day, err := command.ParsePeriodTokenOrdinal(ctx, "2026-11-04")
+			Expect(err).To(BeNil())
+			nextDay, err := command.ParsePeriodTokenOrdinal(ctx, "2026-11-05")
+			Expect(err).To(BeNil())
+			Expect(hourly).To(BeNumerically(">", day))
+			Expect(hourly).To(BeNumerically("<", nextDay))
+		})
 	})
 
 	Describe("weekday of same week ties", func() {
