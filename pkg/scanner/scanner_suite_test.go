@@ -20,6 +20,9 @@ func TestSuite(t *testing.T) {
 	format.TruncatedDiff = false
 	RegisterFailHandler(Fail)
 	suiteConfig, reporterConfig := GinkgoConfiguration()
-	suiteConfig.Timeout = 60 * time.Second
+	// Wider than the repo's 60 s default: most specs here shell out to `git` to
+	// build a real repository. Measured 2026-11-08 on a loaded host: ~48 s run
+	// alone, and over 60 s inside a parallel `make precommit`, which timed out.
+	suiteConfig.Timeout = 180 * time.Second
 	RunSpecs(t, "Test Suite", suiteConfig, reporterConfig)
 }
