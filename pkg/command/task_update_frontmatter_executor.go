@@ -112,9 +112,26 @@ func NewUpdateFrontmatterExecutor(
 			); err != nil {
 				return nil, nil, err
 			}
-			// Empty updates with no body section is a no-op — nothing to write.
-			if len(cmd.Updates) == 0 && cmd.Body == nil {
-				return nil, nil, nil
+			// A command that names neither updates nor a body section, or carries
+			// no task identifier, is a producer bug (typically a field map sent
+			// under the wrong key). Report it as a failure rather than succeeding
+			// without writing: a nil return would publish a success result for a
+			// write that never happened. The error MUST NOT wrap
+			// cdb.ErrCommandObjectSkipped — that would suppress the result
+			// entirely, which is the silent behaviour this check removes.
+			if err := cmd.Validate(ctx); err != nil {
+				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
+				glog.Warningf(
+					"update-frontmatter: invalid command for %s: %v",
+					cmd.TaskIdentifier,
+					err,
+				)
+				return nil, nil, errors.Wrapf(
+					ctx,
+					err,
+					"invalid update-frontmatter command for %s",
+					cmd.TaskIdentifier,
+				)
 			}
 			// The identifier IS the address: no path lookup, no working copy.
 			task, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
