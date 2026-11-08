@@ -234,7 +234,7 @@ On agent-task-v1-request (operation: "update-frontmatter"):
   │
   ├── deserialize UpdateFrontmatterCommand
   ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
-  ├── if Updates is empty AND Body is nil → return nil (no-op, no write)
+  ├── cmd.Validate: Updates empty AND Body nil, or empty TaskIdentifier → count error, return plain error → failure result published, not retried (never ErrCommandObjectSkipped)
   ├── ReadTask(task_identifier) through the typed vault API — the identifier is the address
   ├── if not found → log warning, return nil
   ├── buildUpdatePatch: merge Updates onto a copy of the task's frontmatter

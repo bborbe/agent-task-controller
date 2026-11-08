@@ -15,6 +15,8 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
+	cqrsmocks "github.com/bborbe/cqrs/mocks"
+	"github.com/bborbe/log"
 	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -461,23 +463,37 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			})
 		})
 
-		Context("empty updates", func() {
-			It("returns nil without writing when Updates is nil", func() {
+		Context("invalid command", func() {
+			It("rejects a command with neither Updates nor Body", func() {
 				writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: noop-uuid\nstatus: open\n---\nbody\n",
+				)
+				before := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues("update-frontmatter", "error"),
 				)
 				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
 					TaskIdentifier: lib.TaskIdentifier("noop-uuid"),
 					Updates:        nil,
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+				Expect(err.Error()).To(ContainSubstring("Updates or Body"))
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(before + 1))
 			})
 
-			It("returns nil without writing when Updates is empty map", func() {
+			It("rejects a command with an empty Updates map and no Body", func() {
 				writeTaskFile(
 					"task.md",
 					"---\ntask_identifier: noop2-uuid\nstatus: open\n---\nbody\n",
@@ -487,9 +503,95 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					Updates:        lib.TaskFrontmatter{},
 				})
 				_, _, err := executor.HandleCommand(ctx, nil, cmd)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+				Expect(err.Error()).To(ContainSubstring("Updates or Body"))
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+			})
+
+			It("rejects a command with no task identifier", func() {
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier(""),
+					Updates:        lib.TaskFrontmatter{"phase": "done"},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+				Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			})
+
+			It("writes the body when Updates is empty but Body is set", func() {
+				writeTaskFile(
+					"task.md",
+					"---\ntask_identifier: body-only-uuid\nstatus: open\n---\nbody\n",
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("body-only-uuid"),
+					Updates:        nil,
+					Body: &task.BodySection{
+						Heading: "## Result",
+						Section: "## Result\n\nfinished\n",
+					},
+				})
+				_, _, err := executor.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(1))
+			})
+		})
+
+		Context("wrong-key command shape", func() {
+			It(
+				"rejects a field map sent under the wrong key instead of silently succeeding",
+				func() {
+					// A producer that sends `frontmatter` instead of `updates` decodes to
+					// an empty command. The old no-op branch reported success without
+					// writing, hiding the bug; the decode path must now surface it.
+					event, parseErr := base.ParseEvent(ctx, map[string]interface{}{
+						"taskIdentifier": "wrongkey-uuid",
+						"frontmatter": map[string]interface{}{
+							"status": "in_progress",
+						},
+					})
+					Expect(parseErr).NotTo(HaveOccurred())
+					cmd := cdb.CommandObject{
+						Command: base.Command{
+							RequestID: base.NewRequestID(),
+							Operation: command.UpdateFrontmatterCommandOperation,
+							Initiator: "test",
+							Data:      event,
+						},
+						SchemaID: schemaID,
+					}
+					_, _, err := executor.HandleCommand(ctx, nil, cmd)
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+					Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+					Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				},
+			)
+		})
+
+		Context("result sender", func() {
+			It("publishes a failure result and does not retry an empty command", func() {
+				resultSender := &cqrsmocks.CDBResultObjectSender{}
+				wrapped := cdb.NewCommandObjectExecutorTxResultSender(
+					executor,
+					resultSender,
+					log.DefaultSamplerFactory,
+				)
+				cmd := buildCmdObj(task.UpdateFrontmatterCommand{
+					TaskIdentifier: lib.TaskIdentifier("noop-result-uuid"),
+					Updates:        nil,
+				})
+				_, _, err := wrapped.HandleCommand(ctx, nil, cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resultSender.SendCallCount()).To(Equal(1))
+				_, resultObject := resultSender.SendArgsForCall(0)
+				Expect(resultObject.Result.Success).To(BeFalse())
+				Expect(resultObject.Result.Message).To(ContainSubstring("Updates or Body"))
 			})
 		})
 
