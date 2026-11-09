@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.10
 
 - fix: **an `update-frontmatter` addressed to this vault fails when the task does not exist, instead of reporting a success for a write that never happened.** The executor returned `nil` on a not-found, which published a SUCCESS result for a command that wrote nothing — the false success that hid a real one. `agent-task-executor`'s probe publishes `create-task` and `update-frontmatter` back to back, and while `vault-api`'s read path could not see a just-created task the reset this command carries (`trigger_count`, `current_job`, `job_started_at`, `spawn_notification`) was dropped with only a log line, leaving the executor to read a stale `current_job` and respawn 2–3 jobs for one probe. A command that carries `target_vault` is addressed to this vault and is supposed to find its task here, so a miss now returns an error naming the task and the vault (never wrapped in `cdb.ErrCommandObjectSkipped`, which would suppress the result event entirely). An UNSTAMPED command keeps the skip: both controllers consume the shared topic and attempt it, so on the non-owner a miss is expected, and failing it there would turn every legacy write into a failure result on the vault that never held the task.
 
