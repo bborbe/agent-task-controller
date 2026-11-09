@@ -136,11 +136,45 @@ func NewUpdateFrontmatterExecutor(
 			// The identifier IS the address: no path lookup, no working copy.
 			task, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
 			if errors.Is(err, vaultapi.ErrNotFound) {
+				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
+				if cmd.TargetVault != "" {
+					// Addressed to THIS vault (frontmatterCommandVaultMismatch has
+					// already returned for any other target), so the task is
+					// supposed to be here and its absence is a failure, not a
+					// skip. It used to return nil, which published a SUCCESS
+					// result for a write that never happened — the false success
+					// that hid a real one: the executor's probe publishes
+					// create-task and update-frontmatter back to back, and while
+					// the read path could not see a just-created task the reset
+					// this command carries was silently dropped.
+					//
+					// The error MUST NOT wrap cdb.ErrCommandObjectSkipped: that
+					// suppresses the result event entirely, which is the silence
+					// this branch exists to remove.
+					glog.Warningf(
+						"update-frontmatter: task %s not found in vault %q",
+						cmd.TaskIdentifier,
+						vaultName,
+					)
+					return nil, nil, errors.Wrapf(
+						ctx,
+						err,
+						"update-frontmatter: task %s not found in vault %q",
+						cmd.TaskIdentifier,
+						vaultName,
+					)
+				}
+				// An UNSTAMPED command is legacy: both controllers consume the
+				// shared topic and attempt it, so on the non-owning one the task
+				// legitimately does not exist. Failing it there would turn every
+				// legacy write into a failure result on the vault that never held
+				// the task, so this arm keeps the skip — the identifier is still
+				// named in the log and counted, so a genuine miss on an owner is
+				// not silent either.
 				glog.Warningf(
-					"update-frontmatter: task not found for %s, skipping",
+					"update-frontmatter: task not found for %s, skipping (command carries no target_vault)",
 					cmd.TaskIdentifier,
 				)
-				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
 				return nil, nil, nil
 			}
 			if err != nil {
