@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800
 
