@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: run the capped-idle sweep on the recurring 5-minute metrics pass, over a candidate set that pass rebuilds from a fresh listing and read — on a trigger-only controller (`POLL_INTERVAL=0s`, which is what prod runs) the sweep's candidates came from `buildIndex`, a one-shot whose slice dies with the function while `v.hashes` is never populated, so a record that reached its cap after boot, or a task file created after boot, waited for the next pod restart; the pass costs no extra listing or read because the age and census series already parse every file, and every pass now logs one summary line plus one line per escalated record so a quiet sweep is distinguishable from one that never ran
+
 ## v0.26.7
 
 - fix: update-frontmatter now reports a command with no updates and no body (e.g. a field map sent under the wrong key), or with no task identifier, as a failed result instead of a silent success
