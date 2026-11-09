@@ -246,7 +246,10 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 		// instruments with separate definitions and separate skip rules, but they
 		// read the same file facts, so a second listing and a second read of every
 		// task file bought nothing and cost a full extra pass over the vault.
-		v.recomputeVaultMetrics(ctx)
+		//
+		// The same pass drives the capped-idle sweep, which is what makes the sweep
+		// recur on a trigger-only controller: see sweepCappedIdle.
+		v.sweepCappedIdle(ctx)
 		metricsTicker := time.NewTicker(v.metricsInterval)
 		defer metricsTicker.Stop()
 		metricsTick = metricsTicker.C
@@ -260,7 +263,7 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 		case <-v.trigger:
 			v.RunCycle(ctx, results)
 		case <-metricsTick:
-			v.recomputeVaultMetrics(ctx)
+			v.sweepCappedIdle(ctx)
 		}
 	}
 }

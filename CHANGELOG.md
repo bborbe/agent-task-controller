@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - refactor: port the `github-update-go` supersede hook off `gitrestclient` onto the typed vault API. The candidate set is now a typed listing question — `ListTasks` with `status: in_progress` and `task_type: github-update-go` — instead of a filename glob plus a read of every matched file, and the prior is aborted with `PatchTask` addressed by **task identifier** instead of a path-addressed read-modify-write-commit. The repo is still re-checked against each returned task's own frontmatter, so a page whose title merely looks like an update task is never aborted, and the just-created task is skipped by identifier rather than by comparing paths. `k` still bounds how many **open** priors one call aborts; the API now returns only open rows, so no budget is spent on the closed history the glob scan had to read past. ⚠️ `superseded_by` still carries a vault-relative **path** — specs 002 and 004 freeze that field as the new instance's relPath and the vault reads it as one — so the port changes how the prior is *found and written*, not what the transition says.
 
+## v0.26.8
+
+- fix: run the capped-idle sweep on the recurring 5-minute metrics pass, over a candidate set that pass rebuilds from a fresh listing and read — on a trigger-only controller (`POLL_INTERVAL=0s`, which is what prod runs) the sweep's candidates came from `buildIndex`, a one-shot whose slice dies with the function while `v.hashes` is never populated, so a record that reached its cap after boot, or a task file created after boot, waited for the next pod restart; the pass costs no extra listing or read because the age and census series already parse every file, and every pass now logs one summary line plus one line per escalated record so a quiet sweep is distinguishable from one that never ran
+
 ## v0.26.7
 
 - fix: update-frontmatter now reports a command with no updates and no body (e.g. a field map sent under the wrong key), or with no task identifier, as a failed result instead of a silent success

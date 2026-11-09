@@ -117,6 +117,11 @@ func (v *vaultScanner) escalateCappedPaths(ctx context.Context, paths []string) 
 			continue
 		}
 		escalated++
+		// One line per record, never per pass: this is what makes an escalation
+		// attributable to a file. The count alone says something happened; only the
+		// path says what, and a record escalated by the periodic sweep is otherwise
+		// indistinguishable from one escalated at boot.
+		glog.Infof("escalateCappedIdle: escalated %s", relPath)
 		// Zero-hash sentinel so a later cycle re-processes the file and publishes
 		// the change, with the cleared assignee recorded so the sweep does not
 		// re-escalate it before that cycle runs. Only touches an entry that exists:
