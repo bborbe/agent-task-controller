@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	lib "github.com/bborbe/agent"
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
@@ -50,23 +51,33 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 // A failed listing writes nothing at all: the previous pass's values stay in
 // place, exactly as each instrument behaved on its own. A file that cannot be read
 // or parsed is skipped by both instruments, matching their per-file behaviour.
-func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) {
+//
+// It returns the paths whose frontmatter is capped, still assigned and therefore a
+// candidate for the capped-idle sweep, together with the number of files it listed.
+// It does not escalate them itself: this function stays read-only, and the caller
+// (sweepCappedIdle) performs the writes. Collecting the candidates here rather than
+// in a pass of its own is what makes the sweep cost nothing extra — this pass
+// already lists the directory and reads and parses every file, so a second listing
+// and a second read of every file would buy nothing and cost a full extra pass over
+// the vault.
+func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) ([]string, int) {
 	now := time.Now()
 	glob := v.taskDir + "/*.md"
 	paths, err := v.ops.listFiles(ctx, glob)
 	if err != nil {
 		glog.Warningf("metrics recompute: list %s failed: %v", glob, err)
-		return
+		return nil, 0
 	}
 
 	ageCounts := make(map[metrics.TaskAgeBucket]int, len(metrics.AvailableTaskAgeBuckets))
 	oldest := time.Duration(0)
 	censusCounts := make(map[openTaskPair]int, len(v.openTaskPairs))
+	var cappedAssigned []string
 
 	for _, relPath := range paths {
 		select {
 		case <-ctx.Done():
-			return
+			return nil, 0
 		default:
 		}
 		content, readErr := v.ops.readFile(ctx, relPath)
@@ -92,8 +103,16 @@ func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) {
 		if pair, open := openTaskPairFromMap(fmMap); open {
 			censusCounts[pair]++
 		}
+
+		// The candidate list the periodic sweep escalates. The clause is the cheap
+		// pre-filter only: escalateCappedContent re-checks every clause against the
+		// on-disk file at write time, so a stale entry here is a no-op.
+		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) && fm.Assignee() != "" {
+			cappedAssigned = append(cappedAssigned, relPath)
+		}
 	}
 
 	v.publishTaskAgeCounts(ageCounts, oldest, v.vaultName)
 	v.publishCensusCounts(censusCounts)
+	return cappedAssigned, len(paths)
 }
