@@ -615,6 +615,12 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			// happened, which is how the probe's reset was lost without a trace
 			// while the read path could not yet see the task it had just created.
 			It("fails, naming the task, when the command is addressed to this vault", func() {
+				beforeErrors := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues(
+						"update-frontmatter",
+						"error",
+					),
+				)
 				_, _, err := executor.HandleCommand(
 					ctx,
 					nil,
@@ -625,6 +631,16 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					}),
 				)
 				Expect(err).To(HaveOccurred())
+				// Counted as a failure, not as a skip: outcome="not_found" means
+				// "missed and skipped", and this arm no longer skips.
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(beforeErrors + 1))
 				Expect(err.Error()).To(ContainSubstring("nonexistent-uuid"))
 				Expect(err.Error()).To(ContainSubstring("openclaw"))
 				// The skip sentinel suppresses the result event entirely; a miss

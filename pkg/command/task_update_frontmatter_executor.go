@@ -136,7 +136,6 @@ func NewUpdateFrontmatterExecutor(
 			// The identifier IS the address: no path lookup, no working copy.
 			task, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
 			if errors.Is(err, vaultapi.ErrNotFound) {
-				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
 				if cmd.TargetVault != "" {
 					// Addressed to THIS vault (frontmatterCommandVaultMismatch has
 					// already returned for any other target), so the task is
@@ -151,6 +150,11 @@ func NewUpdateFrontmatterExecutor(
 					// The error MUST NOT wrap cdb.ErrCommandObjectSkipped: that
 					// suppresses the result event entirely, which is the silence
 					// this branch exists to remove.
+					// Counted as `error`, not `not_found`: `not_found` means "the read
+					// missed and the command was skipped", and this arm no longer
+					// skips. A dashboard or alert keyed on outcome="error" has to see
+					// the commands that started failing.
+					m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 					glog.Warningf(
 						"update-frontmatter: task %s not found in vault %q",
 						cmd.TaskIdentifier,
@@ -171,6 +175,7 @@ func NewUpdateFrontmatterExecutor(
 				// the task, so this arm keeps the skip — the identifier is still
 				// named in the log and counted, so a genuine miss on an owner is
 				// not silent either.
+				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
 				glog.Warningf(
 					"update-frontmatter: task not found for %s, skipping (command carries no target_vault)",
 					cmd.TaskIdentifier,

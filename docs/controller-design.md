@@ -236,7 +236,10 @@ On agent-task-v1-request (operation: "update-frontmatter"):
   ├── routing guard: non-empty TargetVault != VAULT_NAME → skip (glog.V(2), no counter, no write, ErrCommandObjectSkipped)
   ├── cmd.Validate: Updates empty AND Body nil, or empty TaskIdentifier → count error, return plain error → failure result published, not retried (never ErrCommandObjectSkipped)
   ├── ReadTask(task_identifier) through the typed vault API — the identifier is the address
-  ├── if not found → log warning, return nil
+  ├── if not found → count not_found, then split on the stamp:
+  │     ├── TargetVault == "" (legacy; every controller attempts it) → log warning, return nil (skip)
+  │     └── TargetVault == VAULT_NAME (addressed to this vault, so the task is supposed to be here)
+  │           → log warning, return plain error → failure result published, not retried, never ErrCommandObjectSkipped
   ├── buildUpdatePatch: merge Updates onto a copy of the task's frontmatter
   │     ├── if merged phase == "human_review" → result.ClearAssigneeIfHumanReview (spec 042)
   │     ├── heal-on-write: if target_vault absent → stamp VAULT_NAME (never overrides an existing value)
