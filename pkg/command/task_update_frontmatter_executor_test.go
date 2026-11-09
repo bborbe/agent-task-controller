@@ -596,7 +596,13 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 		})
 
 		Context("task not found", func() {
-			It("returns nil without writing when no matching file exists", func() {
+			It("returns nil without writing when the command carries no target_vault", func() {
+				beforeNotFound := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues(
+						"update-frontmatter",
+						"not_found",
+					),
+				)
 				_, _, err := executor.HandleCommand(
 					ctx,
 					nil,
@@ -606,6 +612,55 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 					}),
 				)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"not_found",
+						),
+					),
+				).To(Equal(beforeNotFound+1),
+					"the skip arm is the one counted as not_found")
+			})
+
+			// A command addressed to this vault is supposed to find its task here.
+			// Returning nil published a SUCCESS result for a write that never
+			// happened, which is how the probe's reset was lost without a trace
+			// while the read path could not yet see the task it had just created.
+			It("fails, naming the task, when the command is addressed to this vault", func() {
+				beforeErrors := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues(
+						"update-frontmatter",
+						"error",
+					),
+				)
+				_, _, err := executor.HandleCommand(
+					ctx,
+					nil,
+					buildCmdObj(task.UpdateFrontmatterCommand{
+						TaskIdentifier: lib.TaskIdentifier("nonexistent-uuid"),
+						TargetVault:    "openclaw",
+						Updates:        lib.TaskFrontmatter{"trigger_count": 0},
+					}),
+				)
+				Expect(err).To(HaveOccurred())
+				// Counted as a failure, not as a skip: outcome="not_found" means
+				// "missed and skipped", and this arm no longer skips.
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"error",
+						),
+					),
+				).To(Equal(beforeErrors + 1))
+				Expect(err.Error()).To(ContainSubstring("nonexistent-uuid"))
+				Expect(err.Error()).To(ContainSubstring("openclaw"))
+				// The skip sentinel suppresses the result event entirely; a miss
+				// addressed to this vault must reach the result topic as a failure.
+				Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
 				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
 			})
