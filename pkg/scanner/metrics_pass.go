@@ -53,20 +53,24 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 // or parsed is skipped by both instruments, matching their per-file behaviour.
 //
 // It returns the paths whose frontmatter is capped, still assigned and therefore a
-// candidate for the capped-idle sweep, together with the number of files it listed.
+// candidate for the capped-idle sweep, the number of files it listed, and whether the
+// pass completed — false on a failed listing or a cancelled context, where the caller
+// must not treat an empty candidate set as "nothing to escalate".
 // It does not escalate them itself: this function stays read-only, and the caller
 // (sweepCappedIdle) performs the writes. Collecting the candidates here rather than
 // in a pass of its own is what makes the sweep cost nothing extra — this pass
 // already lists the directory and reads and parses every file, so a second listing
 // and a second read of every file would buy nothing and cost a full extra pass over
 // the vault.
-func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) ([]string, int) {
+func (v *vaultScanner) recomputeVaultMetrics(
+	ctx context.Context,
+) (candidates []string, fileCount int, ok bool) {
 	now := time.Now()
 	glob := v.taskDir + "/*.md"
 	paths, err := v.ops.listFiles(ctx, glob)
 	if err != nil {
 		glog.Warningf("metrics recompute: list %s failed: %v", glob, err)
-		return nil, 0
+		return nil, 0, false
 	}
 
 	ageCounts := make(map[metrics.TaskAgeBucket]int, len(metrics.AvailableTaskAgeBuckets))
@@ -77,15 +81,15 @@ func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) ([]string, int
 	for _, relPath := range paths {
 		select {
 		case <-ctx.Done():
-			return nil, 0
+			return nil, 0, false
 		default:
 		}
 		content, readErr := v.ops.readFile(ctx, relPath)
 		if readErr != nil {
 			continue
 		}
-		fmMap, ok := parseFrontmatterMap(ctx, content)
-		if !ok {
+		fmMap, parsed := parseFrontmatterMap(ctx, content)
+		if !parsed {
 			continue
 		}
 
@@ -114,5 +118,5 @@ func (v *vaultScanner) recomputeVaultMetrics(ctx context.Context) ([]string, int
 
 	v.publishTaskAgeCounts(ageCounts, oldest, v.vaultName)
 	v.publishCensusCounts(censusCounts)
-	return cappedAssigned, len(paths)
+	return cappedAssigned, len(paths), true
 }

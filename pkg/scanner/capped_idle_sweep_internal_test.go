@@ -284,7 +284,8 @@ var _ = Describe("periodic capped-idle sweep", func() {
 		).(*vaultScanner)
 		Expect(ok).To(BeTrue())
 
-		candidates, fileCount := vs.recomputeVaultMetrics(ctx)
+		candidates, fileCount, ok := vs.recomputeVaultMetrics(ctx)
+		Expect(ok).To(BeTrue())
 		Expect(fileCount).To(Equal(2))
 		Expect(candidates).To(ConsistOf("tasks/capped.md"))
 	})

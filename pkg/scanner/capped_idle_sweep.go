@@ -42,7 +42,13 @@ import (
 // able to say the sweep is alive and how long it took.
 func (v *vaultScanner) sweepCappedIdle(ctx context.Context) {
 	start := time.Now()
-	candidates, fileCount := v.recomputeVaultMetrics(ctx)
+	candidates, fileCount, ok := v.recomputeVaultMetrics(ctx)
+	if !ok {
+		// A failed listing or a cancelled context: recomputeVaultMetrics has already
+		// logged the former, and the latter needs no log. An empty candidate set here
+		// would read as "nothing to escalate", which is not what happened.
+		return
+	}
 	escalated, writeError := v.escalateCappedPaths(ctx, candidates)
 	glog.Infof(
 		"escalateCappedIdle: sweep pass over %d file(s) in %v (%d candidate(s), %d escalated)",
