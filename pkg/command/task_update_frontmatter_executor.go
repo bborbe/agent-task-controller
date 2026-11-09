@@ -57,6 +57,62 @@ func frontmatterCommandVaultMismatch(
 	)
 }
 
+// notFoundOutcome decides what a missing task means for one update-frontmatter
+// command. It returns nil when the miss is to be skipped, and a non-skipped
+// error when the command has failed.
+//
+// The split is the command's own target_vault. frontmatterCommandVaultMismatch
+// has already returned for any target other than this vault, so a non-empty
+// TargetVault here means "addressed to THIS vault" — the task is supposed to be
+// here, and its absence is a failure. It used to return nil, which published a
+// SUCCESS result for a write that never happened: the false success that hid a
+// real one. The executor's probe publishes create-task and update-frontmatter
+// back to back, and while the read path could not see a just-created task the
+// reset this command carries was dropped with only a log line.
+//
+// The error MUST NOT wrap cdb.ErrCommandObjectSkipped: that suppresses the
+// result event entirely, which is the silence this branch exists to remove.
+//
+// An UNSTAMPED command is legacy: both controllers consume the shared topic and
+// attempt it, so on the non-owning one the task legitimately does not exist, and
+// failing it there would turn every legacy write into a failure result on the
+// vault that never held the task. That arm keeps the skip. It is counted and
+// logged, so a miss is not invisible — but be precise about what it publishes:
+// returning nil with result events enabled reports SUCCESS for a write that did
+// not happen. That is pre-existing behaviour for the legacy population, not a
+// claim that the write landed, and it is why the stamp above matters.
+func notFoundOutcome(
+	ctx context.Context,
+	cmd task.UpdateFrontmatterCommand,
+	vaultName string,
+	m metrics.Metrics,
+) error {
+	if cmd.TargetVault != "" {
+		// Counted as `error`, not `not_found`: `not_found` means "the read missed
+		// and the command was skipped", and this arm no longer skips. A dashboard
+		// or alert keyed on outcome="error" has to see the commands that fail.
+		m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
+		glog.Warningf(
+			"update-frontmatter: task %s not found in vault %q",
+			cmd.TaskIdentifier,
+			vaultName,
+		)
+		return errors.Wrapf(
+			ctx,
+			vaultapi.ErrNotFound,
+			"update-frontmatter: task %s not found in vault %q",
+			cmd.TaskIdentifier,
+			vaultName,
+		)
+	}
+	m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
+	glog.Warningf(
+		"update-frontmatter: task not found for %s, skipping (command carries no target_vault)",
+		cmd.TaskIdentifier,
+	)
+	return nil
+}
+
 // UpdateFrontmatterCommandOperation is the CQRS command operation name for partial frontmatter update.
 const UpdateFrontmatterCommandOperation base.CommandOperation = task.UpdateFrontmatterCommandOperation
 
@@ -136,51 +192,7 @@ func NewUpdateFrontmatterExecutor(
 			// The identifier IS the address: no path lookup, no working copy.
 			task, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
 			if errors.Is(err, vaultapi.ErrNotFound) {
-				if cmd.TargetVault != "" {
-					// Addressed to THIS vault (frontmatterCommandVaultMismatch has
-					// already returned for any other target), so the task is
-					// supposed to be here and its absence is a failure, not a
-					// skip. It used to return nil, which published a SUCCESS
-					// result for a write that never happened — the false success
-					// that hid a real one: the executor's probe publishes
-					// create-task and update-frontmatter back to back, and while
-					// the read path could not see a just-created task the reset
-					// this command carries was silently dropped.
-					//
-					// The error MUST NOT wrap cdb.ErrCommandObjectSkipped: that
-					// suppresses the result event entirely, which is the silence
-					// this branch exists to remove.
-					// Counted as `error`, not `not_found`: `not_found` means "the read
-					// missed and the command was skipped", and this arm no longer
-					// skips. A dashboard or alert keyed on outcome="error" has to see
-					// the commands that started failing.
-					m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
-					glog.Warningf(
-						"update-frontmatter: task %s not found in vault %q",
-						cmd.TaskIdentifier,
-						vaultName,
-					)
-					return nil, nil, errors.Wrapf(
-						ctx,
-						err,
-						"update-frontmatter: task %s not found in vault %q",
-						cmd.TaskIdentifier,
-						vaultName,
-					)
-				}
-				// An UNSTAMPED command is legacy: both controllers consume the
-				// shared topic and attempt it, so on the non-owning one the task
-				// legitimately does not exist. Failing it there would turn every
-				// legacy write into a failure result on the vault that never held
-				// the task, so this arm keeps the skip — the identifier is still
-				// named in the log and counted, so a genuine miss on an owner is
-				// not silent either.
-				m.FrontmatterCommandsTotal("update-frontmatter", "not_found").Inc()
-				glog.Warningf(
-					"update-frontmatter: task not found for %s, skipping (command carries no target_vault)",
-					cmd.TaskIdentifier,
-				)
-				return nil, nil, nil
+				return nil, nil, notFoundOutcome(ctx, cmd, vaultName, m)
 			}
 			if err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()

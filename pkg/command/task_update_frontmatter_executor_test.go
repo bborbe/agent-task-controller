@@ -597,6 +597,12 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 
 		Context("task not found", func() {
 			It("returns nil without writing when the command carries no target_vault", func() {
+				beforeNotFound := testutil.ToFloat64(
+					metrics.FrontmatterCommandsTotal.WithLabelValues(
+						"update-frontmatter",
+						"not_found",
+					),
+				)
 				_, _, err := executor.HandleCommand(
 					ctx,
 					nil,
@@ -608,6 +614,15 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
 				Expect(fakeVault.PutBodyCallCount()).To(Equal(0))
+				Expect(
+					testutil.ToFloat64(
+						metrics.FrontmatterCommandsTotal.WithLabelValues(
+							"update-frontmatter",
+							"not_found",
+						),
+					),
+				).To(Equal(beforeNotFound+1),
+					"the skip arm is the one counted as not_found")
 			})
 
 			// A command addressed to this vault is supposed to find its task here.
