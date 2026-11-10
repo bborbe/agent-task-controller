@@ -42,9 +42,37 @@ func ValidateVaultName(ctx context.Context, vaultName string) error {
 	return nil
 }
 
+// ValidateTargetVault returns a validation error when a create command's
+// TargetVault is empty or does not match the vault slug regex. Callers must run
+// it BEFORE ShouldProcess: an empty target would otherwise resolve to
+// LegacyDefaultVault and a malformed one would be dropped as cross-vault
+// traffic — both silent, and both the deadlock the create guard exists to
+// remove.
+func ValidateTargetVault(ctx context.Context, targetVault string) error {
+	if targetVault == "" {
+		return errors.Wrapf(
+			ctx,
+			validation.Error,
+			"target_vault must not be empty; the producer must stamp the owning vault",
+		)
+	}
+	if !targetVaultSlugRegexp.MatchString(targetVault) {
+		return errors.Wrapf(
+			ctx,
+			validation.Error,
+			"target_vault %q must match ^[a-z][a-z0-9-]*$",
+			targetVault,
+		)
+	}
+	return nil
+}
+
 // ShouldProcess returns true iff the controller's vaultName owns this command.
-// An empty cmd.TargetVault falls back to LegacyDefaultVault (spec 044 AC 12).
-// A non-empty cmd.TargetVault is compared verbatim (no case-folding).
+// An empty cmd.TargetVault falls back to LegacyDefaultVault (spec 044 AC 12);
+// the create path rejects an empty target via ValidateTargetVault before
+// calling this, so the fallback is reachable only from a caller that skipped
+// that guard. A non-empty cmd.TargetVault is compared verbatim (no
+// case-folding).
 func ShouldProcess(cmd task.CreateCommand, vaultName string) bool {
 	effective := cmd.TargetVault
 	if effective == "" {
