@@ -81,7 +81,12 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 		Expect(os.RemoveAll(tmpDir)).To(Succeed())
 	})
 
+	// buildCmdObj models a producer that stamps the owning vault; the create path
+	// now refuses an empty TargetVault, so the default lives here.
 	buildCmdObj := func(cmd task.CreateCommand) cdb.CommandObject {
+		if cmd.TargetVault == "" {
+			cmd.TargetVault = "openclaw"
+		}
 		event, err := base.ParseEvent(ctx, cmd)
 		Expect(err).NotTo(HaveOccurred())
 		return cdb.CommandObject{
