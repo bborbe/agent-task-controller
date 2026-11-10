@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-11-10T07:50:29Z"
+generating: "2026-11-10T08:20:20Z"
+prompted: "2026-11-10T08:28:37Z"
 branch: dark-factory/spec-023
 ---
 

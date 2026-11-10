@@ -35,6 +35,12 @@ var ErrAlreadyExists = stderrors.New("task already exists")
 // API refuses rather than guessing, and so does this client.
 var ErrAmbiguous = stderrors.New("name is ambiguous")
 
+// ErrRefused is returned when the API refuses an operation on its merits — a
+// status or phase transition it will not perform — rather than because the
+// address is taken. It is the sibling of ErrAlreadyExists for the 409s that
+// mean "no", not "someone else has it".
+var ErrRefused = stderrors.New("refused")
+
 // AlreadyExistsError is ErrAlreadyExists carrying the occupant the API named in
 // its 409. It exists because the create route's refusal is only useful if the
 // caller can tell "same task, terminal, reopen" from "different task,
@@ -73,6 +79,47 @@ func (e *AlreadyExistsError) Error() string {
 
 // Unwrap keeps errors.Is(err, ErrAlreadyExists) true for the typed form.
 func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
+
+// RefusedError is ErrRefused carrying the refusal the API named in its 409:
+// the code, the server's reason, the transition it refused, and any allowed
+// alternatives. It exists so a refused transition is reported as itself instead
+// of as "task already exists". Unwrap reports ErrRefused, so errors.Is can tell
+// a refusal from an occupied address.
+type RefusedError struct {
+	// Code is the API's refusal code, e.g. invalid_transition or approval_required.
+	Code string
+	// Reason is the server's human-readable explanation, empty when absent.
+	Reason string
+	// From is the state the API refused to leave, empty when absent.
+	From string
+	// To is the state the API refused to enter, empty when absent.
+	To string
+	// Allowed lists the transitions the API would accept, empty when absent.
+	Allowed []string
+}
+
+// Error renders the refusal by code, the server's reason and the transition,
+// omitting the parts the API did not supply. The operation is named once by the
+// caller's wrap, not here.
+func (e *RefusedError) Error() string {
+	message := e.Code
+	if message == "" {
+		message = "refused"
+	}
+	if e.Reason != "" {
+		message += ": " + e.Reason
+	}
+	if e.From != "" || e.To != "" {
+		message += " (" + e.From + " -> " + e.To + ")"
+	}
+	if len(e.Allowed) > 0 {
+		message += " (allowed: " + strings.Join(e.Allowed, ", ") + ")"
+	}
+	return message
+}
+
+// Unwrap keeps errors.Is(err, ErrRefused) true for the typed form.
+func (e *RefusedError) Unwrap() error { return ErrRefused }
 
 // IsTerminalStatus reports whether status ends a task's life, so the file no
 // longer represents live work. It mirrors the server's own predicate because the
@@ -259,30 +306,59 @@ func decodeTask(ctx context.Context, status int, raw []byte, what string) (*Task
 	return &task, nil
 }
 
-// conflictError distinguishes "already exists" from "ambiguous name" — both are
-// 409, and a caller treats them differently: the first is benign, the second
-// means the caller's addressing is wrong.
+// conflictError classifies a 409 by the server's error code. An occupied
+// address (task_exists) is a benign ErrAlreadyExists, an ambiguous name
+// (ambiguous_name) means the caller's addressing is wrong, and any other named
+// code is a refusal reported as ErrRefused. A body that does not decode, or
+// carries no error code, deliberately falls back to ErrAlreadyExists: a
+// malformed response must not become a new error class.
 func conflictError(ctx context.Context, raw []byte, what string) error {
 	var envelope struct {
-		Error          string `json:"error"`
-		TaskIdentifier string `json:"task_identifier"`
-		Status         string `json:"status"`
+		Error          string          `json:"error"`
+		Reason         string          `json:"reason"`
+		From           string          `json:"from"`
+		To             string          `json:"to"`
+		Allowed        json.RawMessage `json:"allowed"`
+		TaskIdentifier string          `json:"task_identifier"`
+		Status         string          `json:"status"`
 	}
-	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Error == "ambiguous_name" {
-		return errors.Wrapf(ctx, ErrAmbiguous, "%s", what)
+	if err := json.Unmarshal(raw, &envelope); err == nil {
+		switch envelope.Error {
+		case "ambiguous_name":
+			return errors.Wrapf(ctx, ErrAmbiguous, "%s", what)
+		case "", "task_exists":
+			// Fall through to the occupant form below. An empty code is a
+			// malformed response, not a refusal (AC5).
+		default:
+			refusal := &RefusedError{
+				Code:   envelope.Error,
+				Reason: envelope.Reason,
+				From:   envelope.From,
+				To:     envelope.To,
+			}
+			if len(envelope.Allowed) > 0 {
+				// A wrong-typed allowed field must not demote a refusal to a
+				// duplicate; the code still classifies it.
+				var allowed []string
+				if err := json.Unmarshal(envelope.Allowed, &allowed); err == nil {
+					refusal.Allowed = allowed
+				}
+			}
+			return errors.Wrapf(ctx, refusal, "%s", what)
+		}
 	}
 	// The occupant is carried, not discarded: the create route's caller has to
 	// tell "same task, terminal, reopen" from "different task, disambiguate",
-	// and the 409's id is the title it just sent, which says neither. Wrapped with
-	// ctx like every other error in this client, so the conflict keeps the
-	// caller's structured data and stack; errors.As still reaches the typed value
-	// through the Unwrap chain and errors.Is still reports ErrAlreadyExists.
-	return errors.Wrapf(ctx, &AlreadyExistsError{
+	// and the 409's id is the title it just sent, which says neither.
+	// AddContextDataToError attaches the caller's structured data without adding
+	// a message prefix; AlreadyExistsError.Error names the operation itself, so
+	// wrapping with "%s" would name it twice.
+	return errors.AddContextDataToError(ctx, &AlreadyExistsError{
 		Code:           envelope.Error,
 		TaskIdentifier: envelope.TaskIdentifier,
 		Status:         envelope.Status,
 		What:           what,
-	}, "%s", what)
+	})
 }
 
 // snippet bounds an unexpected body so an error message cannot carry a whole

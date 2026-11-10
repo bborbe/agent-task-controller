@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: report a vault-api 409 that refuses a status or phase transition as a typed `ErrRefused` refusal carrying the server's code and from/to/allowed detail, instead of folding it into "task already exists"; a genuine `task_exists` 409 keeps its occupant fields, and every 409 message names the operation once
+
 ## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800
