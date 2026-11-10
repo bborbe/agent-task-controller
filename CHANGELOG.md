@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.26.12
 
 - fix: **a `create-task` with an empty or malformed `target_vault` is refused instead of resolved to the legacy default.** The empty value fell back to `openclaw`, so a command minted without a vault was dropped as cross-vault traffic by the controller that saw it, while the `openclaw` controller could not recreate a file already at the title path — no pod was ever scheduled, the task never reached terminal, and neither side reported anything an operator would see. A non-empty but malformed value (`Open Claw`, not a vault slug) was dropped the same way. `pkg/routing.ValidateTargetVault` now rejects both with a `validation.Error` before `routing.ShouldProcess`, so the guard fires on whichever controller receives the command; one such create therefore emits one Failure result per controller, where it previously emitted none. `bborbe/agent`'s `CreateCommand.Validate` keeps its documented empty-is-valid contract for legacy producers; this is the controller refusing to act on it. No live producer is affected: 0 of 1,889 review mints since 2026-11-01 omit the field.
 
