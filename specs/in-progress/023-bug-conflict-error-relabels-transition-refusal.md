@@ -1,7 +1,7 @@
 ---
-status: draft
-kind: bug
-created: "2026-11-10"
+status: approved
+approved: "2026-11-10T07:50:29Z"
+branch: dark-factory/spec-023
 ---
 
 ## Summary
