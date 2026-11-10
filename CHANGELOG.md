@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a `create-task` with an empty `target_vault` is refused instead of resolved to the legacy default.** The empty value fell back to `openclaw`, so a command minted without a vault was dropped as cross-vault traffic by the controller that saw it, while the `openclaw` controller could not recreate a file already at the title path — no pod was ever scheduled, the task never reached terminal, and neither side reported anything an operator would see. The check sits before `routing.ShouldProcess`, so it fires on whichever controller receives the command rather than only on the one the empty value would have resolved to. `bborbe/agent`'s `CreateCommand.Validate` keeps its documented empty-is-valid contract for legacy producers; this is the controller refusing to act on it, as a loud non-retryable validation failure. No live producer is affected: 0 of 1,889 review mints since 2026-11-01 omit the field.
+
 ## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800

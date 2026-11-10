@@ -35,8 +35,11 @@ import (
 // status is terminal ("completed"/"aborted"), in which case a fresh non-terminal task is
 // materialized at that path.
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
-// Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
-// match vaultName are skipped without side effects (no git write, no error, no result event).
+// A command whose TargetVault is empty is refused with a validation error — the empty value
+// is never resolved to the legacy default, because that fallback deadlocks a task between
+// the non-owning controller and the legacy-default one. Commands whose TargetVault is
+// non-empty and does not match vaultName are skipped without side effects (no git write,
+// no error, no result event).
 // resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
@@ -62,6 +65,28 @@ func NewCreateTaskExecutor(
 			}
 			if err := cmd.TaskIdentifier.Validate(ctx); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate task_identifier")
+			}
+			// An empty TargetVault is refused, never resolved to
+			// routing.LegacyDefaultVault. That fallback is what deadlocks a review
+			// task: the non-owning controller drops it as cross-vault traffic while
+			// the legacy-default controller cannot recreate a file that already
+			// exists at the title path, so no pod is ever scheduled and neither
+			// side reports anything an operator would see.
+			//
+			// The check sits BEFORE routing.ShouldProcess on purpose: it has to fire
+			// on whichever controller receives the command, not only on the one the
+			// empty value would have resolved to. bborbe/agent's
+			// CreateCommand.Validate keeps its documented empty-is-valid contract for
+			// legacy producers — this is the controller refusing to act on it, which
+			// is a loud, non-retryable validation failure rather than a silent skip.
+			if cmd.TargetVault == "" {
+				return nil, nil, errors.Wrapf(
+					ctx,
+					validation.Error,
+					"create-task: empty target_vault for task %s — refusing the %q fallback; the producer must stamp the owning vault",
+					cmd.TaskIdentifier,
+					routing.LegacyDefaultVault,
+				)
 			}
 			if !routing.ShouldProcess(cmd, vaultName) {
 				effective := cmd.TargetVault
