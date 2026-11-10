@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,8 +228,8 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		})
 	})
 
-	Context("Test C — UpdateFrontmatterCommand with empty Updates is a no-op", func() {
-		It("leaves the file unchanged when Updates is nil", func() {
+	Context("Test C — UpdateFrontmatterCommand with empty Updates is rejected", func() {
+		It("returns an error and leaves the file unchanged when Updates is nil", func() {
 			taskFile := writeTaskFile(
 				"seq-test-003.md",
 				"---\ntask_identifier: seq-test-003\ntrigger_count: 1\nstatus: in_progress\n---\nbody\n",
@@ -242,7 +243,8 @@ var _ = Describe("Frontmatter sequence integration", func() {
 					Updates:        nil,
 				}),
 			)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
 
 			fm := parseFrontmatter(taskFile)
 			Expect(fm["trigger_count"]).To(BeNumerically("==", 1))

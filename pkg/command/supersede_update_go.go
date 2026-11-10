@@ -6,15 +6,13 @@ package command
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 
 	task "github.com/bborbe/agent/command/task"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
-	result "github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 const (
@@ -23,8 +21,8 @@ const (
 	// and are never superseded by an update run.
 	updateGoTaskType = "github-update-go"
 
-	// updateGoTitlePrefix is the emitter's filename shape
-	// (`Update Go <owner>-<repo> <sha>.md`, see /github-update-go-repo-trigger § 6).
+	// updateGoTitlePrefix is the emitter's title shape
+	// (`Update Go <owner>-<repo> <sha>`, see /github-update-go-repo-trigger § 6).
 	updateGoTitlePrefix = "Update Go "
 )
 
@@ -39,12 +37,18 @@ const (
 // one task per commit. Measured 2026-10-20: 309 open update-go tasks across 68
 // repos, 217 of them excess.
 //
-// Best-effort: list/read/parse/write errors on any single file are logged and
-// swallowed, and the already-written new task is never rolled back.
+// The candidate set is a typed listing question, not a glob: status and task_type
+// are pushed to the API, and the repo is re-checked against each returned task's
+// own frontmatter, so a page whose title merely looks like an update task is
+// never aborted. k bounds how many OPEN priors this call aborts — the API
+// returns only open rows, so no budget is spent on the closed history the old
+// glob scan had to read past.
+//
+// Best-effort: a list or write error is logged and swallowed, and the
+// already-written new task is never rolled back.
 func supersedePriorUpdateGoTasks(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	cmd task.CreateCommand,
@@ -58,43 +62,32 @@ func supersedePriorUpdateGoTasks(
 		glog.V(3).Infof("auto-supersede(update-go): %s has no repo, skipping", cmd.TaskIdentifier)
 		return
 	}
-	titles, err := listUpdateGoCandidateTitles(ctx, gitClient, taskDir, repo)
+	prefix := updateGoTitlePrefix + strings.ReplaceAll(repo, "/", "-") + " "
+	priors, err := client.ListTasks(ctx, vaultapi.Filter{
+		Status:    "in_progress",
+		TaskTypes: []string{updateGoTaskType},
+	})
 	if err != nil {
 		glog.Warningf("auto-supersede(update-go): list candidates failed for %q: %v", repo, err)
 		return
 	}
-	// openFound counts the still-open priors this scan has decided to abort, and
-	// k bounds it — deliberately NOT the number of files read. Counting reads was
-	// the original shape and it starved the hook once the glob started matching:
-	// a repo carries up to 66 historical update-go files, filenames end in a
-	// commit SHA so listing order is not recency order, and every closed file
-	// spent one unit of the default budget of 7 before any open prior was even
-	// looked at. The scan now reads until it has found k open priors, which is
-	// bounded by that repo's own file count (66 measured, 2026-10-21).
 	openFound := 0
-	for _, title := range titles {
+	for _, prior := range priors {
 		if err := ctx.Err(); err != nil {
 			return
 		}
 		if openFound >= k {
 			break
 		}
-		if strings.ContainsAny(title, "/\\") {
-			glog.Warningf(
-				"auto-supersede(update-go): candidate title %q contains path separator; skipping",
-				title,
-			)
+		// The task just created is itself an open update task for this repo; it is
+		// the back-pointer target, never a candidate.
+		if prior.ID == string(cmd.TaskIdentifier) {
 			continue
 		}
-		candidateRelPath := filepath.Join(taskDir, title+".md")
-		if candidateRelPath == newRelPath {
+		if !hasTitlePrefix(prior, prefix) {
 			continue
 		}
-		content, err := readPriorForSupersede(ctx, gitClient, candidateRelPath, cmd.TaskIdentifier)
-		if err != nil || content == nil {
-			continue
-		}
-		if !isOpenUpdateGoTaskForRepo(ctx, content, repo) {
+		if frontmatterString(prior, "repo") != repo {
 			continue
 		}
 		openFound++
@@ -103,73 +96,14 @@ func supersedePriorUpdateGoTasks(
 		// created_by: recurring-task-creator would replace its real attribution
 		// with a false one. Same four frozen fields the build-fix retire path
 		// writes, and the same reason.
-		transitionPrior(
+		transitionPriorTyped(
 			ctx,
-			gitClient,
+			client,
 			currentDateTime,
-			candidateRelPath,
-			title,
+			prior,
 			newRelPath,
 			cmd.TaskIdentifier,
-			"[agent-task-controller] auto-supersede prior update-go task ",
 			false,
 		)
 	}
-}
-
-// listUpdateGoCandidateTitles lists the task titles for one repo. The repo slug in
-// the filename replaces "/" with "-", so the glob is repo-scoped; a repo carrying a
-// glob metacharacter falls back to listing every task file and filtering in memory,
-// the same injection defense listSameSlugCandidateTitles applies.
-func listUpdateGoCandidateTitles(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
-	repo string,
-) ([]string, error) {
-	prefix := updateGoTitlePrefix + strings.ReplaceAll(repo, "/", "-") + " "
-	var glob string
-	if strings.ContainsAny(prefix, "*?[]\\") {
-		glob = filepath.Join(taskDir, "*.md")
-	} else {
-		glob = filepath.Join(taskDir, prefix+"*.md")
-	}
-	relPaths, err := gitClient.ListFiles(ctx, glob)
-	if err != nil {
-		return nil, err
-	}
-	var titles []string
-	for _, relPath := range relPaths {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		title := strings.TrimSuffix(filepath.Base(relPath), ".md")
-		if strings.HasPrefix(title, prefix) {
-			titles = append(titles, title)
-		}
-	}
-	return titles, nil
-}
-
-// isOpenUpdateGoTaskForRepo reports whether one task file is a still-open update
-// task for the given repo. Both the type and the repo are re-checked against the
-// parsed frontmatter rather than trusted from the filename, so a file that merely
-// looks like an update task is never aborted.
-func isOpenUpdateGoTaskForRepo(ctx context.Context, content []byte, repo string) bool {
-	fmStr, err := result.ExtractFrontmatter(ctx, content)
-	if err != nil {
-		return false
-	}
-	fm, err := parseTaskFrontmatter(fmStr)
-	if err != nil {
-		return false
-	}
-	if taskType, _ := fm["task_type"].(string); taskType != updateGoTaskType {
-		return false
-	}
-	if fmRepo, _ := fm["repo"].(string); fmRepo != repo {
-		return false
-	}
-	status, _ := fm["status"].(string)
-	return status == "in_progress"
 }

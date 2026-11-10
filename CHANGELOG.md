@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.26.11
+
+- fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800
+
+## v0.26.10
+
+- fix: **an `update-frontmatter` addressed to this vault fails when the task does not exist, instead of reporting a success for a write that never happened.** The executor returned `nil` on a not-found, which published a SUCCESS result for a command that wrote nothing — the false success that hid a real one. `agent-task-executor`'s probe publishes `create-task` and `update-frontmatter` back to back, and while `vault-api`'s read path could not see a just-created task the reset this command carries (`trigger_count`, `current_job`, `job_started_at`, `spawn_notification`) was dropped with only a log line, leaving the executor to read a stale `current_job` and respawn 2–3 jobs for one probe. A command that carries `target_vault` is addressed to this vault and is supposed to find its task here, so a miss now returns an error naming the task and the vault (never wrapped in `cdb.ErrCommandObjectSkipped`, which would suppress the result event entirely). An UNSTAMPED command keeps the skip: both controllers consume the shared topic and attempt it, so on the non-owner a miss is expected, and failing it there would turn every legacy write into a failure result on the vault that never held the task.
+
+## v0.26.9
+
+- refactor: port the `github-update-go` supersede hook off `gitrestclient` onto the typed vault API. The candidate set is now a typed listing question — `ListTasks` with `status: in_progress` and `task_type: github-update-go` — instead of a filename glob plus a read of every matched file, and the prior is aborted with `PatchTask` addressed by **task identifier** instead of a path-addressed read-modify-write-commit. The repo is still re-checked against each returned task's own frontmatter, so a page whose title merely looks like an update task is never aborted, and the just-created task is skipped by identifier rather than by comparing paths. `k` still bounds how many **open** priors one call aborts; the API now returns only open rows, so no budget is spent on the closed history the glob scan had to read past. ⚠️ `superseded_by` still carries a vault-relative **path** — specs 002 and 004 freeze that field as the new instance's relPath and the vault reads it as one — so the port changes how the prior is *found and written*, not what the transition says.
+
+## v0.26.8
+
+- fix: run the capped-idle sweep on the recurring 5-minute metrics pass, over a candidate set that pass rebuilds from a fresh listing and read — on a trigger-only controller (`POLL_INTERVAL=0s`, which is what prod runs) the sweep's candidates came from `buildIndex`, a one-shot whose slice dies with the function while `v.hashes` is never populated, so a record that reached its cap after boot, or a task file created after boot, waited for the next pod restart; the pass costs no extra listing or read because the age and census series already parse every file, and every pass now logs one summary line plus one line per escalated record so a quiet sweep is distinguishable from one that never ran
+
+## v0.26.7
+
+- fix: update-frontmatter now reports a command with no updates and no body (e.g. a field map sent under the wrong key), or with no task identifier, as a failed result instead of a silent success
+
 ## v0.26.6
 
 - chore: restate the `do-not-merge` gate message to name its bypass actors — the Admin repository role and Integration `3907226`, both `bypass_mode: always` in the `master-protection` ruleset — instead of asserting an unqualified block

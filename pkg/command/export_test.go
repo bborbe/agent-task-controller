@@ -9,7 +9,5 @@ var (
 	ParsePeriodTokenOrdinal          = parsePeriodTokenOrdinal
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
-	IsOpenUpdateGoTaskForRepo        = isOpenUpdateGoTaskForRepo
-	ListUpdateGoCandidateTitles      = listUpdateGoCandidateTitles
 	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
 )

@@ -123,7 +123,7 @@ func NewCreateTaskExecutor(
 			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
-			supersedePriorUpdateGoTasks(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
+			supersedePriorUpdateGoTasks(ctx, client, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
 	)
