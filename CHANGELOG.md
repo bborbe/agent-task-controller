@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - fix: report a vault-api 409 that refuses a status or phase transition as a typed `ErrRefused` refusal carrying the server's code and from/to/allowed detail, instead of folding it into "task already exists"; a genuine `task_exists` 409 keeps its occupant fields, and every 409 message names the operation once
 
+## v0.27.0
+
+- feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
+
+## v0.26.12
+
+- fix: **a `create-task` with an empty or malformed `target_vault` is refused instead of resolved to the legacy default.** The empty value fell back to `openclaw`, so a command minted without a vault was dropped as cross-vault traffic by the controller that saw it, while the `openclaw` controller could not recreate a file already at the title path — no pod was ever scheduled, the task never reached terminal, and neither side reported anything an operator would see. A non-empty but malformed value (`Open Claw`, not a vault slug) was dropped the same way. `pkg/routing.ValidateTargetVault` now rejects both with a `validation.Error` before `routing.ShouldProcess`, so the guard fires on whichever controller receives the command; one such create therefore emits one Failure result per controller, where it previously emitted none. `bborbe/agent`'s `CreateCommand.Validate` keeps its documented empty-is-valid contract for legacy producers; this is the controller refusing to act on it. No live producer is affected: 0 of 1,889 review mints since 2026-11-01 omit the field.
+
 ## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800
