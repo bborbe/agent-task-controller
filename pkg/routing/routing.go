@@ -21,6 +21,18 @@ import (
 // leaves its TargetVault empty. Hard-coded per spec 044; do not make configurable.
 const LegacyDefaultVault = "openclaw"
 
+// VerdictNoOwningController is the single token a controller logs when it
+// declines a create whose target_vault it does not serve.
+//
+// A create is broadcast, so every controller sees it. When one of them serves
+// the target it claims the command and materializes the task; when none does,
+// every controller declines it. Logging the same token on every decline is what
+// turns "no controller claimed this" into one greppable state instead of two
+// silent ones — the skip that used to sit at V(2), and the exists-at-title-path
+// failure on the controller the command was misrouted to. The token names the
+// task, so an operator reading it knows exactly which record is stuck.
+const VerdictNoOwningController = "stuck: no owning controller"
+
 // targetVaultSlugRegexp must stay in sync with the same regex on
 // task.CreateCommand.Validate (lib/command/task/create-command.go).
 var targetVaultSlugRegexp = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
