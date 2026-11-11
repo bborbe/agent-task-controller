@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.28.1
 
 - fix: bump the cluster build job's **vendor** stage from `golang:1.27.3` to `golang:1.27.4`. `go.mod` requires 1.27.4, and the vendor stage runs `go mod vendor` under `GOTOOLCHAIN=local`, so every `make build BUILD_TARGET=<cluster>` failed with `go.mod requires go >= 1.27.4 (running go 1.27.3)` before the build stage started. The Dockerfile was already on 1.27.4; only `hack/build-job.yaml` was left behind, and it is not covered by the Dockerfile's base image.
 
