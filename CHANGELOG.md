@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: bump the cluster build job's **vendor** stage from `golang:1.27.3` to `golang:1.27.4`. `go.mod` requires 1.27.4, and the vendor stage runs `go mod vendor` under `GOTOOLCHAIN=local`, so every `make build BUILD_TARGET=<cluster>` failed with `go.mod requires go >= 1.27.4 (running go 1.27.3)` before the build stage started. The Dockerfile was already on 1.27.4; only `hack/build-job.yaml` was left behind, and it is not covered by the Dockerfile's base image.
+
 ## v0.28.0
 
 - feat: log the verdict token `stuck: no owning controller` when a controller declines a create whose `target_vault` it does not serve, and raise that line from `V(2)` to `Info`. A create is broadcast, so when no controller serves its target every consumer logs the same token for the same task id — which reconciles the two previously-silent outcomes (the skip nobody read, and the exists-at-title-path failure on the controller the command was misrouted to) into one greppable state naming the stuck task. The token is `pkg/routing.VerdictNoOwningController` and its value is pinned by a test, because operators grep it.

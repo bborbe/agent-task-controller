@@ -98,7 +98,7 @@ spec:
         # `check-go-mod` before `docker build`; the cluster arm must do the same
         # here, or `go build -mod=vendor` fails on an empty vendor/modules.txt.
         - name: vendor
-          image: golang:1.27.3
+          image: golang:1.27.4
           command: ["/bin/sh", "-c"]
           args:
             - |
