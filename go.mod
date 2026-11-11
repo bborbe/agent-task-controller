@@ -1,6 +1,6 @@
 module github.com/bborbe/agent-task-controller
 
-go 1.27.3
+go 1.27.4
 
 replace (
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20261014044854-ca3452a79603
