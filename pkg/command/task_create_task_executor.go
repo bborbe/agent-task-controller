@@ -92,9 +92,18 @@ func NewCreateTaskExecutor(
 				)
 			}
 			if !routing.ShouldProcess(cmd, vaultName) {
-				glog.V(2).Infof(
-					"create-task: skipped vault mismatch target=%q vault=%q task=%s",
-					cmd.TargetVault, vaultName, cmd.TaskIdentifier,
+				// Info, not V(2). A create no controller claims used to be invisible at
+				// the deployed verbosity: this controller logged a skip nobody read,
+				// and the controller the command was misrouted to failed on an
+				// exists-at-title-path — so a stuck task looked like a task nobody had
+				// got to yet. Every consumer logs the same token for the same task id,
+				// which is what makes "no owning controller" a state to grep for.
+				glog.Infof(
+					"create-task: %s target=%q vault=%q task=%s",
+					routing.VerdictNoOwningController,
+					cmd.TargetVault,
+					vaultName,
+					cmd.TaskIdentifier,
 				)
 				// ErrCommandObjectSkipped — not nil: a nil return with SendResultEnabled
 				// publishes a spurious Success result on the shared result topic for every

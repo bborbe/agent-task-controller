@@ -38,6 +38,15 @@ var _ = Describe("ValidateTargetVault", func() {
 	)
 })
 
+var _ = Describe("VerdictNoOwningController", func() {
+	It("is the token every declining controller logs, so one grep finds a stuck task", func() {
+		// The value is asserted, not just referenced: it is a log contract an
+		// operator greps for, so a rename is a breaking change to every runbook
+		// that reads it.
+		Expect(routing.VerdictNoOwningController).To(Equal("stuck: no owning controller"))
+	})
+})
+
 var _ = Describe("ShouldProcess", func() {
 	DescribeTable(
 		"routing matrix",
