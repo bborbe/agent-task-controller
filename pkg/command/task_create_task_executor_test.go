@@ -1041,23 +1041,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						},
 					})
 
-					candidatePaths := []string{
-						"tasks/IBKR Swing Trading - 2026W28-mon.md",
-						"tasks/IBKR Swing Trading - 2026W28-tue.md",
-					}
-					fakeGit.ListFilesReturns(candidatePaths, nil)
-					monContent := inProgress("ibkr-w28mon")
-					tueContent := inProgress("ibkr-w28tue")
-					fileContents := map[string][]byte{
-						"tasks/IBKR Swing Trading - 2026W28-mon.md": monContent,
-						"tasks/IBKR Swing Trading - 2026W28-tue.md": tueContent,
-					}
-					fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-						if content, ok := fileContents[relPath]; ok {
-							return content, nil
-						}
-						return nil, errors.New("GET " + relPath + " returned 404: not found")
-					}
+					seedRaw("IBKR Swing Trading - 2026W28-mon", string(inProgress("ibkr-w28mon")))
+					seedRaw("IBKR Swing Trading - 2026W28-tue", string(inProgress("ibkr-w28tue")))
 
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(err).NotTo(HaveOccurred())
@@ -1065,28 +1050,19 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						fakeVault.CreateTaskCallCount(),
 					).To(Equal(1))
 					// new instance only
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
-
-					// Ranking sorts by ordinal desc; equal ordinals sort by Title desc.
-					// "2026W28-tue" > "2026W28-mon" alphabetically, so tue is first.
-					priorContents := [][]byte{tueContent, monContent}
-					priorSuffixes := []string{"tue", "mon"}
-					for i := 0; i < 2; i++ {
-						_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(
-							i,
-						)
-						Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
-						resultContent, parseErr := modify(priorContents[i])
-						Expect(parseErr).NotTo(HaveOccurred())
-						resultStr := string(resultContent)
-						Expect(resultStr).To(ContainSubstring("status: aborted"))
-						Expect(resultStr).To(ContainSubstring("phase: done"))
-						Expect(resultStr).To(ContainSubstring("completed_date:"))
-						Expect(resultStr).To(ContainSubstring("superseded_by:"))
-						Expect(resultStr).To(ContainSubstring("created_by: recurring-task-creator"))
-						Expect(
-							absPath,
-						).To(HaveSuffix("IBKR Swing Trading - 2026W28-" + priorSuffixes[i] + ".md"))
+					// Both priors are aborted on disk. Ranking order is no longer
+					// observable through a write counter — it only decides which k of
+					// them the look-back bound inspects, covered by the k spec.
+					for _, title := range []string{
+						"IBKR Swing Trading - 2026W28-mon",
+						"IBKR Swing Trading - 2026W28-tue",
+					} {
+						content := writtenTask(title)
+						Expect(content).To(ContainSubstring("status: aborted"))
+						Expect(content).To(ContainSubstring("phase: done"))
+						Expect(content).To(ContainSubstring("completed_date:"))
+						Expect(content).To(ContainSubstring("superseded_by:"))
+						Expect(content).To(ContainSubstring("created_by: recurring-task-creator"))
 					}
 				},
 			)
@@ -1105,25 +1081,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				candidatePaths := []string{
-					"tasks/Sched - 2026W28-mon.md",
-					"tasks/Sched - 2026W28-wed.md",
-				}
-				fakeGit.ListFilesReturns(candidatePaths, nil)
-				fileContents := map[string][]byte{
-					"tasks/Sched - 2026W28-mon.md": inProgress("sched-w28mon"),
-					"tasks/Sched - 2026W28-wed.md": inProgress("sched-w28wed"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Sched - 2026W28-mon", string(inProgress("sched-w28mon")))
+				seedRaw("Sched - 2026W28-wed", string(inProgress("sched-w28wed")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+				for _, title := range []string{"Sched - 2026W28-mon", "Sched - 2026W28-wed"} {
+					Expect(writtenTask(title)).To(ContainSubstring("status: aborted"))
+				}
 			})
 
 			// Hourly: YYYYMMDDHH — the prior hour's instance must abort.
@@ -1140,36 +1105,19 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				candidatePaths := []string{
-					"tasks/Check BigQuery Export - 2026110412.md",
-					"tasks/Check BigQuery Export - 2026110411.md",
-				}
-				fakeGit.ListFilesReturns(candidatePaths, nil)
-				fileContents := map[string][]byte{
-					"tasks/Check BigQuery Export - 2026110412.md": inProgress("bq-2026110412"),
-					"tasks/Check BigQuery Export - 2026110411.md": inProgress("bq-2026110411"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Check BigQuery Export - 2026110412", string(inProgress("bq-2026110412")))
+				seedRaw("Check BigQuery Export - 2026110411", string(inProgress("bq-2026110411")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
-
-				// Most recent first: 2026110412 then 2026110411.
-				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(msg).To(ContainSubstring("auto-supersede prior recurring task"))
-				Expect(absPath).To(HaveSuffix("Check BigQuery Export - 2026110412.md"))
-				resultContent, parseErr := modify(
-					fileContents["tasks/Check BigQuery Export - 2026110412.md"],
-				)
-				Expect(parseErr).NotTo(HaveOccurred())
-				Expect(string(resultContent)).To(ContainSubstring("status: aborted"))
-				Expect(string(resultContent)).To(ContainSubstring("phase: done"))
+				for _, title := range []string{
+					"Check BigQuery Export - 2026110412",
+					"Check BigQuery Export - 2026110411",
+				} {
+					content := writtenTask(title)
+					Expect(content).To(ContainSubstring("status: aborted"))
+					Expect(content).To(ContainSubstring("phase: done"))
+				}
 			})
 
 			// AC: look-back cap with small K
@@ -1197,41 +1145,21 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				candidatePaths := []string{
-					"tasks/Weekly Sched - 2026W29.md",
-					"tasks/Weekly Sched - 2026W28.md",
-					"tasks/Weekly Sched - 2026W27.md",
-					"tasks/Weekly Sched - 2026W26.md",
-				}
-				fakeGit.ListFilesReturns(candidatePaths, nil)
-				fileContents := map[string][]byte{
-					"tasks/Weekly Sched - 2026W29.md": inProgress("weekly-w29"),
-					"tasks/Weekly Sched - 2026W28.md": inProgress("weekly-w28"),
-					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
-					"tasks/Weekly Sched - 2026W26.md": inProgress("weekly-w26"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Weekly Sched - 2026W29", string(inProgress("weekly-w29")))
+				seedRaw("Weekly Sched - 2026W28", string(inProgress("weekly-w28")))
+				seedRaw("Weekly Sched - 2026W27", string(inProgress("weekly-w27")))
+				seedRaw("Weekly Sched - 2026W26", string(inProgress("weekly-w26")))
 
 				_, _, err := localExecutor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				// No collision-check read any more: the create answers that itself.
-				// 2 candidate reads (k=2) = 2 total.
-				Expect(fakeGit.ReadFileCallCount()).To(Equal(2))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
 
-				// Most recent two (W29, W28) are closed; W27, W26 left open
-				var closedPaths []string
-				for i := 0; i < 2; i++ {
-					_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(i)
-					closedPaths = append(closedPaths, absPath)
+				// Most recent two (W29, W28) are closed; W27, W26 left open.
+				for _, title := range []string{"Weekly Sched - 2026W29", "Weekly Sched - 2026W28"} {
+					Expect(writtenTask(title)).To(ContainSubstring("status: aborted"))
 				}
-				Expect(closedPaths[0]).To(HaveSuffix("Weekly Sched - 2026W29.md"))
-				Expect(closedPaths[1]).To(HaveSuffix("Weekly Sched - 2026W28.md"))
+				for _, title := range []string{"Weekly Sched - 2026W27", "Weekly Sched - 2026W26"} {
+					Expect(writtenTask(title)).To(ContainSubstring("status: in_progress"))
+				}
 			})
 
 			// AC: cross-year ISO-week ranking
@@ -1248,29 +1176,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				candidatePaths := []string{
-					"tasks/Weekly Sched - 2025W52.md",
-					"tasks/Weekly Sched - 2025W51.md",
-				}
-				fakeGit.ListFilesReturns(candidatePaths, nil)
-				fileContents := map[string][]byte{
-					"tasks/Weekly Sched - 2025W52.md": inProgress("weekly-w52"),
-					"tasks/Weekly Sched - 2025W51.md": inProgress("weekly-w51"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Weekly Sched - 2025W52", string(inProgress("weekly-w52")))
+				seedRaw("Weekly Sched - 2025W51", string(inProgress("weekly-w51")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
-
-				// W52 is more recent than W51, so first abort should be W52
-				_, firstPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(firstPath).To(HaveSuffix("Weekly Sched - 2025W52.md"))
+				for _, title := range []string{"Weekly Sched - 2025W52", "Weekly Sched - 2025W51"} {
+					Expect(writtenTask(title)).To(ContainSubstring("status: aborted"))
+				}
 			})
 
 			// AC: Daily regression — collapse to one
@@ -1287,22 +1200,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{"tasks/Cleanup - 2026-06-14.md"}, nil)
-				fileContents := map[string][]byte{
-					"tasks/Cleanup - 2026-06-14.md": inProgress("cleanup-0614"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Cleanup - 2026-06-14", string(inProgress("cleanup-0614")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix("Cleanup - 2026-06-14.md"))
+				Expect(writtenTask("Cleanup - 2026-06-14")).To(ContainSubstring("status: aborted"))
 			})
 
 			// AC: Weekly regression — collapse to one
@@ -1319,22 +1221,13 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{"tasks/Aquascape PWC - 2026W26.md"}, nil)
-				fileContents := map[string][]byte{
-					"tasks/Aquascape PWC - 2026W26.md": inProgress("aqua-w26"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Aquascape PWC - 2026W26", string(inProgress("aqua-w26")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix("Aquascape PWC - 2026W26.md"))
+				Expect(
+					writtenTask("Aquascape PWC - 2026W26"),
+				).To(ContainSubstring("status: aborted"))
 			})
 
 			// AC: idempotency — prior already aborted
@@ -1413,43 +1306,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 
 			// AC: per-candidate read error swallowed, others processed
-			It("still closes eligible candidates when one candidate read fails", func() {
-				newTitle := "Weekly Sched - 2026W28"
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("weekly-w28readerr"),
-					Title:          newTitle,
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":         "claude",
-						"status":           "next",
-						"created_by":       "recurring-task-creator",
-						"auto_abort_prior": true,
-					},
-				})
-
-				fakeGit.ListFilesReturns([]string{
-					"tasks/Weekly Sched - 2026W27.md",
-					"tasks/Weekly Sched - 2026W26.md",
-				}, nil)
-				fileContents := map[string][]byte{
-					"tasks/Weekly Sched - 2026W26.md": inProgress("weekly-w26"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					if strings.Contains(relPath, "2026W27") {
-						return nil, errors.New("GET " + relPath + " returned 500")
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
-
-				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix("Weekly Sched - 2026W26.md"))
-			})
-
 			// AC: write error swallowed
 			It("returns (nil,nil,nil) when write of prior fails", func() {
 				newTitle := "Weekly Sched - 2026W28"
@@ -1480,43 +1336,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			// AC: glob-safety fallback — slug with glob metacharacters
-			It("falls back to list-all when slug contains glob metacharacters", func() {
-				newTitle := "Report [draft] - 2026W28"
-				cmdObj := buildCmdObj(task.CreateCommand{
-					TaskIdentifier: lib.TaskIdentifier("report-draft-w28"),
-					Title:          newTitle,
-					Frontmatter: lib.TaskFrontmatter{
-						"assignee":         "claude",
-						"status":           "next",
-						"created_by":       "recurring-task-creator",
-						"auto_abort_prior": true,
-					},
-				})
-
-				fakeGit.ListFilesReturns([]string{"tasks/Report [draft] - 2026W27.md"}, nil)
-				fileContents := map[string][]byte{
-					"tasks/Report [draft] - 2026W27.md": inProgress("report-draft-w27"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
-
-				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
-				_, globArg := fakeGit.ListFilesArgsForCall(0)
-				Expect(globArg).To(Equal("tasks/*.md")) // list-all fallback, not slug-scoped
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix("Report [draft] - 2026W27.md"))
-			})
-
 			// AC: unrelated-slug filtered out
-			It("does not read or close candidates with a different slug", func() {
+			It("does not close candidates with a different slug", func() {
 				newTitle := "Weekly Sched - 2026W28"
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("weekly-w28filter"),
@@ -1529,26 +1350,20 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{
-					"tasks/Weekly Sched - 2026W27.md",
-					"tasks/Other Sched - 2026W27.md",
-				}, nil)
-				fileContents := map[string][]byte{
-					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
-					"tasks/Other Sched - 2026W27.md":  inProgress("other-w27"),
-				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw("Weekly Sched - 2026W27", string(inProgress("weekly-w27")))
+				seedRaw("Other Sched - 2026W27", string(inProgress("other-w27")))
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, absPath, _, _ := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix("Weekly Sched - 2026W27.md"))
+				Expect(
+					writtenTask("Weekly Sched - 2026W27"),
+				).To(ContainSubstring("status: aborted"))
+				// The title-prefix filter is the only thing keeping another schedule's
+				// instance out of the abort set now that the listing returns every open
+				// task, so assert its effect rather than the old per-file read.
+				Expect(
+					writtenTask("Other Sched - 2026W27"),
+				).To(ContainSubstring("status: in_progress"))
 			})
 		})
 
@@ -1562,18 +1377,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			}
 
 			It("retires the other live task for the same build_id", func() {
-				priorPath := "tasks/Fix Build - dashboard - b1file.md"
 				newPath := "tasks/Fix Build - dashboard.md"
-				priorContent := []byte(
+				seedRaw(
+					"Fix Build - dashboard - b1file",
 					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\nphase: execution\n---\nbody\n",
 				)
-				fakeGit.ListFilesReturns([]string{priorPath, newPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == priorPath {
-						return priorContent, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1586,15 +1394,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 
-				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix(priorPath))
-				Expect(msg).To(ContainSubstring("auto-supersede build-fix:"))
-
-				retired, modifyErr := modify(priorContent)
-				Expect(modifyErr).NotTo(HaveOccurred())
-				retiredStr := string(retired)
+				retiredStr := writtenTask("Fix Build - dashboard - b1file")
 				Expect(retiredStr).To(ContainSubstring("status: aborted"))
 				Expect(retiredStr).To(ContainSubstring("phase: done"))
 				Expect(retiredStr).To(ContainSubstring("completed_date:"))
@@ -1608,23 +1409,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 
 			It("retires the task whose task_identifier matches supersedes_task_id", func() {
-				priorPath := "tasks/Fix Build - dashboard - b1file.md"
-				unrelatedPath := "tasks/Unrelated Task.md"
-				priorContent := []byte(
+				seedRaw(
+					"Fix Build - dashboard - b1file",
 					"---\ntask_identifier: fixbuild-b1\nbuild_id: B1\nassignee: claude\nstatus: in_progress\n---\nbody\n",
 				)
-				fakeGit.ListFilesReturns([]string{priorPath, unrelatedPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					switch relPath {
-					case priorPath:
-						return priorContent, nil
-					case unrelatedPath:
-						return []byte(
-							"---\ntask_identifier: unrelated-1\nassignee: claude\nstatus: in_progress\n---\nbody\n",
-						), nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw(
+					"Unrelated Task",
+					"---\ntask_identifier: unrelated-1\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":           "claude",
@@ -1635,20 +1427,16 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
 
-				_, absPath, modify, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(absPath).To(HaveSuffix(priorPath))
-				Expect(msg).To(ContainSubstring("auto-supersede build-fix:"))
-
-				retired, modifyErr := modify(priorContent)
-				Expect(modifyErr).NotTo(HaveOccurred())
-				retiredStr := string(retired)
+				retiredStr := writtenTask("Fix Build - dashboard - b1file")
 				Expect(retiredStr).To(ContainSubstring("status: aborted"))
 				Expect(retiredStr).To(ContainSubstring("phase: done"))
 				Expect(retiredStr).To(ContainSubstring("completed_date:"))
 				Expect(retiredStr).To(ContainSubstring("superseded_by:"))
 				Expect(retiredStr).NotTo(ContainSubstring("created_by: recurring-task-creator"))
+
+				// Neither marker names this one, so it must survive untouched.
+				Expect(writtenTask("Unrelated Task")).To(ContainSubstring("status: in_progress"))
 			})
 
 			DescribeTable(
@@ -1840,17 +1628,17 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			})
 
 			It("still creates the new task when the retire write is rejected", func() {
-				targetPath := "tasks/Fix Build - dashboard - b1file.md"
-				fakeGit.ListFilesReturns([]string{targetPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == targetPath {
-						return []byte(
-							"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
-						), nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
+				seedRaw(
+					"Fix Build - dashboard - b1file",
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
+				fakeVault.PatchTaskStub = func(
+					context.Context,
+					string,
+					map[string]any,
+				) (*vaultapi.Task, error) {
+					return nil, errors.New("vault-api 409")
 				}
-				fakeGit.AtomicReadModifyWriteAndCommitPushReturns(errors.New("git-rest 409"))
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1862,20 +1650,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(1))
 			})
 
 			It("treats a path-traversal marker as an inert value, never a path", func() {
-				targetPath := "tasks/Fix Build - dashboard - b1file.md"
-				fakeGit.ListFilesReturns([]string{targetPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == targetPath {
-						return []byte(
-							"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
-						), nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw(
+					"Fix Build - dashboard - b1file",
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":           "claude",
@@ -1886,34 +1668,23 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				// The glob is the only path the marker could have influenced, and it is
-				// constant: the marker is compared as a value, never joined into a path.
-				Expect(fakeGit.ListFilesCallCount()).To(Equal(1))
-				_, glob := fakeGit.ListFilesArgsForCall(0)
-				Expect(glob).To(Equal("tasks/*.md"))
-				// The candidate is live and carries build_id B, but the command's
-				// supersedes_build_id is absent and its supersedes_task_id does not
-				// match fixbuild-b1 — so nothing is retired.
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				// The marker is compared as a value and never joined into a path, so a
+				// traversal-shaped value matches nothing and retires nothing.
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+				Expect(
+					writtenTask("Fix Build - dashboard - b1file"),
+				).To(ContainSubstring("status: in_progress"))
 			})
 
 			It("retires a task-marker match and a build-marker match in one pass", func() {
-				byTaskID := "tasks/Fix Build - dashboard - byid.md"
-				byBuildID := "tasks/Fix Build - dashboard - bybuild.md"
-				fakeGit.ListFilesReturns([]string{byTaskID, byBuildID}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					switch relPath {
-					case byTaskID:
-						return []byte(
-							"---\ntask_identifier: fixbuild-b1\nbuild_id: OTHER\nassignee: claude\nstatus: in_progress\n---\nbody\n",
-						), nil
-					case byBuildID:
-						return []byte(
-							"---\ntask_identifier: unrelated-1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
-						), nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				seedRaw(
+					"Fix Build - dashboard - byid",
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: OTHER\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
+				seedRaw(
+					"Fix Build - dashboard - bybuild",
+					"---\ntask_identifier: unrelated-1\nbuild_id: B\nassignee: claude\nstatus: in_progress\n---\nbody\n",
+				)
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1927,7 +1698,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(err).NotTo(HaveOccurred())
 				// Neither candidate matches both markers: the two predicates are
 				// evaluated independently, so each retires exactly one file.
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+				Expect(writtenTask("Fix Build - dashboard - byid")).To(
+					ContainSubstring("status: aborted"),
+				)
+				Expect(writtenTask("Fix Build - dashboard - bybuild")).To(
+					ContainSubstring("status: aborted"),
+				)
 			})
 		})
 	})

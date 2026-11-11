@@ -224,11 +224,3 @@ func parseTaskFrontmatter(frontmatterStr string) (lib.TaskFrontmatter, error) {
 	}
 	return fm, nil
 }
-
-func marshalFileContent(ctx context.Context, fm lib.TaskFrontmatter, body string) ([]byte, error) {
-	marshaled, err := yaml.Marshal(map[string]any(fm))
-	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
-	}
-	return []byte("---\n" + string(marshaled) + "---\n" + body), nil
-}

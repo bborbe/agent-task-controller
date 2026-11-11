@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- refactor: port the recurring-task and build-fix supersede hooks off `gitrestclient` onto the typed vault API, the same way the `github-update-go` hook moved in the previous change. Both scans now ask one `ListTasks{status: in_progress}` instead of globbing the task directory and reading every match, and both abort a prior with `PatchTask` addressed by **task identifier** instead of a path-addressed read-modify-write-commit. The recurring scan keeps its look-back bound `k` and its period-token ranking, and filters to its own schedule in memory on the title prefix; the build-fix retire matches `task_identifier` / `build_id` on each returned task's frontmatter. `superseded_by` still carries a vault-relative **path** — specs 002 and 004 freeze that field and the vault reads it as one — and `created_by` is still stamped only on the recurring path, where it is truthful. Deleted as unreachable: `listSameSlugCandidateTitles`, `collapseCandidates`, `readPriorForSupersede`, `priorIsInProgress`, `transitionPrior`, `buildSupersedeModifyFn`, `retireSupersededBuildFixCandidate`, `buildBuildFixRetireModifyFn`, `buildFixCandidateMatches`, `buildFixCandidateIsLive`, `parseTaskFrontmatterAndBody` and `marshalFileContent`. Two specs are deleted rather than rewritten because the behaviour they covered no longer exists: the glob-metacharacter list-all fallback and the per-candidate read-failure tolerance.
+
 ## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800
