@@ -699,9 +699,12 @@ func retireSupersededBuildFixTasks(
 	if supersedesTaskID == "" && supersedesBuildID == "" {
 		return
 	}
-	// The listing answers the "still live" half: a terminal task is not returned,
-	// so it can never be retired twice.
-	tasks, err := client.ListTasks(ctx, vaultapi.Filter{Status: "in_progress"})
+	// No status filter on purpose. The pre-port hook retired every NON-TERMINAL
+	// prior, and a queued task is `next`, not `in_progress` — an in_progress-only
+	// listing would leave a second dispatchable task for the same build, which is
+	// the duplicate dispatch spec 014 exists to prevent. Liveness is therefore
+	// applied in memory below, not pushed to the API.
+	tasks, err := client.ListTasks(ctx, vaultapi.Filter{})
 	if err != nil {
 		glog.Warningf(
 			"auto-supersede build-fix: list candidates failed for %s: %v",
@@ -715,6 +718,9 @@ func retireSupersededBuildFixTasks(
 			return
 		}
 		if candidate.ID == string(cmd.TaskIdentifier) {
+			continue
+		}
+		if !buildFixTaskIsLive(candidate) {
 			continue
 		}
 		if !buildFixTaskMatches(candidate, supersedesTaskID, supersedesBuildID) {
@@ -737,6 +743,19 @@ func retireSupersededBuildFixTasks(
 			buildID,
 		)
 	}
+}
+
+// buildFixTaskIsLive reports whether a candidate is still dispatchable: its
+// status is readable and is neither of the two terminal statuses. An absent,
+// empty or non-string status is not live, so it is never retired. `next` IS
+// live — a queued build-fix task would otherwise be dispatched alongside the
+// re-emission, which is the duplicate spec 014 forbids.
+func buildFixTaskIsLive(t vaultapi.Task) bool {
+	status := strings.TrimSpace(frontmatterString(t, "status"))
+	if status == "" {
+		return false
+	}
+	return status != "completed" && status != "aborted"
 }
 
 // buildFixTaskMatches reports whether a listed task is named by one of the two

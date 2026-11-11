@@ -1424,6 +1424,66 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				)
 			})
 
+			// The pre-port hook retired every NON-TERMINAL prior, so a queued task
+			// (`status: next`) was retired too. An in_progress-only listing would miss
+			// it and leave two dispatchable tasks for one build — the duplicate
+			// dispatch spec 014 exists to prevent. This spec is the regression guard.
+			It("retires a queued prior, not only an in_progress one", func() {
+				seedRaw(
+					"Fix Build - dashboard - queued",
+					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: next\n---\nbody\n",
+				)
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(writtenTask("Fix Build - dashboard - queued")).To(
+					ContainSubstring("status: aborted"),
+				)
+			})
+
+			It("leaves a terminal prior alone", func() {
+				seedRaw(
+					"Fix Build - dashboard - done",
+					"---\ntask_identifier: fixbuild-b0\nbuild_id: B\nassignee: claude\nstatus: completed\n---\nbody\n",
+				)
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(writtenTask("Fix Build - dashboard - done")).To(
+					ContainSubstring("status: completed"),
+				)
+			})
+
+			It("still creates the new task when the listing fails", func() {
+				fakeVault.ListTasksReturns(nil, errors.New("vault-api 503"))
+
+				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
+					"assignee":            "claude",
+					"status":              "in_progress",
+					"build_id":            "B",
+					"supersedes_build_id": "B",
+				})
+
+				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+			})
+
 			It("retires the task whose task_identifier matches supersedes_task_id", func() {
 				seedRaw(
 					"Fix Build - dashboard - b1file",
