@@ -9,7 +9,6 @@ import (
 	"maps"
 	"path/filepath"
 	"strings"
-	"time"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
@@ -154,8 +153,8 @@ func NewCreateTaskExecutor(
 				)
 			}
 			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
-			retireSupersededBuildFixTasks(ctx, gitClient, taskDir, currentDateTime, cmd, relPath)
-			supersedePriorRecurringTask(ctx, gitClient, taskDir, currentDateTime, k, cmd, relPath)
+			retireSupersededBuildFixTasks(ctx, client, currentDateTime, cmd, relPath)
+			supersedePriorRecurringTask(ctx, client, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, client, currentDateTime, k, cmd, relPath)
 			return nil, nil, nil
 		},
@@ -537,8 +536,7 @@ func validateCreateTaskFrontmatter(ctx context.Context, fm lib.TaskFrontmatter) 
 // the repo-root-relative path of the new instance (the superseded_by back-pointer).
 func supersedePriorRecurringTask(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	cmd task.CreateCommand,
@@ -563,87 +561,56 @@ func supersedePriorRecurringTask(
 		)
 		return
 	}
-	titles, err := listSameSlugCandidateTitles(ctx, gitClient, taskDir, slug)
+	tasks, err := client.ListTasks(ctx, vaultapi.Filter{Status: "in_progress"})
 	if err != nil {
 		glog.Warningf("auto-supersede: list candidates failed for slug %q: %v", slug, err)
 		return
 	}
-	// Exclude the new instance and rank.
+	// Exclude the new instance, keep this schedule's rows, and rank by title.
+	byTitle := make(map[string]vaultapi.Task, len(tasks))
 	var kept []string
-	for _, t := range titles {
+	for _, t := range tasks {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if t == cmd.Title {
+		if t.ID == string(cmd.TaskIdentifier) || t.Title == cmd.Title {
 			continue
 		}
-		kept = append(kept, t)
+		if !hasTitlePrefix(t, slug+" - ") {
+			continue
+		}
+		byTitle[t.Title] = t
+		kept = append(kept, t.Title)
 	}
 	ranked := rankSameSlugCandidatesDescending(ctx, kept)
-	collapseCandidates(
+	collapseCandidatesTyped(
 		ctx,
-		gitClient,
-		taskDir,
+		client,
 		currentDateTime,
 		k,
 		ranked,
 		newOrdinal,
+		byTitle,
 		newRelPath,
 		cmd,
 	)
 }
 
-// listSameSlugCandidateTitles lists task files scoped to a schedule's slug and
-// returns their TITLES (basename without ".md"), filtered to those whose title
-// starts with "<slug> - ". It uses a slug-scoped glob when the slug contains no
-// glob metacharacters; otherwise it lists all task files and filters in memory
-// (glob-injection defense). List errors are returned; the caller logs them once.
-func listSameSlugCandidateTitles(
+// collapseCandidatesTyped iterates ranked candidates most-recent-first,
+// transitions each candidate older than newOrdinal to aborted, and stops after k
+// candidates have been inspected. Best-effort per candidate.
+//
+// The candidate set arrives already filtered to in_progress by the listing, so
+// the old read-and-parse-the-prior step has no work left: a row that is not open
+// never reaches this loop.
+func collapseCandidatesTyped(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
-	slug string,
-) ([]string, error) {
-	prefix := slug + " - "
-	var glob string
-	if strings.ContainsAny(slug, "*?[]\\") {
-		glob = filepath.Join(taskDir, "*.md")
-		glog.V(2).Infof(
-			"auto-supersede: slug %q contains glob metacharacters; falling back to list-all + in-memory filter",
-			slug,
-		)
-	} else {
-		glob = filepath.Join(taskDir, slug+" - *.md")
-		glog.V(3).Infof("auto-supersede: listing slug-scoped glob %q", glob)
-	}
-	relPaths, err := gitClient.ListFiles(ctx, glob)
-	if err != nil {
-		return nil, err
-	}
-	var titles []string
-	for _, relPath := range relPaths {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		title := strings.TrimSuffix(filepath.Base(relPath), ".md")
-		if strings.HasPrefix(title, prefix) {
-			titles = append(titles, title)
-		}
-	}
-	return titles, nil
-}
-
-// collapseCandidates iterates ranked candidates most-recent-first, transitions
-// each still-in_progress candidate older than newOrdinal to aborted, and stops
-// after k candidates have been inspected (read attempted). Best-effort per file.
-func collapseCandidates(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	ranked []rankedCandidate,
 	newOrdinal int64,
+	byTitle map[string]vaultapi.Task,
 	newRelPath string,
 	cmd task.CreateCommand,
 ) {
@@ -659,30 +626,17 @@ func collapseCandidates(
 			continue
 		}
 		inspected++
-		candidateRelPath := filepath.Join(taskDir, rc.Title+".md")
-		if strings.ContainsAny(rc.Title, "/\\") {
-			glog.Warningf(
-				"auto-supersede: candidate title %q contains path separator; skipping for %s",
-				rc.Title, cmd.TaskIdentifier,
-			)
+		prior, ok := byTitle[rc.Title]
+		if !ok {
 			continue
 		}
-		content, err := readPriorForSupersede(ctx, gitClient, candidateRelPath, cmd.TaskIdentifier)
-		if err != nil || content == nil {
-			continue
-		}
-		if !priorIsInProgress(ctx, content, candidateRelPath, cmd.TaskIdentifier) {
-			continue
-		}
-		transitionPrior(
+		transitionPriorTyped(
 			ctx,
-			gitClient,
+			client,
 			currentDateTime,
-			candidateRelPath,
-			rc.Title,
+			prior,
 			newRelPath,
 			cmd.TaskIdentifier,
-			"[agent-task-controller] auto-supersede prior recurring task ",
 			true,
 		)
 	}
@@ -723,147 +677,6 @@ func isEligibleForSupersede(cmd task.CreateCommand) bool {
 	return false
 }
 
-// readPriorForSupersede reads the prior file. Returns (nil, nil) on a
-// not-found (first-ever instance — benign no-op). Returns (nil, err) on a
-// transient git-rest error (logged by caller).
-func readPriorForSupersede(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	priorRelPath string,
-	taskIdentifier lib.TaskIdentifier,
-) ([]byte, error) {
-	content, err := gitClient.ReadFile(ctx, priorRelPath)
-	if err == nil {
-		return content, nil
-	}
-	if isNotFoundReadError(err) {
-		glog.V(3).
-			Infof("auto-supersede: no prior instance at %s for %s (first-ever instance)", priorRelPath, taskIdentifier)
-		return nil, nil
-	}
-	glog.Warningf(
-		"auto-supersede: read prior %s failed for %s: %v",
-		priorRelPath,
-		taskIdentifier,
-		err,
-	)
-	return nil, err
-}
-
-// priorIsInProgress parses the prior file's frontmatter and reports whether
-// its status is in_progress. Returns false (no-op) on parse error or any
-// non-in_progress status.
-func priorIsInProgress(
-	ctx context.Context,
-	content []byte,
-	priorRelPath string,
-	taskIdentifier lib.TaskIdentifier,
-) bool {
-	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
-	if err != nil {
-		glog.Warningf(
-			"auto-supersede: extract frontmatter from prior %s failed for %s: %v",
-			priorRelPath,
-			taskIdentifier,
-			err,
-		)
-		return false
-	}
-	priorFm, err := parseTaskFrontmatter(frontmatterStr)
-	if err != nil {
-		glog.Warningf(
-			"auto-supersede: parse prior frontmatter %s failed for %s: %v",
-			priorRelPath,
-			taskIdentifier,
-			err,
-		)
-		return false
-	}
-	status, _ := priorFm.String("status")
-	if status != "in_progress" {
-		glog.V(3).
-			Infof("auto-supersede: prior %s status=%q (not in_progress), no-op for %s", priorRelPath, status, taskIdentifier)
-		return false
-	}
-	return true
-}
-
-// transitionPrior performs the read-modify-write that transitions the prior
-// file to aborted. Best-effort: write errors are logged and swallowed.
-//
-// msgPrefix and setCreatedBy are supplied by the caller because the two hooks
-// that share this transition must not share its attribution. The recurring
-// publisher stamps created_by: recurring-task-creator, which is truthful there;
-// a github-update-go prior was emitted by the update-go watcher, so stamping it
-// would overwrite its real created_by with a false one. The build-fix retire
-// path (buildBuildFixRetireModifyFn) already omits the field for the same
-// reason. An empty msgPrefix means the caller builds the whole message.
-func transitionPrior(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	currentDateTime libtime.CurrentDateTimeGetter,
-	priorRelPath string,
-	priorTitle string,
-	newRelPath string,
-	taskIdentifier lib.TaskIdentifier,
-	msgPrefix string,
-	setCreatedBy bool,
-) {
-	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
-	priorAbsPath := filepath.Join(gitClient.Path(), priorRelPath)
-	modify := buildSupersedeModifyFn(ctx, newRelPath, ts, setCreatedBy)
-	msg := msgPrefix + priorTitle
-	if err := gitClient.AtomicReadModifyWriteAndCommitPush(ctx, priorAbsPath, modify, msg); err != nil {
-		glog.Warningf(
-			"auto-supersede: write prior %s failed for %s: %v",
-			priorRelPath,
-			taskIdentifier,
-			err,
-		)
-		return
-	}
-	glog.V(2).Infof(
-		"auto-supersede: %s -> %s (prior superseded by new instance)",
-		priorRelPath,
-		newRelPath,
-	)
-}
-
-// buildSupersedeModifyFn builds the modify closure for AtomicReadModifyWriteAndCommitPush
-// that transitions a prior instance to aborted. setCreatedBy stamps
-// created_by: recurring-task-creator, which is only truthful for a prior the
-// recurring publisher emitted — the update-go hook passes false so it leaves the
-// prior's real attribution alone.
-func buildSupersedeModifyFn(
-	ctx context.Context,
-	newRelPath string,
-	ts string,
-	setCreatedBy bool,
-) func([]byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		fmStr, err := result.ExtractFrontmatter(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
-		}
-		body, err := result.ExtractBody(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract body")
-		}
-		fm, err := parseTaskFrontmatter(fmStr)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "parse frontmatter")
-		}
-		fm["status"] = "aborted"
-		fm["phase"] = "done"
-		fm["completed_date"] = ts
-		fm["superseded_by"] = newRelPath
-		if setCreatedBy {
-			fm["created_by"] = "recurring-task-creator"
-		}
-		return marshalFileContent(ctx, fm, body)
-	}
-}
-
 // retireSupersededBuildFixTasks retires the tasks a re-emitted build-fix task
 // supersedes: every other still-live task carrying the same build_id, and the
 // task whose task_identifier matches supersedes_task_id. Both markers are read
@@ -876,8 +689,7 @@ func buildSupersedeModifyFn(
 // disambiguated with a short-identifier suffix.
 func retireSupersededBuildFixTasks(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	taskDir string,
+	client vaultapi.Client,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	cmd task.CreateCommand,
 	newRelPath string,
@@ -887,7 +699,12 @@ func retireSupersededBuildFixTasks(
 	if supersedesTaskID == "" && supersedesBuildID == "" {
 		return
 	}
-	relPaths, err := gitClient.ListFiles(ctx, filepath.Join(taskDir, "*.md"))
+	// No status filter on purpose. The pre-port hook retired every NON-TERMINAL
+	// prior, and a queued task is `next`, not `in_progress` — an in_progress-only
+	// listing would leave a second dispatchable task for the same build, which is
+	// the duplicate dispatch spec 014 exists to prevent. Liveness is therefore
+	// applied in memory below, not pushed to the API.
+	tasks, err := client.ListTasks(ctx, vaultapi.Filter{})
 	if err != nil {
 		glog.Warningf(
 			"auto-supersede build-fix: list candidates failed for %s: %v",
@@ -896,167 +713,60 @@ func retireSupersededBuildFixTasks(
 		)
 		return
 	}
-	for _, relPath := range relPaths {
+	for _, candidate := range tasks {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if relPath == newRelPath {
+		if candidate.ID == string(cmd.TaskIdentifier) {
 			continue
 		}
-		retireSupersededBuildFixCandidate(
+		if !buildFixTaskIsLive(candidate) {
+			continue
+		}
+		if !buildFixTaskMatches(candidate, supersedesTaskID, supersedesBuildID) {
+			continue
+		}
+		buildID := frontmatterString(candidate, "build_id")
+		transitionPriorTyped(
 			ctx,
-			gitClient,
+			client,
 			currentDateTime,
-			relPath,
-			supersedesTaskID,
-			supersedesBuildID,
+			candidate,
 			newRelPath,
 			cmd.TaskIdentifier,
+			false,
+		)
+		glog.V(2).Infof(
+			"auto-supersede build-fix: %s -> %s (build %s retired)",
+			candidate.Title,
+			newRelPath,
+			buildID,
 		)
 	}
 }
 
-// retireSupersededBuildFixCandidate retires one candidate task file when a
-// marker names it and it is still live. Every failure is logged and swallowed.
-func retireSupersededBuildFixCandidate(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	currentDateTime libtime.CurrentDateTimeGetter,
-	relPath string,
-	supersedesTaskID string,
-	supersedesBuildID string,
-	newRelPath string,
-	taskIdentifier lib.TaskIdentifier,
-) {
-	content, err := gitClient.ReadFile(ctx, relPath)
-	if err != nil {
-		glog.Warningf(
-			"auto-supersede build-fix: read %s failed for %s: %v",
-			relPath,
-			taskIdentifier,
-			err,
-		)
-		return
-	}
-	fm, _, err := parseTaskFrontmatterAndBody(ctx, content)
-	if err != nil {
-		glog.Warningf(
-			"auto-supersede build-fix: parse %s failed for %s: %v",
-			relPath,
-			taskIdentifier,
-			err,
-		)
-		return
-	}
-	if !buildFixCandidateMatches(fm, supersedesTaskID, supersedesBuildID) {
-		return
-	}
-	if !buildFixCandidateIsLive(fm) {
-		return
-	}
-	buildID, _ := fm.String("build_id")
-	ts := currentDateTime.Now().UTC().Format(time.RFC3339)
-	absPath := filepath.Join(gitClient.Path(), relPath)
-	msg := "[agent-task-controller] auto-supersede build-fix: " + relPath
-	if err := gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx,
-		absPath,
-		buildBuildFixRetireModifyFn(ctx, newRelPath, ts),
-		msg,
-	); err != nil {
-		glog.Warningf(
-			"auto-supersede build-fix: write %s failed for %s: %v",
-			relPath,
-			taskIdentifier,
-			err,
-		)
-		return
-	}
-	glog.V(2).Infof(
-		"auto-supersede build-fix: %s -> %s (build %s retired)",
-		relPath,
-		newRelPath,
-		buildID,
-	)
-}
-
-// buildFixCandidateMatches reports whether a candidate task file is named by
-// one of the two supersede markers. Matching is always by value on the parsed
-// frontmatter — the marker is never joined into a path. An empty marker
-// matches nothing.
-func buildFixCandidateMatches(
-	fm lib.TaskFrontmatter,
-	supersedesTaskID string,
-	supersedesBuildID string,
-) bool {
-	if supersedesTaskID != "" {
-		if id, _ := fm.String("task_identifier"); id == supersedesTaskID {
-			return true
-		}
-	}
-	if supersedesBuildID != "" {
-		if id, _ := fm.String("build_id"); id == supersedesBuildID {
-			return true
-		}
-	}
-	return false
-}
-
-// buildFixCandidateIsLive reports whether a candidate is still live: its
+// buildFixTaskIsLive reports whether a candidate is still dispatchable: its
 // status is readable and is neither of the two terminal statuses. An absent,
-// empty, non-string or unparseable status is not live, so it is never retired.
-func buildFixCandidateIsLive(fm lib.TaskFrontmatter) bool {
-	status, _ := fm.String("status")
-	status = strings.TrimSpace(status)
+// empty or non-string status is not live, so it is never retired. `next` IS
+// live — a queued build-fix task would otherwise be dispatched alongside the
+// re-emission, which is the duplicate spec 014 forbids.
+func buildFixTaskIsLive(t vaultapi.Task) bool {
+	status := strings.TrimSpace(frontmatterString(t, "status"))
 	if status == "" {
 		return false
 	}
 	return status != "completed" && status != "aborted"
 }
 
-// buildBuildFixRetireModifyFn builds the modify closure for
-// AtomicReadModifyWriteAndCommitPush that transitions a superseded build-fix
-// task to aborted. It writes the same frozen transition set the recurring
-// supersede writes and deliberately does NOT write created_by: that value names
-// the recurring publisher and would be false on a build-fix task, whose
-// created_by is whatever the watcher's create command carried.
-func buildBuildFixRetireModifyFn(
-	ctx context.Context,
-	newRelPath string,
-	ts string,
-) func([]byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		fm, body, err := parseTaskFrontmatterAndBody(ctx, current)
-		if err != nil {
-			return nil, err
-		}
-		fm["status"] = "aborted"
-		fm["phase"] = "done"
-		fm["completed_date"] = ts
-		fm["superseded_by"] = newRelPath
-		return marshalFileContent(ctx, fm, body)
+// buildFixTaskMatches reports whether a listed task is named by one of the two
+// supersede markers. Matching is always by value on the task's own frontmatter —
+// the marker is never joined into a path. An empty marker matches nothing.
+func buildFixTaskMatches(t vaultapi.Task, supersedesTaskID, supersedesBuildID string) bool {
+	if supersedesTaskID != "" && frontmatterString(t, "task_identifier") == supersedesTaskID {
+		return true
 	}
-}
-
-// parseTaskFrontmatterAndBody extracts a task file's frontmatter and body and
-// parses the frontmatter into a map. Extracted so the retire closure stays a
-// few lines and its token overlap with the sibling modify closure stays far
-// below the dupl linter's 150-token run.
-func parseTaskFrontmatterAndBody(
-	ctx context.Context,
-	current []byte,
-) (lib.TaskFrontmatter, string, error) {
-	fmStr, err := result.ExtractFrontmatter(ctx, current)
-	if err != nil {
-		return nil, "", errors.Wrapf(ctx, err, "extract frontmatter")
+	if supersedesBuildID != "" && frontmatterString(t, "build_id") == supersedesBuildID {
+		return true
 	}
-	body, err := result.ExtractBody(ctx, current)
-	if err != nil {
-		return nil, "", errors.Wrapf(ctx, err, "extract body")
-	}
-	fm, err := parseTaskFrontmatter(fmStr)
-	if err != nil {
-		return nil, "", errors.Wrapf(ctx, err, "parse frontmatter")
-	}
-	return fm, body, nil
+	return false
 }

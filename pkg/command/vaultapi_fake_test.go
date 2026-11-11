@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -50,8 +51,8 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	fake.PutBodyStub = func(_ context.Context, id string, body string) error {
 		return putFSBody(dir, id, body)
 	}
-	fake.ListTasksStub = func(context.Context, vaultapi.Filter) ([]vaultapi.Task, error) {
-		panic("newFSTaskClient: ListTasks is not wired for this executor")
+	fake.ListTasksStub = func(_ context.Context, filter vaultapi.Filter) ([]vaultapi.Task, error) {
+		return listFSTasks(dir, filter)
 	}
 	fake.ReaddressTaskStub = func(context.Context, string, string) (*vaultapi.Task, error) {
 		panic("newFSTaskClient: ReaddressTask is not wired for this executor")
@@ -106,6 +107,47 @@ func createFSTask(
 	created.Title = t.Title
 	created.Reopened = reopened
 	return created, nil
+}
+
+// listFSTasks mirrors the typed listing over the same temp dir: every *.md is
+// parsed, the filter is applied on frontmatter, and each hit is addressed by its
+// task_identifier and titled by its filename stem — exactly the two things the
+// supersede scans key on.
+func listFSTasks(dir string, filter vaultapi.Filter) ([]vaultapi.Task, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var matched []vaultapi.Task
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		raw, readErr := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 -- test helper
+		if readErr != nil {
+			continue
+		}
+		fm, body, splitErr := splitTaskFile(string(raw))
+		if splitErr != nil {
+			continue
+		}
+		if filter.Status != "" {
+			if status, _ := fm["status"].(string); status != filter.Status {
+				continue
+			}
+		}
+		if len(filter.TaskTypes) > 0 {
+			taskType, _ := fm["task_type"].(string)
+			if !slices.Contains(filter.TaskTypes, taskType) {
+				continue
+			}
+		}
+		identifier, _ := fm["task_identifier"].(string)
+		t := taskFromFrontmatter(identifier, fm, body)
+		t.Title = strings.TrimSuffix(entry.Name(), ".md")
+		matched = append(matched, *t)
+	}
+	return matched, nil
 }
 
 // readFSTask finds the file whose frontmatter carries id and returns it.
