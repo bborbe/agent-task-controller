@@ -34,8 +34,14 @@ import (
 // status is terminal ("completed"/"aborted"), in which case a fresh non-terminal task is
 // materialized at that path.
 // Frontmatter must include "assignee" and "status"; missing fields return a wrapped validation error.
-// Commands whose effective target vault (cmd.TargetVault or the legacy fallback) does not
-// match vaultName are skipped without side effects (no git write, no error, no result event).
+// A command whose TargetVault is empty or malformed is refused with a validation error — it
+// is never resolved to the legacy default, because that fallback deadlocks a task between
+// the non-owning controller and the legacy-default one, and a malformed value is dropped as
+// cross-vault traffic just as silently. The guard runs before ShouldProcess, so it fires on
+// every controller that consumes the command; one such create therefore emits one Failure
+// result per controller. Commands whose TargetVault is
+// non-empty and does not match vaultName are skipped without side effects (no git write,
+// no error, no result event).
 // resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
 	gitClient gitclient.GitClient,
@@ -62,14 +68,41 @@ func NewCreateTaskExecutor(
 			if err := cmd.TaskIdentifier.Validate(ctx); err != nil {
 				return nil, nil, errors.Wrapf(ctx, err, "validate task_identifier")
 			}
+			// An empty TargetVault is refused, never resolved to
+			// routing.LegacyDefaultVault. That fallback is what deadlocks a review
+			// task: the non-owning controller drops it as cross-vault traffic while
+			// the legacy-default controller cannot recreate a file that already
+			// exists at the title path, so no pod is ever scheduled and neither
+			// side reports anything an operator would see.
+			//
+			// The check sits BEFORE routing.ShouldProcess on purpose: it has to fire
+			// on whichever controller receives the command, not only on the one the
+			// empty value would have resolved to. bborbe/agent's
+			// CreateCommand.Validate keeps its documented empty-is-valid contract for
+			// legacy producers — this is the controller refusing to act on it, which
+			// is a loud, non-retryable validation failure rather than a silent skip.
+			if err := routing.ValidateTargetVault(ctx, cmd.TargetVault); err != nil {
+				return nil, nil, errors.Wrapf(
+					ctx,
+					err,
+					"create-task: invalid target_vault for task %s — refusing the %q fallback",
+					cmd.TaskIdentifier,
+					routing.LegacyDefaultVault,
+				)
+			}
 			if !routing.ShouldProcess(cmd, vaultName) {
-				effective := cmd.TargetVault
-				if effective == "" {
-					effective = routing.LegacyDefaultVault
-				}
-				glog.V(2).Infof(
-					"create-task: skipped vault mismatch target=%q effective=%q vault=%q task=%s",
-					cmd.TargetVault, effective, vaultName, cmd.TaskIdentifier,
+				// Info, not V(2). A create no controller claims used to be invisible at
+				// the deployed verbosity: this controller logged a skip nobody read,
+				// and the controller the command was misrouted to failed on an
+				// exists-at-title-path — so a stuck task looked like a task nobody had
+				// got to yet. Every consumer logs the same token for the same task id,
+				// which is what makes "no owning controller" a state to grep for.
+				glog.Infof(
+					"create-task: %s target=%q vault=%q task=%s",
+					routing.VerdictNoOwningController,
+					cmd.TargetVault,
+					vaultName,
+					cmd.TaskIdentifier,
 				)
 				// ErrCommandObjectSkipped — not nil: a nil return with SendResultEnabled
 				// publishes a spurious Success result on the shared result topic for every

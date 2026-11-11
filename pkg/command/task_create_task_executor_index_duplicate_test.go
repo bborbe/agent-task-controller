@@ -144,6 +144,9 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 			TaskIdentifier: lib.TaskIdentifier(duplicatedID),
 			Title:          newTitle,
 			Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "in_progress"},
+			// The create path refuses an empty TargetVault; stamp the vault as a
+			// real producer does.
+			TargetVault: "openclaw",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		return cdb.CommandObject{

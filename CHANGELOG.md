@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - refactor: port the recurring-task and build-fix supersede hooks off `gitrestclient` onto the typed vault API, the same way the `github-update-go` hook moved in the previous change. Both scans now ask one `ListTasks{status: in_progress}` instead of globbing the task directory and reading every match, and both abort a prior with `PatchTask` addressed by **task identifier** instead of a path-addressed read-modify-write-commit. The recurring scan keeps its look-back bound `k` and its period-token ranking, and filters to its own schedule in memory on the title prefix; the build-fix retire matches `task_identifier` / `build_id` on each returned task's frontmatter. `superseded_by` still carries a vault-relative **path** — specs 002 and 004 freeze that field and the vault reads it as one — and `created_by` is still stamped only on the recurring path, where it is truthful. Deleted as unreachable: `listSameSlugCandidateTitles`, `collapseCandidates`, `readPriorForSupersede`, `priorIsInProgress`, `transitionPrior`, `buildSupersedeModifyFn`, `retireSupersededBuildFixCandidate`, `buildBuildFixRetireModifyFn`, `buildFixCandidateMatches`, `buildFixCandidateIsLive`, `parseTaskFrontmatterAndBody` and `marshalFileContent`. Two specs are deleted rather than rewritten because the behaviour they covered no longer exists: the glob-metacharacter list-all fallback and the per-candidate read-failure tolerance.
 
+## v0.28.1
+
+- fix: bump the cluster build job's **vendor** stage from `golang:1.27.3` to `golang:1.27.4`. `go.mod` requires 1.27.4, and the vendor stage runs `go mod vendor` under `GOTOOLCHAIN=local`, so every `make build BUILD_TARGET=<cluster>` failed with `go.mod requires go >= 1.27.4 (running go 1.27.3)` before the build stage started. The Dockerfile was already on 1.27.4; only `hack/build-job.yaml` was left behind, and it is not covered by the Dockerfile's base image.
+
+## v0.28.0
+
+- feat: log the verdict token `stuck: no owning controller` when a controller declines a create whose `target_vault` it does not serve, and raise that line from `V(2)` to `Info`. A create is broadcast, so when no controller serves its target every consumer logs the same token for the same task id — which reconciles the two previously-silent outcomes (the skip nobody read, and the exists-at-title-path failure on the controller the command was misrouted to) into one greppable state naming the stuck task. The token is `pkg/routing.VerdictNoOwningController` and its value is pinned by a test, because operators grep it.
+
+## v0.27.2
+
+- test: **pin the reassignment-declaration contract of `MergeFrontmatter`**, the merge that lost the 2026-11-10 sentry fix handoff on `OCTOPUS-PROD-3Q` — the payload carried `assignee: sentry-fix-agent` and `assignee_reassigned_by`, and the deployed guard kept the on-disk analyzer while leaving the declaration behind. Two specs in `pkg/result/merge_frontmatter_reassignment_test.go`: a payload that declares a reassignment lands its `assignee` **and** consumes the declaration, while a payload with no declaration keeps the on-disk assignee. Both assert on `MergeFrontmatter`'s own output, so the branch that keeps the on-disk assignee can no longer leave the declaration behind unnoticed — and the declaring branch can no longer drop the incoming assignee. No production code changed: the exception first shipped in v0.11.5, and the loss was a controller on an older build.
+
+## v0.27.1
+
+- fix: report a vault-api 409 that refuses a status or phase transition as a typed `ErrRefused` refusal carrying the server's code and from/to/allowed detail, instead of folding it into "task already exists"; a genuine `task_exists` 409 keeps its occupant fields, and every 409 message names the operation once
+
+## v0.27.0
+
+- feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
+
+## v0.26.12
+
+- fix: **a `create-task` with an empty or malformed `target_vault` is refused instead of resolved to the legacy default.** The empty value fell back to `openclaw`, so a command minted without a vault was dropped as cross-vault traffic by the controller that saw it, while the `openclaw` controller could not recreate a file already at the title path — no pod was ever scheduled, the task never reached terminal, and neither side reported anything an operator would see. A non-empty but malformed value (`Open Claw`, not a vault slug) was dropped the same way. `pkg/routing.ValidateTargetVault` now rejects both with a `validation.Error` before `routing.ShouldProcess`, so the guard fires on whichever controller receives the command; one such create therefore emits one Failure result per controller, where it previously emitted none. `bborbe/agent`'s `CreateCommand.Validate` keeps its documented empty-is-valid contract for legacy producers; this is the controller refusing to act on it. No live producer is affected: 0 of 1,889 review mints since 2026-11-01 omit the field.
+
 ## v0.26.11
 
 - fix: delete a failed or timed-out build Job after printing its logs, so a single failure no longer holds the K8sPodStatus alert; align build-job ttlSecondsAfterFinished to 46800

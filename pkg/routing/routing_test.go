@@ -6,14 +6,46 @@ package routing_test
 
 import (
 	"context"
+	"errors"
 
 	lib "github.com/bborbe/agent"
 	task "github.com/bborbe/agent/command/task"
+	"github.com/bborbe/validation"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
+
+var _ = Describe("ValidateTargetVault", func() {
+	DescribeTable(
+		"rejects an empty or malformed target and accepts a slug",
+		func(targetVault string, wantErr bool) {
+			err := routing.ValidateTargetVault(context.Background(), targetVault)
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, validation.Error)).To(BeTrue())
+				return
+			}
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("empty → validation error", "", true),
+		Entry("space → validation error", "Open Claw", true),
+		Entry("uppercase → validation error", "Openclaw", true),
+		Entry("personal → ok", "personal", false),
+		Entry("openclaw → ok", "openclaw", false),
+		Entry("dashed slug → ok", "agent-task", false),
+	)
+})
+
+var _ = Describe("VerdictNoOwningController", func() {
+	It("is the token every declining controller logs, so one grep finds a stuck task", func() {
+		// The value is asserted, not just referenced: it is a log contract an
+		// operator greps for, so a rename is a breaking change to every runbook
+		// that reads it.
+		Expect(routing.VerdictNoOwningController).To(Equal("stuck: no owning controller"))
+	})
+})
 
 var _ = Describe("ShouldProcess", func() {
 	DescribeTable(

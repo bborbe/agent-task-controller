@@ -18,6 +18,7 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	libtime "github.com/bborbe/time"
 	libtimemocks "github.com/bborbe/time/mocks"
+	"github.com/bborbe/validation"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
@@ -85,7 +86,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		Expect(os.RemoveAll(tmpDir)).To(Succeed())
 	})
 
-	buildCmdObj := func(cmd task.CreateCommand) cdb.CommandObject {
+	// buildRawCmdObj posts the command exactly as given. Use it for specs that
+	// deliberately exercise an empty TargetVault.
+	buildRawCmdObj := func(cmd task.CreateCommand) cdb.CommandObject {
 		event, err := base.ParseEvent(ctx, cmd)
 		Expect(err).NotTo(HaveOccurred())
 		return cdb.CommandObject{
@@ -97,6 +100,15 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			},
 			SchemaID: schemaID,
 		}
+	}
+	// buildCmdObj models a producer that stamps the owning vault — what every
+	// deployed producer now does (0 of 1,889 review mints since 2026-11-01 omit
+	// it). Specs that need the empty value use buildRawCmdObj.
+	buildCmdObj := func(cmd task.CreateCommand) cdb.CommandObject {
+		if cmd.TargetVault == "" {
+			cmd.TargetVault = "openclaw"
+		}
+		return buildRawCmdObj(cmd)
 	}
 
 	// seedOccupant writes the occupant the create will find at the title path.
@@ -964,7 +976,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			)
 
 			It(
-				"processes a command with empty TargetVault when vaultName=openclaw (legacy fallback)",
+				"refuses a command with empty TargetVault even when vaultName=openclaw (no legacy fallback, no create)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
@@ -975,23 +987,25 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						testK,
 						nil,
 					)
-					cmdObj := buildCmdObj(task.CreateCommand{
+					cmdObj := buildRawCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Legacy Task",
 						Frontmatter: lib.TaskFrontmatter{
 							"assignee": "claude",
 							"status":   "next",
 						},
-						// TargetVault deliberately empty — legacy producer.
+						// TargetVault deliberately empty — the case the guard refuses.
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, validation.Error)).To(BeTrue())
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
 
 			It(
-				"skips a command with empty TargetVault when vaultName=personal (legacy fallback is openclaw, not personal)",
+				"refuses a command with empty TargetVault when vaultName=personal (validation failure, not a silent cross-vault skip)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
 						fakeGit,
@@ -1002,7 +1016,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						testK,
 						nil,
 					)
-					cmdObj := buildCmdObj(task.CreateCommand{
+					cmdObj := buildRawCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
 						Title:          "Legacy Task",
 						Frontmatter: lib.TaskFrontmatter{
@@ -1012,7 +1026,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						// TargetVault deliberately empty.
 					})
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
-					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, validation.Error)).To(BeTrue())
+					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
 					Expect(fakeVault.CreateTaskCallCount()).To(Equal(0))
 				},
 			)
