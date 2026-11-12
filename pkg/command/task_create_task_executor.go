@@ -118,13 +118,7 @@ func NewCreateTaskExecutor(
 				return nil, nil, errors.Wrapf(ctx, err, "validate frontmatter")
 			}
 			title := createTaskTitle(ctx, cmd)
-			title = reuseExistingIdentifierTitle(
-				ctx,
-				gitClient,
-				resolver,
-				cmd.TaskIdentifier,
-				title,
-			)
+			title = reuseExistingIdentifierTitle(ctx, client, cmd.TaskIdentifier, title)
 			pathTitle, reopened, err := createThroughAPI(ctx, client, cmd, title, vaultName)
 			if err != nil {
 				return nil, nil, err
@@ -204,45 +198,29 @@ func createTaskTitle(ctx context.Context, cmd task.CreateCommand) string {
 // fallbackTitle.
 func reuseExistingIdentifierTitle(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	resolver result.TaskPathResolver,
+	client vaultapi.Client,
 	id lib.TaskIdentifier,
 	fallbackTitle string,
 ) string {
-	if resolver == nil {
-		return fallbackTitle
-	}
-	relPath, found, err := resolver.Resolve(ctx, id)
+	t, err := client.ReadTask(ctx, string(id))
 	if err != nil {
-		// A known-duplicate index entry must never choose a path, so the create
-		// keeps the title the command asked for.
-		glog.Warningf(
-			"create-task: identifier %s resolves ambiguously (%v); using the command title %q",
+		// A miss is the ordinary first-create case; any other error leaves the
+		// title unresolved, and the command's own title is the safe answer either
+		// way — it is what the create would have used without an existing task.
+		glog.V(3).Infof(
+			"create-task: identifier %s has no readable task (%v); using the command title %q",
 			id, err, fallbackTitle,
 		)
 		return fallbackTitle
 	}
-	if !found {
-		return fallbackTitle
-	}
-	stem := strings.TrimSuffix(filepath.Base(relPath), ".md")
-	if stem == "" || stem == "." || stem == ".." {
-		return fallbackTitle
-	}
-	if !fileCarriesIdentifier(ctx, gitClient, relPath, id) {
-		glog.Warningf(
-			"create-task: index entry for %s points at %s, which does not carry that identifier; using the command title %q",
-			id,
-			relPath,
-			fallbackTitle,
-		)
+	if t == nil || t.Title == "" || t.Title == "." || t.Title == ".." {
 		return fallbackTitle
 	}
 	glog.V(2).Infof(
-		"create-task: identifier %s resolves to %s; using title %q instead of %q",
-		id, relPath, stem, fallbackTitle,
+		"create-task: identifier %s already exists as %q; using that title instead of %q",
+		id, t.Title, fallbackTitle,
 	)
-	return stem
+	return t.Title
 }
 
 // identifierPresence reports whether the task file at relPath declares id.
@@ -284,29 +262,6 @@ func identifierPresence(
 	}
 	actual, _ := fm.String("task_identifier")
 	return actual == string(id), nil
-}
-
-// fileCarriesIdentifier reports whether the task file at relPath still declares
-// id in its frontmatter. Every failure to answer answers false: a redirect that
-// cannot be verified is exactly the overwrite path reuseExistingIdentifierTitle
-// exists to close, so the caller must fall back to its own title. A caller that
-// must tell an unverifiable occupant from an absent one uses identifierPresence
-// directly.
-func fileCarriesIdentifier(
-	ctx context.Context,
-	gitClient gitclient.GitClient,
-	relPath string,
-	id lib.TaskIdentifier,
-) bool {
-	carries, err := identifierPresence(ctx, gitClient, relPath, id)
-	if err != nil {
-		glog.Warningf(
-			"create-task: cannot verify identifier %s in resolved file %s: %v",
-			id, relPath, err,
-		)
-		return false
-	}
-	return carries
 }
 
 // createThroughAPI materialises the task and settles the three answers the old

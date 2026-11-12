@@ -789,16 +789,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It(
 				"records both paths when the indexed file still carries the identifier",
 				func() {
-					// The redirect's read of the indexed file fails once, so the create
-					// lands on a second file; the bookkeeping read then sees the old
-					// file still carrying the identifier (2026-10-27, id 9371a3d2).
-					fakeGit.ReadFileReturnsOnCall(
-						0,
-						nil,
-						errors.New("GET returned 503: unavailable"),
-					)
-					fakeGit.ReadFileReturnsOnCall(
-						1,
+					// The redirect no longer reads the indexed file — it asks the API for
+					// the identifier — so the only git read left is the bookkeeping
+					// presence check, which sees the old file still carrying the id
+					// (2026-10-27, id 9371a3d2).
+					fakeGit.ReadFileReturns(
 						[]byte("---\ntask_identifier: "+createdID+"\nstatus: aborted\n---\nbody\n"),
 						nil,
 					)
@@ -858,9 +853,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
 				Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
 
-				// One resolve chooses the create title; none is made for recording
-				// because the create failed as already-existing.
-				Expect(fakeResolver.ResolveCallCount()).To(Equal(1))
+				// The create title no longer comes from the index — it comes from the
+				// API's own view of the identifier — and no recording happens because
+				// the create failed as already-existing.
+				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
 				Expect(fakeResolver.RecordCallCount()).To(Equal(0))
 			})
 

@@ -164,7 +164,11 @@ func readFSTask(dir, id string) (*vaultapi.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return taskFromFrontmatter(id, fm, body), nil
+	// The real API always reports the task's title; the fake has to derive it from
+	// the filename, or a caller that redirects on ReadTask.Title sees "".
+	t := taskFromFrontmatter(id, fm, body)
+	t.Title = strings.TrimSuffix(filepath.Base(path), ".md")
+	return t, nil
 }
 
 // patchFSTask merges fields into the task's frontmatter and rewrites the file
