@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.28.4
 
 - fix: make the trigger-cap escalation sticky by parking the record in `status: hold`, so a re-dispatch cannot un-park it. Clearing the assignee alone was never durable: the executor's `restoreParkedAssignee` publishes the routing value back on its next reconcile tick, and the scanner then reads that empty→named transition as an operator re-delegation and zeroes `trigger_count`, re-arming the budget — the loop `pkg/scanner/capped_idle.go` already documents and already fixes for the idle-sweep path. Measured on nuke prod 2026-11-12: `probe-sentry-fix-agent` went `trigger_count` 8 → 0 → 5 → 8 inside 90 seconds, with the assignee restored roughly every 60 s. `hold` is refused by the executor's own status filter, so `buildIncrementPatch` and `applyTriggerCap` now set it in the same write that clears the assignee, and `CappedEscalatedStatus` moves into `pkg/result` so all three escalation writers share one definition instead of the sweep owning the only copy. The duplicate `## Trigger Cap Escalation` sections are collapsed at write time as well: all three writers guard with a read-then-write check, so a same-second race let each observe "not present" and append — `probe-sentry-fix-agent-prod` carried three, all stamped `2026-11-09T14:17:36Z`. `CollapseTriggerCapEscalation` keeps the first section and drops the rest, leaving the content between them untouched, and re-rendering is deliberately avoided so a parked record does not churn its own timestamp on every tick.
 
