@@ -151,6 +151,13 @@ func buildIncrementPatch(
 	if cmd.Field == "trigger_count" && result.TriggerCapEngaged(fm) && newVal >= fm.MaxTriggers() {
 		agentName := result.ClearAssignee(fm)
 		patch["assignee"] = ""
+		// Park the record in the same write that escalates it. Clearing the assignee
+		// alone is not durable: the executor restores the routing value on its next
+		// reconcile tick and the scanner then re-arms the budget, so the row returns
+		// to the queue as a fresh candidate. `hold` is refused by the executor's own
+		// status filter, which is what makes the escalation survive a re-dispatch.
+		// See result.CappedEscalatedStatus.
+		patch["status"] = result.CappedEscalatedStatus
 		if agentName != "" {
 			patch["previous_assignee"] = agentName
 		}
@@ -185,6 +192,18 @@ func writeTriggerCapEscalation(
 		return errors.Wrapf(ctx, err, "re-read task for trigger cap escalation body")
 	}
 	if result.ContainsTriggerCapEscalation(fresh.Body) {
+		// Already escalated. Collapse any duplicate sections and leave the escalation
+		// otherwise untouched — a same-second race between this writer, the result
+		// writer and the capped-idle sweep lets each observe "not present" and append,
+		// so the guard alone does not bound the section count. Returning unchanged when
+		// there is nothing to collapse keeps this a no-op on the common path.
+		collapsed := result.CollapseTriggerCapEscalation(fresh.Body)
+		if collapsed == fresh.Body {
+			return nil
+		}
+		if err := client.PutBody(ctx, fresh.ID, collapsed); err != nil {
+			return errors.Wrapf(ctx, err, "put collapsed trigger cap escalation body")
+		}
 		return nil
 	}
 	body := fresh.Body + result.TriggerCapEscalationSection(

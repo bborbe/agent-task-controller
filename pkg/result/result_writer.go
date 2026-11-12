@@ -873,9 +873,15 @@ func (r *resultWriter) applyTriggerCap(
 		return body
 	}
 	agentName := r.clearAssigneeUnlessHuman(merged)
+	// Park the record. Clearing the assignee alone is not durable: the executor
+	// restores the routing value on its next reconcile tick and the scanner then
+	// re-arms the budget, so the row returns to the queue as a fresh candidate.
+	// `hold` is refused by the executor's own status filter, which is what makes the
+	// escalation survive a re-dispatch. See CappedEscalatedStatus.
+	merged["status"] = CappedEscalatedStatus
 	if ContainsTriggerCapEscalation(body) {
 		restoreExistingPhase(existing, merged)
-		return body
+		return CollapseTriggerCapEscalation(body)
 	}
 	return body + r.triggerEscalationSection(triggerCount, agentName, merged)
 }
