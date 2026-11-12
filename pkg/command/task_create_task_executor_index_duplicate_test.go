@@ -160,70 +160,16 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 		}
 	}
 
-	It(
-		"records the second file beside the indexed one, so later writes refuse instead of landing on the old file",
-		func() {
-			// The redirect read of the indexed file fails once, so the create cannot
-			// verify the occupant and materializes a second file carrying the same
-			// identifier — the shape of the 2026-10-27 pair.
-			failReadMutex.Lock()
-			failReadOnce = oldPath()
-			failReadMutex.Unlock()
-			executor := command.NewCreateTaskExecutor(
-				fakeGit, fakeVault, taskDir, "openclaw", clock, testK, resolver,
-			)
-
-			_, _, err := executor.HandleCommand(ctx, nil, createCmd())
-			Expect(err).NotTo(HaveOccurred())
-			_, statErr := os.Stat(filepath.Join(tmpDir, newPath()))
-			Expect(statErr).NotTo(HaveOccurred())
-
-			path, found, resolveErr := resolver.Resolve(ctx, lib.TaskIdentifier(duplicatedID))
-			Expect(resolveErr).To(HaveOccurred())
-			Expect(resolveErr.Error()).To(ContainSubstring(oldPath()))
-			Expect(resolveErr.Error()).To(ContainSubstring(newPath()))
-			Expect(found).To(BeFalse())
-			Expect(path).To(Equal(""))
-
-			writePath, _, findErr := result.FindTaskFilePath(
-				ctx, fakeGit, taskDir, lib.TaskIdentifier(duplicatedID), resolver,
-			)
-			Expect(findErr).To(HaveOccurred())
-			Expect(
-				findErr.Error(),
-			).To(ContainSubstring("duplicate task_identifier " + duplicatedID))
-			Expect(writePath).To(Equal(""))
-		},
-	)
-
-	It("keeps the index entry when the indexed file cannot be read", func() {
-		// A read failure is not evidence that the indexed file stopped carrying
-		// the identifier. Replacing the entry on it would restore the silent
-		// misroute this index bookkeeping exists to close, and would do it on
-		// exactly the transient-error case that motivated the fix — so the entry
-		// is kept and no duplicate is recorded on a guess.
-		failReadMutex.Lock()
-		failReadAlwaysPath = oldPath()
-		failReadMutex.Unlock()
-		executor := command.NewCreateTaskExecutor(
-			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, resolver,
-		)
-
-		_, _, err := executor.HandleCommand(ctx, nil, createCmd())
-		Expect(err).NotTo(HaveOccurred())
-
-		// The create still materialised its own file, because an unverifiable
-		// occupant is not a verified one.
-		_, statErr := os.Stat(filepath.Join(tmpDir, newPath()))
-		Expect(statErr).NotTo(HaveOccurred())
-
-		// The index still points at the indexed path: not replaced, and not
-		// widened into a guessed duplicate.
-		path, found, resolveErr := resolver.Resolve(ctx, lib.TaskIdentifier(duplicatedID))
-		Expect(resolveErr).NotTo(HaveOccurred())
-		Expect(found).To(BeTrue())
-		Expect(path).To(Equal(oldPath()))
-	})
+	// The two specs that used to live here — "records the second file beside the
+	// indexed one" and "keeps the index entry when the indexed file cannot be
+	// read" — both drove their scenario by failing the REDIRECT's read of the
+	// indexed file. The redirect no longer reads a file: it asks the API for the
+	// identifier, and that answer is authoritative, so "the redirect could not
+	// verify the occupant" is no longer a reachable state and neither spec has a
+	// trigger left. The duplicate-detection path they exercised is unchanged and
+	// still covered by the `index recording` specs in
+	// task_create_task_executor_test.go, including the read-failure case for the
+	// BOOKKEEPING read, which is the read that still exists.
 
 	It("replaces an index entry whose file no longer carries the identifier", func() {
 		// The indexed file was rewritten to carry another identifier after the boot
