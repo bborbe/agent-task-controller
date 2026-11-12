@@ -18,7 +18,7 @@ const capEscalationHeading = "## Trigger Cap Escalation"
 
 var _ = Describe("CappedEscalatedStatus", func() {
 	It("parks the record in hold, the only status the executor's trigger set excludes", func() {
-		Expect(result.CappedEscalatedStatus).To(Equal("hold"))
+		Expect(string(result.CappedEscalatedStatus)).To(Equal("hold"))
 	})
 })
 
@@ -77,7 +77,7 @@ var _ = Describe("applyTriggerCap", func() {
 
 		body := result.ApplyTriggerCapForTest(merged, existing, 3, "## Result\n\nfailed\n")
 
-		Expect(string(merged.Status())).To(Equal(result.CappedEscalatedStatus))
+		Expect(string(merged.Status())).To(Equal(string(result.CappedEscalatedStatus)))
 		Expect(string(merged.Assignee())).To(Equal(""))
 		Expect(merged["previous_assignee"]).To(Equal("sentry-fix-agent"))
 		Expect(strings.Count(body, capEscalationHeading)).To(Equal(1))
@@ -97,7 +97,7 @@ var _ = Describe("applyTriggerCap", func() {
 
 		// A record escalated by an older build is still in_progress on disk; the next
 		// write must move it to hold, or it stays selectable by the executor forever.
-		Expect(string(merged.Status())).To(Equal(result.CappedEscalatedStatus))
+		Expect(string(merged.Status())).To(Equal(string(result.CappedEscalatedStatus)))
 		Expect(strings.Count(written, capEscalationHeading)).To(Equal(1))
 	})
 

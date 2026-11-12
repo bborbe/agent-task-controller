@@ -878,7 +878,11 @@ func (r *resultWriter) applyTriggerCap(
 	// re-arms the budget, so the row returns to the queue as a fresh candidate.
 	// `hold` is refused by the executor's own status filter, which is what makes the
 	// escalation survive a re-dispatch. See CappedEscalatedStatus.
-	merged["status"] = CappedEscalatedStatus
+	//
+	// Written as a plain string, not the typed constant: TaskFrontmatter.Status()
+	// reads the map entry with a `.(string)` assertion, so a domain.TaskStatus in
+	// the map reads back as "" and silently un-parks the record.
+	merged["status"] = string(CappedEscalatedStatus)
 	if ContainsTriggerCapEscalation(body) {
 		restoreExistingPhase(existing, merged)
 		return CollapseTriggerCapEscalation(body)

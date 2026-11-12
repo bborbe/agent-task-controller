@@ -4,7 +4,11 @@
 
 package result
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/bborbe/vault-cli/pkg/domain"
+)
 
 // CappedEscalatedStatus is the status a cap escalation moves a task to.
 //
@@ -21,11 +25,15 @@ import "strings"
 // trigger statuses are `[in_progress]` only, so a held task is refused before the
 // restore branch is ever reached.
 //
+// Typed as domain.TaskStatus rather than a bare string so the value belongs to the
+// library's existing status enum: every call site that reads it can compare against
+// the type the frontmatter actually carries, instead of a free-floating literal.
+//
 // This lives in `result` rather than `scanner` because both escalation paths need it
 // — the increment executor and the result writer — and `scanner` already imports
 // `result`. The capped-idle sweep in `pkg/scanner/capped_idle.go` aliases this
 // constant, so there is one definition of the parked status, not three.
-const CappedEscalatedStatus = "hold"
+const CappedEscalatedStatus domain.TaskStatus = "hold"
 
 // triggerCapEscalationHeading is the body heading every escalation section opens
 // with. Not spelled outside this file: callers use ContainsTriggerCapEscalation or

@@ -156,8 +156,9 @@ func buildIncrementPatch(
 		// reconcile tick and the scanner then re-arms the budget, so the row returns
 		// to the queue as a fresh candidate. `hold` is refused by the executor's own
 		// status filter, which is what makes the escalation survive a re-dispatch.
-		// See result.CappedEscalatedStatus.
-		patch["status"] = result.CappedEscalatedStatus
+		// See result.CappedEscalatedStatus. Written as a plain string because
+		// TaskFrontmatter.Status() reads the map entry with a `.(string)` assertion.
+		patch["status"] = string(result.CappedEscalatedStatus)
 		if agentName != "" {
 			patch["previous_assignee"] = agentName
 		}

@@ -40,7 +40,7 @@ var _ = Describe("buildIncrementPatch", func() {
 		// The whole point: without this the executor restores the assignee on its next
 		// reconcile tick and the scanner re-arms the budget, so the row returns to the
 		// queue as a fresh candidate. `hold` is refused by the executor's own filter.
-		Expect(patch["status"]).To(Equal(result.CappedEscalatedStatus))
+		Expect(patch["status"]).To(Equal(string(result.CappedEscalatedStatus)))
 	})
 
 	It("does not park a record below the cap", func() {
