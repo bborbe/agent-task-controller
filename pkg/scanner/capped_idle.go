@@ -26,19 +26,12 @@ const cappedIdleStatus = "in_progress"
 
 // cappedEscalatedStatus is the status the sweep moves a rescued record to.
 //
-// Clearing the assignee alone is NOT durable, and this is the whole reason the sweep
-// touches status at all. A task with an empty assignee whose task_type still resolves
-// to a Config is treated by the executor as parked and gets its routing value written
-// straight back (restoreParkedAssignee), and the scanner then reads that empty → named
-// transition as an operator re-delegation and zeroes trigger_count — which re-arms the
-// budget and the whole cycle repeats. Measured on nuke dev 2026-10-28: an escalated
-// probe was re-assigned every ~60 s.
-//
-// `hold` breaks that loop at the executor's own eligibility filter: the default
-// trigger statuses are `[in_progress]` only, so a held task is refused before the
-// restore branch is ever reached, and it is simultaneously the human-owned state
-// retry exhaustion is supposed to end in.
-const cappedEscalatedStatus = "hold"
+// It aliases result.CappedEscalatedStatus so the sweep and the two write-site
+// escalations (the increment executor and the result writer) cannot drift — all three
+// must park a record in the same state, or a record escalated by one is un-parked by
+// another. The rationale, the measurement behind it, and why `hold` rather than a
+// cleared assignee is what actually ends the loop all live on that constant.
+const cappedEscalatedStatus = result.CappedEscalatedStatus
 
 // isCappedIdle reports whether a task's frontmatter is at or past its trigger cap.
 //

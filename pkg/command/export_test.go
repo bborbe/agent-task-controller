@@ -6,6 +6,7 @@ package command
 
 // Test-only re-exports for the external command_test package.
 var (
+	BuildIncrementPatch              = buildIncrementPatch
 	ParsePeriodTokenOrdinal          = parsePeriodTokenOrdinal
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
