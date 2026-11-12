@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.28.3
 
 - refactor: resolve a re-created task's title through the typed API instead of the identifier→path index. `reuseExistingIdentifierTitle` used to ask the index for a path and then re-read that file over git-rest to confirm it still carried the identifier, because an index entry can point at a file that has since been rewritten to carry a different identifier and redirecting there would make `postCreate` reopen an unrelated task. `ReadTask(id)` answers the same question authoritatively and cannot be shadowed, so the function now reads the task and uses its title, falling back to the command's own title when the identifier has no task. `fileCarriesIdentifier` had no other caller and is deleted; `identifierPresence` stays, because `recordCreatedTaskPath` still asks a genuinely path-shaped question the typed API cannot answer. Two specs are removed rather than rewritten: both drove their scenario by failing the redirect's read of the indexed file, and that read no longer exists.
 
