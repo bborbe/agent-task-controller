@@ -23,10 +23,11 @@ import (
 // working: the client addresses tasks by identifier, but the bytes on disk are
 // what the specs read back.
 //
-// ReadTask, PatchTask and PutBody are wired — the three calls the ported
-// frontmatter executors make. The rest panic rather than silently returning zero
-// values, so a ported call site that starts using them fails loudly instead of
-// quietly behaving as if the vault were empty.
+// ReadTask, PatchTask, PatchTaskWithBody and PutBody are wired — the calls the
+// ported frontmatter executors and the planning-retry gate make. The rest panic
+// rather than silently returning zero values, so a ported call site that starts
+// using them fails loudly instead of quietly behaving as if the vault were
+// empty.
 func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	fake := &mocks.VaultAPIClient{}
 	dir := filepath.Join(root, taskDir)
@@ -40,6 +41,14 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 		fields map[string]any,
 	) (*vaultapi.Task, error) {
 		return patchFSTask(dir, id, fields)
+	}
+	fake.PatchTaskWithBodyStub = func(
+		_ context.Context,
+		id string,
+		fields map[string]any,
+		body string,
+	) (*vaultapi.Task, error) {
+		return patchFSTaskWithBody(dir, id, fields, body)
 	}
 	fake.CreateTaskStub = func(
 		_ context.Context,
@@ -183,6 +192,41 @@ func patchFSTask(dir, id string, fields map[string]any) (*vaultapi.Task, error) 
 		return nil, err
 	}
 	fm, body, err := splitTaskFile(string(raw))
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range fields {
+		fm[key] = value
+	}
+	marshaled, err := yaml.Marshal(fm)
+	if err != nil {
+		return nil, err
+	}
+	updated := "---\n" + string(marshaled) + "---\n" + body
+	if err := os.WriteFile(path, []byte(updated), 0600); err != nil { // #nosec G306 -- test helper
+		return nil, err
+	}
+	return taskFromFrontmatter(id, fm, body), nil
+}
+
+// patchFSTaskWithBody merges fields into the task's frontmatter and replaces the
+// body in the same write — the single-commit semantics the planning-retry port
+// depends on, where a counter bump and a ## Progress bullet must never land
+// separately.
+func patchFSTaskWithBody(
+	dir, id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	path, ok := findFSTaskPath(dir, id)
+	if !ok {
+		return nil, vaultapi.ErrNotFound
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- test helper
+	if err != nil {
+		return nil, err
+	}
+	fm, _, err := splitTaskFile(string(raw))
 	if err != nil {
 		return nil, err
 	}
