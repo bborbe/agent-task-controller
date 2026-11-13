@@ -825,7 +825,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 		})
 
 		Context("spawn notification", func() {
-			It("does not increment retry_count when spawn_notification is true", func() {
+			It("writes the incoming spawn_notification marker", func() {
 				writeTaskFile(
 					"my-task.md",
 					"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: ai_review\nassignee: claude\nretry_count: 0\n---\nOriginal body\n",
