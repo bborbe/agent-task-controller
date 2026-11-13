@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.29.0
 
 - feat: add `PatchTaskWithBody` to the typed vault client — one PATCH carrying both frontmatter fields and the body. It exists for the caller that must move the two together: the planning retry appends a `retry n/3` bullet to the body **and** bumps `planning_retry_count`/`phase` under a compare-and-swap that re-reads the task and writes nothing if either moved. Splitting that into `PatchTask` + `PutBody` would leave a window where one landed and the other did not, which is the atomicity git-rest's `AtomicReadModifyWriteAndCommitPush` provided and the typed surface had no equivalent for. Pairs with `bborbe/vault-api#49`, which teaches the PATCH route to accept a `body` key. Inert on its own — no caller yet; the `planning_retry` port is the next change.
 
