@@ -742,7 +742,7 @@ func (r *resultWriter) buildResultModifyFn(
 		HealTargetVault(merged, r.vaultName)
 		ClearCurrentJobIfTerminal(merged)
 		mergedBody := mergeBody(bodyStr, string(req.Content))
-		body := r.applyRetryCounter(merged, currentOnDisk, req.Frontmatter, mergedBody)
+		body := r.applyRetryCounter(merged, currentOnDisk, mergedBody)
 
 		// Detect the escalation here rather than hooking the chokepoint: all four
 		// escalation rows funnel through applyRetryCounter (-> applyTriggerCap /
@@ -786,10 +786,7 @@ func (r *resultWriter) buildResultModifyFn(
 	}
 }
 
-func (r *resultWriter) applyRetryCounter(
-	merged, existing, incoming lib.TaskFrontmatter,
-	body string,
-) string {
+func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, body string) string {
 	if isTerminalStatus(merged.Status()) {
 		return body
 	}
@@ -821,29 +818,32 @@ func (r *resultWriter) applyRetryCounter(
 	// Routes through ClearAssigneeIfHumanReview (spec 042) so the partial-update executor shares the same chokepoint.
 	ClearAssigneeIfHumanReview(merged, r.humanAssignees)
 
-	// The short-circuit is decided from the INCOMING frontmatter, never from
-	// merged, and the key is NOT deleted.
+	// There is deliberately NO spawn_notification short-circuit here.
 	//
-	// merged inherits the on-disk spawn_notification:true written by the executor's
-	// spawn command, so testing it would fire on every later result write. The old
-	// code deleted the key to make the branch fire exactly once — and that delete is
-	// what stripped spawn_notification from the task file: merged is marshalled
-	// verbatim a few lines up in buildResultModifyFn, so the first result write after
-	// a spawn wrote a file carrying current_job and job_started_at but no
-	// spawn_notification (measured 2026-11-12, task 561f36f9, commit abb64beeeb).
+	// It used to be `if merged.SpawnNotification() { delete(merged, "spawn_notification"); return body }`.
+	// The delete was the only thing that made the branch one-shot — merged is
+	// marshalled verbatim by buildResultModifyFn — so it stripped the marker from
+	// every task file on the first result write after a spawn (measured 2026-11-12,
+	// task 561f36f9, commit abb64beeeb: the file kept current_job + job_started_at
+	// and lost spawn_notification).
 	//
-	// ⚠️ Do not "simplify" this back to merged.SpawnNotification(), and do not
-	// re-add a delete: the delete is the only thing that made the branch one-shot, so
-	// restoring it silently drops the key from the record again; testing merged
-	// without deleting short-circuits every write and skips applyRetryCap — the
-	// ba1bad61 regression this branch was added for.
+	// Keeping the key and keeping the short-circuit are mutually exclusive with a
+	// boolean marker: the value persists on disk, so testing it fires on every
+	// later write and applyRetryCap would never run again. Testing the incoming
+	// payload does not fix that either — an agent echoes its spawn-time snapshot,
+	// which is the premise operatorPinnedFields documents.
 	//
-	// Reading the incoming value is behaviourally free today: applyRetryCap returns
-	// immediately unless the task carries max_retries, and no live task does (0 of
-	// 11578 in the personal vault, measured 2026-11-13).
-	if incoming.SpawnNotification() {
-		return body
-	}
+	// So the branch is gone and applyRetryCap always runs. That is the safe
+	// direction: the cap can now only run more often, never less. It is also
+	// behaviourally free today — retry_count is retired (no component writes it)
+	// and applyRetryCap returns immediately unless the task carries max_retries,
+	// which no live task does (0 of 11578 in the personal vault, measured
+	// 2026-11-13).
+	//
+	// ⚠️ Do not reintroduce the short-circuit to "restore" the old behaviour: with
+	// the key kept, any test of it is permanently true and disables the retry cap.
+	// If a one-shot spawn marker is needed again, it must be a field the controller
+	// clears without losing it from the record — not this boolean.
 
 	// retry_count is retired — no deployed component writes it any more, so it is no
 	// longer controller-owned and an incoming value is applied rather than discarded.
