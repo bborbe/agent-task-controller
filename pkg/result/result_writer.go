@@ -791,37 +791,41 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 		return body
 	}
 
-	// Trigger-count cap enforcement runs unconditionally before any early
-	// returns below: it is a derived invariant on the on-disk state that
-	// must hold after every WriteResult. Placing it here also prevents the
-	// spawn_notification short-circuit below from silently skipping
-	// escalation on agent result writes that inherited spawn_notification
-	// from a previous merge (observed live on dev 2026-04-24, task
-	// ba1bad61: spawn-notification update set spawn_notification=true,
-	// then the agent's result publish inherited it via mergeFrontmatter
-	// and skipped the cap check, reverting phase: human_review to
-	// ai_review). The triggerCount > 0 guard prevents degenerate
-	// escalation of brand-new tasks where trigger_count is absent.
+	// Trigger-count cap enforcement runs unconditionally before the retry path: it is
+	// a derived invariant on the on-disk state that must hold after every WriteResult.
+	// The triggerCount > 0 guard prevents degenerate escalation of brand-new tasks
+	// where trigger_count is absent.
 	triggerCount := merged.TriggerCount()
 	body = r.applyTriggerCap(merged, existing, triggerCount, body)
 
-	// human_review assignee-clear guard runs BEFORE the spawn_notification
-	// early return below. On a pr-reviewer agent's first post-spawn write, the merged
-	// frontmatter carries spawn_notification: true (inherited from the executor's
-	// spawn-time UpdateFrontmatterCommand) AND incoming phase: human_review (from
-	// Result.NextPhase via resolveNextPhase). If this guard were below the
-	// spawn_notification early return, clearAssignee would never fire and the
-	// operator inbox filter (assignee == "") would miss the task. Same bug class
-	// as prompt 075 (2026-04-24 applyTriggerCap precedent, task ba1bad61); spec 041
-	// fixes the 2026-05-25 prod incident (task bborbe-agent #3).
+	// human_review assignee-clear guard runs before the retry-cap path. On a
+	// pr-reviewer agent's first post-spawn write, the merged frontmatter carries
+	// spawn_notification: true (inherited from the executor's spawn-time
+	// UpdateFrontmatterCommand) AND incoming phase: human_review (from
+	// Result.NextPhase via resolveNextPhase). The guard fires regardless of
+	// spawn_notification state — it used to sit above the spawn_notification early
+	// return, which no longer exists. Same bug class as prompt 075 (2026-04-24
+	// applyTriggerCap precedent, task ba1bad61); spec 041 fixes the 2026-05-25 prod
+	// incident (task bborbe-agent #3).
 	// needs_input: agent explicitly requested human review — clear assignee so task surfaces in operator inbox.
 	// Routes through ClearAssigneeIfHumanReview (spec 042) so the partial-update executor shares the same chokepoint.
 	ClearAssigneeIfHumanReview(merged, r.humanAssignees)
 
-	if merged.SpawnNotification() {
-		delete(merged, "spawn_notification")
-		return body
-	}
+	// There is deliberately NO spawn_notification short-circuit here.
+	//
+	// The old branch early-returned on merged.SpawnNotification() and deleted the key
+	// so it would fire exactly once; because merged is marshalled verbatim, that
+	// delete stripped the marker from the task file on the first result write after a
+	// spawn (measured 2026-11-12, task 561f36f9, commit abb64beeeb).
+	//
+	// Keeping the key and keeping the short-circuit are mutually exclusive with a
+	// boolean marker — the value persists on disk, so any test of it is permanently
+	// true and disables applyRetryCap. The branch is gone and applyRetryCap always
+	// runs. Rationale, the rejected incoming-keyed variant and the measurements:
+	// docs/controller-design.md § Retry cap.
+	//
+	// ⚠️ Do not reintroduce it. A one-shot spawn marker must be a field the controller
+	// clears without losing it from the record — not this boolean.
 
 	// retry_count is retired — no deployed component writes it any more, so it is no
 	// longer controller-owned and an incoming value is applied rather than discarded.

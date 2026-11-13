@@ -99,7 +99,7 @@ The terminal `status` is pinned and the controller-owned counter keeps its on-di
 
 **Body merge.** The body is merged by heading rather than replaced wholesale: an on-disk heading absent from the incoming body is preserved in place with its content, so an operator `## Parked` section recording a park reason and resume options survives the write; a heading present in both bodies is replaced in place by the incoming content, so the agent's fresh `## Result` lands; and a heading present only in the incoming body is appended after the last on-disk section. The preamble follows the same rule: text before the first `## ` heading is preserved from the on-disk file only when the incoming body starts with a heading (no preamble); an incoming body that carries its own preamble replaces the on-disk preamble; and a body with no `## ` heading at all is preamble-only on both sides, so an incoming preamble-only body still replaces an on-disk preamble-only body. A bare `---` line is never treated as a heading and is preserved unescaped, and both `\n` and `\r\n` line endings are tolerated. Escalation sections still append exactly once: an on-disk `## Trigger Cap Escalation` or `## Retry Escalation` section survives the merge, so the dedup check still sees it and does not append a duplicate.
 
-**Terminal short-circuit.** A terminal on-disk `status` takes the task out of the escalation machinery uniformly for both terminal statuses: no `## Trigger Cap Escalation` or `## Retry Escalation` section is appended, `assignee` is not cleared, `previous_assignee` is not written, `phase` is not restored by `restoreExistingPhase`, and an inherited `spawn_notification: true` key survives the write. Escalation exists to park a live runaway task, and a task an operator has already ended is not that.
+**Terminal short-circuit.** A terminal on-disk `status` takes the task out of the escalation machinery uniformly for both terminal statuses: no `## Trigger Cap Escalation` or `## Retry Escalation` section is appended, `assignee` is not cleared, `previous_assignee` is not written, and `phase` is not restored by `restoreExistingPhase`. (`spawn_notification` is untouched here, but that is not a property of this path — it survives on every write path; see § Retry cap.) Escalation exists to park a live runaway task, and a task an operator has already ended is not that.
 
 **Guard logging.** When the guard discards an incoming value that differs from the kept on-disk value, the writer emits one unconditional INFO line containing `ownership guard kept on-disk`, naming the task, the field, and both values. Equal values produce no log line, so steady-state publishes stay silent (a JSON-decoded incoming `float64` counter compares equal to a YAML-decoded on-disk `int`, and a status alias that normalizes to the same value is likewise silent).
 
@@ -181,7 +181,7 @@ the escalation section is not duplicated, the lifecycle phase is restored from t
 value, and the assignee stays as it was written.
 
 The `phase == "human_review"` assignee-clear guard in `resultWriter.applyRetryCounter`
-runs BEFORE the `spawn_notification` early return. This ordering is load-bearing: on
+runs before the retry-cap path. This ordering is load-bearing: on
 a pr-reviewer agent's first post-spawn write, the merged frontmatter carries
 `spawn_notification: true` (inherited from the executor's spawn-time
 `UpdateFrontmatterCommand`) AND incoming `phase: human_review` (from
@@ -189,6 +189,14 @@ a pr-reviewer agent's first post-spawn write, the merged frontmatter carries
 `spawn_notification` state — see spec 041 for the 2026-05-25 prod incident reproducer
 and prompt 075 for the same reorder pattern applied to `applyTriggerCap` on
 2026-04-24.
+
+There is **no** `spawn_notification` early return any more. It was removed because the
+`delete(merged, "spawn_notification")` that made it fire exactly once also stripped the
+marker from every task file on the first result write after a spawn (`merged` is
+marshalled verbatim). Keeping the key and keeping the short-circuit are mutually
+exclusive with a boolean marker — the value persists on disk, so any test of it is
+permanently true and would disable `applyRetryCap`. `applyRetryCap` therefore always
+runs; it returns immediately unless the task carries `max_retries`.
 
 **Coalescing the repeat escalation ping (spec 013).** The publish is keyed on the underlying PR issue, not on the task file. `resultWriter.publishEscalation` derives the coalescing key `(repo, PR number)` from the task name with the anchored pattern `^PR \S+ \S+ - (\S+) - ([0-9]+) - \S+` — only the owner-qualified repo token and the PR number are captured, because everything after the short SHA (the title slug, the ` - retry-<taskid[:8]>` suffix, the task kind word and the provider word) varies between retries of one PR while those two do not. Inside a **30-minute** window measured on the injected `libtime.CurrentDateTimeGetter` from the last *published* ping for that key, a further escalation of the same key is written, committed and parked exactly as before but publishes nothing, with one `glog.V(1)` line carrying `escalation notification coalesced` and naming the key and the task name. The record holds the time of the last published ping, so a suppressed escalation does not extend the window and a PR that escalates every few minutes is re-announced once per window rather than silenced for as long as it keeps escalating. The check and the record are one atomic step under a mutex, so two concurrent escalations of one key cannot both publish, and the claim is released when the sender rejects the command, so a broker outage is followed by the next escalation for that key publishing normally. Distinct keys never coalesce: the key is repo-qualified, so the same PR number in two repositories, two numbers in one repository and two tasks carrying the same head SHA in different repositories each publish their own notification. A task name the parse does not recognise publishes uncoalesced and creates no window state, so a format change degrades to one ping per file and never to silence. The suppression sits at the publish point rather than in the write because the modify closure re-runs on every git retry and the four escalation rows share one write path that must never be suppressed — the park, the `previous_assignee` write, the escalation section, the message, the metadata and the deeplink are unchanged, and only the repeat ping is dropped.
 
