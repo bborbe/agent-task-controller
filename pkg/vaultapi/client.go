@@ -200,6 +200,17 @@ type Client interface {
 	// PatchTask replaces the named frontmatter fields and returns the task as it
 	// now stands. It is the atomic mutation: the API serialises per task.
 	PatchTask(ctx context.Context, id string, fields map[string]any) (*Task, error)
+	// PatchTaskWithBody replaces the named frontmatter fields AND the body in one
+	// call, which is the atomicity a caller needs when the two must move together
+	// — the planning retry appends a bullet to the body and bumps a counter, and
+	// splitting that into PatchTask + PutBody would leave a window where one
+	// landed and the other did not.
+	PatchTaskWithBody(
+		ctx context.Context,
+		id string,
+		fields map[string]any,
+		body string,
+	) (*Task, error)
 	// PutBody replaces the task's body. It does not touch frontmatter.
 	PutBody(ctx context.Context, id string, body string) error
 	// ListTasks returns the tasks matching filter. It refuses rather than returns
@@ -419,6 +430,27 @@ func (c *client) PatchTask(
 	fields map[string]any,
 ) (*Task, error) {
 	status, raw, err := c.do(ctx, http.MethodPatch, taskPath(id, ""), nil, fields)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTask(ctx, status, raw, "patch task "+id)
+}
+
+// PatchTaskWithBody replaces the named frontmatter fields and the body in one
+// PATCH. The API lifts "body" out of the field map and writes both in a single
+// commit, so a caller that must move them together cannot land half a change.
+func (c *client) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*Task, error) {
+	payload := make(map[string]any, len(fields)+1)
+	for key, value := range fields {
+		payload[key] = value
+	}
+	payload["body"] = body
+	status, raw, err := c.do(ctx, http.MethodPatch, taskPath(id, ""), nil, payload)
 	if err != nil {
 		return nil, err
 	}

@@ -53,6 +53,22 @@ type VaultAPIClient struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
+	PatchTaskWithBodyStub        func(context.Context, string, map[string]any, string) (*vaultapi.Task, error)
+	patchTaskWithBodyMutex       sync.RWMutex
+	patchTaskWithBodyArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]any
+		arg4 string
+	}
+	patchTaskWithBodyReturns struct {
+		result1 *vaultapi.Task
+		result2 error
+	}
+	patchTaskWithBodyReturnsOnCall map[int]struct {
+		result1 *vaultapi.Task
+		result2 error
+	}
 	PutBodyStub        func(context.Context, string, string) error
 	putBodyMutex       sync.RWMutex
 	putBodyArgsForCall []struct {
@@ -291,6 +307,73 @@ func (fake *VaultAPIClient) PatchTaskReturnsOnCall(i int, result1 *vaultapi.Task
 		})
 	}
 	fake.patchTaskReturnsOnCall[i] = struct {
+		result1 *vaultapi.Task
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBody(arg1 context.Context, arg2 string, arg3 map[string]any, arg4 string) (*vaultapi.Task, error) {
+	fake.patchTaskWithBodyMutex.Lock()
+	ret, specificReturn := fake.patchTaskWithBodyReturnsOnCall[len(fake.patchTaskWithBodyArgsForCall)]
+	fake.patchTaskWithBodyArgsForCall = append(fake.patchTaskWithBodyArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 map[string]any
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.PatchTaskWithBodyStub
+	fakeReturns := fake.patchTaskWithBodyReturns
+	fake.recordInvocation("PatchTaskWithBody", []interface{}{arg1, arg2, arg3, arg4})
+	fake.patchTaskWithBodyMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBodyCallCount() int {
+	fake.patchTaskWithBodyMutex.RLock()
+	defer fake.patchTaskWithBodyMutex.RUnlock()
+	return len(fake.patchTaskWithBodyArgsForCall)
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBodyCalls(stub func(context.Context, string, map[string]any, string) (*vaultapi.Task, error)) {
+	fake.patchTaskWithBodyMutex.Lock()
+	defer fake.patchTaskWithBodyMutex.Unlock()
+	fake.PatchTaskWithBodyStub = stub
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBodyArgsForCall(i int) (context.Context, string, map[string]any, string) {
+	fake.patchTaskWithBodyMutex.RLock()
+	defer fake.patchTaskWithBodyMutex.RUnlock()
+	argsForCall := fake.patchTaskWithBodyArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBodyReturns(result1 *vaultapi.Task, result2 error) {
+	fake.patchTaskWithBodyMutex.Lock()
+	defer fake.patchTaskWithBodyMutex.Unlock()
+	fake.PatchTaskWithBodyStub = nil
+	fake.patchTaskWithBodyReturns = struct {
+		result1 *vaultapi.Task
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *VaultAPIClient) PatchTaskWithBodyReturnsOnCall(i int, result1 *vaultapi.Task, result2 error) {
+	fake.patchTaskWithBodyMutex.Lock()
+	defer fake.patchTaskWithBodyMutex.Unlock()
+	fake.PatchTaskWithBodyStub = nil
+	if fake.patchTaskWithBodyReturnsOnCall == nil {
+		fake.patchTaskWithBodyReturnsOnCall = make(map[int]struct {
+			result1 *vaultapi.Task
+			result2 error
+		})
+	}
+	fake.patchTaskWithBodyReturnsOnCall[i] = struct {
 		result1 *vaultapi.Task
 		result2 error
 	}{result1, result2}
