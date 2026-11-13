@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.28.5
 
 - fix: stop deleting `spawn_notification` from the frontmatter the result write commits, and remove the short-circuit that required the delete. `applyRetryCounter` used to early-return on `merged.SpawnNotification()` and `delete` the key so the branch would fire exactly once — but `merged` is marshalled verbatim by `buildResultModifyFn`, so the first result write after a spawn wrote a file carrying `current_job` and `job_started_at` and **no** `spawn_notification` (measured 2026-11-12 on sun, `Update Go bborbe-run 428868b`, commit `abb64beeeb`). Keeping the key and keeping the short-circuit are mutually exclusive with a boolean marker: the value persists on disk, so any test of it is permanently true and `applyRetryCap` would never run again. The branch is gone and `applyRetryCap` always runs — the safe direction, and behaviourally free today: `retry_count` is retired and `applyRetryCap` returns immediately unless the task carries `max_retries`, which no live task does (0 of 11578, measured 2026-11-13). `docs/controller-design.md` updated to match.
 
