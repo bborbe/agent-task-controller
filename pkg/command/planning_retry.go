@@ -370,6 +370,14 @@ func (g *planningRetryGate) buildEscalationChange(
 	if hadBefore != hasAfter || before != after {
 		fields["assignee"] = fm["assignee"]
 	}
+	// The chokepoint captures the outgoing assignee into previous_assignee before
+	// clearing assignee (result.clearAssignee). A field PATCH writes only the keys
+	// it names, so the capture has to be named here too — the whole-document
+	// rewrite this replaced carried it implicitly, and dropping it loses the only
+	// record of who held the task before it was parked.
+	if prev, ok := fm["previous_assignee"]; ok {
+		fields["previous_assignee"] = prev
+	}
 
 	g.healTargetVault(fields, fm)
 
