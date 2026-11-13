@@ -59,13 +59,12 @@ func CreateCommandConsumer(
 	humans result.HumanAssignees,
 ) run.Func {
 	retryGate := command.NewPlanningRetryGate(
-		gitClient,
+		vaultClient,
 		taskDir,
 		vaultName,
 		currentDateTime,
 		prCommenter,
 		m,
-		resolver,
 		humans,
 	)
 	executors := cdb.CommandObjectExecutorTxs{

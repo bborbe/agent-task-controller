@@ -5,20 +5,19 @@
 package command_test
 
 // Integration coverage for the controller planning-retry seam. Unlike
-// planning_retry_test.go (which stubs GitClient + PRCommenter with
-// counterfeiter fakes), this wires the REAL retry components together —
-// real GitRestClient + git-rest adapter, real PRCommenter, real
-// FindTaskFilePath + AtomicReadModifyWriteAndCommitPush modify closures —
-// and fakes only the two true external boundaries as httptest servers:
+// planning_retry_test.go (which backs the typed client with a temp directory),
+// this wires the REAL retry components together — the real vaultapi.Client
+// talking HTTP, the real PRCommenter, the real PATCH request/response round
+// trip — and fakes only the two true external boundaries as httptest servers:
 //
-//   - git-rest HTTP  → an in-memory path->bytes store (GET/POST /api/v1/files/…, /readiness)
-//   - GitHub  HTTP   → captures the POST /repos/…/pulls/N/reviews body
+//   - vault-api HTTP → an in-memory identifier->task store (GET/PATCH /api/v1/tasks/{id})
+//   - GitHub HTTP    → captures the POST /repos/…/pulls/N/reviews body
 //
-// Both client constructors already take injectable base URLs, so no
-// production source change is needed to reach this fidelity. The point is
-// to exercise the real yaml frontmatter round-trip, the real read-modify-
-// write merge, and the real GitHub COMMENT POST end-to-end — the pieces the
-// mock-based unit test cannot prove interoperate.
+// Both client constructors already take injectable base URLs, so no production
+// source change is needed to reach this fidelity. The point is to exercise the
+// real typed read, the real single-request field+body PATCH, and the real
+// GitHub COMMENT POST end-to-end — the pieces the mock-based unit test cannot
+// prove interoperate.
 
 import (
 	"context"
@@ -26,7 +25,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path"
 	"strings"
 	"sync"
 
@@ -38,60 +36,90 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
-	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
-	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
-// inMemGitRest is an in-memory stand-in for the git-rest /api/v1/files REST
-// API. It is an honest protocol fake — it serves the real endpoints the
-// GitRestClient calls, not a behavioural stub of the client itself.
-type inMemGitRest struct {
+// inMemVaultAPI is an in-memory stand-in for the vault-api typed task surface.
+// It is an honest protocol fake — it serves the real routes the typed client
+// calls and answers in the real response shape, not a behavioural stub of the
+// client itself.
+type inMemVaultAPI struct {
 	mu    sync.Mutex
-	files map[string][]byte
+	tasks map[string]*vaultapi.Task
 }
 
-func newInMemGitRest() *inMemGitRest {
-	return &inMemGitRest{files: map[string][]byte{}}
+func newInMemVaultAPI() *inMemVaultAPI {
+	return &inMemVaultAPI{tasks: map[string]*vaultapi.Task{}}
 }
 
-func (s *inMemGitRest) get(rel string) ([]byte, bool) {
+func (s *inMemVaultAPI) get(id string) (*vaultapi.Task, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.files[rel]
-	return b, ok
+	t, ok := s.tasks[id]
+	if !ok {
+		return nil, false
+	}
+	copied := *t
+	return &copied, true
 }
 
-func (s *inMemGitRest) handler() http.Handler {
+func (s *inMemVaultAPI) seed(id string, fm map[string]any, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[id] = &vaultapi.Task{ID: id, Title: id, Frontmatter: fm, Body: body}
+}
+
+func (s *inMemVaultAPI) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/readiness", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/api/v1/files/", func(w http.ResponseWriter, r *http.Request) {
-		rel := strings.TrimPrefix(r.URL.Path, "/api/v1/files/")
+	mux.HandleFunc("/api/v1/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
 		switch r.Method {
 		case http.MethodGet:
-			if rel == "" {
-				s.serveList(w, r.URL.Query().Get("glob"))
-				return
-			}
-			b, ok := s.get(rel)
+			t, ok := s.get(id)
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			_, _ = w.Write(b)
-		case http.MethodPost:
-			body, err := io.ReadAll(r.Body)
+			writeTask(w, t)
+		case http.MethodPatch:
+			raw, err := io.ReadAll(r.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
+			var payload map[string]any
+			if decodeErr := json.Unmarshal(raw, &payload); decodeErr != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			body, _ := payload["body"].(string)
+			delete(payload, "body")
+
 			s.mu.Lock()
-			s.files[rel] = body
+			t, ok := s.tasks[id]
+			if !ok {
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			merged := map[string]any{}
+			for key, value := range t.Frontmatter {
+				merged[key] = value
+			}
+			for key, value := range payload {
+				merged[key] = value
+			}
+			// The real API writes YAML to disk and reads it back, so an integer
+			// arrives as an integer rather than a JSON float. Round-trip here so
+			// the fake reports the same types the production surface does.
+			normalized := normalizeFrontmatter(merged)
+			updated := &vaultapi.Task{ID: id, Title: t.Title, Frontmatter: normalized, Body: body}
+			s.tasks[id] = updated
+			copied := *updated
 			s.mu.Unlock()
-			w.WriteHeader(http.StatusOK)
+			writeTask(w, &copied)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -99,17 +127,23 @@ func (s *inMemGitRest) handler() http.Handler {
 	return mux
 }
 
-func (s *inMemGitRest) serveList(w http.ResponseWriter, glob string) {
-	s.mu.Lock()
-	matched := make([]string, 0, len(s.files))
-	for k := range s.files {
-		if ok, _ := path.Match(glob, k); ok {
-			matched = append(matched, k)
-		}
+// normalizeFrontmatter round-trips a map through YAML, which is what turns a
+// JSON-decoded float64 back into the int the vault actually stores.
+func normalizeFrontmatter(fm map[string]any) map[string]any {
+	raw, err := yaml.Marshal(fm)
+	if err != nil {
+		return fm
 	}
-	s.mu.Unlock()
+	normalized := map[string]any{}
+	if unmarshalErr := yaml.Unmarshal(raw, &normalized); unmarshalErr != nil {
+		return fm
+	}
+	return normalized
+}
+
+func writeTask(w http.ResponseWriter, t *vaultapi.Task) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(matched)
+	_ = json.NewEncoder(w).Encode(t)
 }
 
 // capturedReview records one GitHub review POST the fake received.
@@ -156,20 +190,19 @@ func (g *githubReviewFake) handler() http.Handler {
 var _ = Describe("PlanningRetryGate (integration)", func() {
 	var (
 		ctx      context.Context
-		store    *inMemGitRest
+		store    *inMemVaultAPI
 		github   *githubReviewFake
-		gitSrv   *httptest.Server
+		vaultSrv *httptest.Server
 		ghSrv    *httptest.Server
 		gate     command.PlanningRetryGate
 		taskDir  string
-		basePath string
 	)
 
-	// seedFile builds a task file body with the given frontmatter. retryCount
-	// < 0 omits the planning_retry_count key. withPR adds the repository +
+	// seedFrontmatter builds the frontmatter map for a task file. retryCount < 0
+	// omits the planning_retry_count key. withPR adds the repository +
 	// pull_request_number the escalation COMMENT resolves against.
-	seedFile := func(taskID, phase string, retryCount int, withPR bool) []byte {
-		fm := map[string]interface{}{
+	seedFrontmatter := func(taskID, phase string, retryCount int, withPR bool) map[string]any {
+		fm := map[string]any{
 			"task_identifier": taskID,
 			"task_type":       "pr-review",
 			"assignee":        "pr-reviewer-agent",
@@ -183,9 +216,7 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 			fm["repository"] = "bborbe/maintainer"
 			fm["pull_request_number"] = 62
 		}
-		fmBytes, err := yaml.Marshal(fm)
-		Expect(err).To(BeNil())
-		return []byte("---\n" + string(fmBytes) + "\n---\n## Objective\n\nreview the PR\n")
+		return fm
 	}
 
 	buildFailedPlanningTask := func(taskID, message string) lib.Task {
@@ -200,49 +231,37 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 		}
 	}
 
-	// storedFrontmatter reads a file back out of the fake store and parses its frontmatter.
-	storedFrontmatter := func(rel string) (lib.TaskFrontmatter, string) {
-		raw, ok := store.get(rel)
+	// storedTask reads a task back out of the fake store.
+	storedTask := func(id string) *vaultapi.Task {
+		t, ok := store.get(id)
 		Expect(ok).To(BeTrue())
-		fmStr, err := result.ExtractFrontmatter(ctx, raw)
-		Expect(err).To(BeNil())
-		var fm lib.TaskFrontmatter
-		Expect(yaml.Unmarshal([]byte(fmStr), &fm)).To(BeNil())
-		return fm, string(raw)
+		return t
 	}
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		store = newInMemGitRest()
+		store = newInMemVaultAPI()
 		github = &githubReviewFake{}
-		gitSrv = httptest.NewServer(store.handler())
+		vaultSrv = httptest.NewServer(store.handler())
 		ghSrv = httptest.NewServer(github.handler())
 		taskDir = "tasks"
-		basePath = "/repo"
 
-		restClient := gitrestclient.NewGitRestClient(
-			gitSrv.URL,
-			"",
-			"integration-test",
-			metrics.New(),
-		)
-		gitClient := gitrestclient.NewGitClient(restClient, basePath)
+		vaultClient := vaultapi.NewClient(vaultSrv.URL, "", "integration-test")
 		commenter := prcomment.NewPRCommenter(http.DefaultClient, ghSrv.URL, "test-token")
 		clock := libtime.NewCurrentDateTime()
 		gate = command.NewPlanningRetryGate(
-			gitClient,
+			vaultClient,
 			taskDir,
 			"integration-test",
 			clock,
 			commenter,
 			metrics.New(),
 			nil,
-			nil,
 		)
 	})
 
 	AfterEach(func() {
-		gitSrv.Close()
+		vaultSrv.Close()
 		ghSrv.Close()
 	})
 
@@ -250,7 +269,11 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 		It(
 			"bumps the counter, appends a ## Progress line, assigns a fresh task_identifier, and posts NO comment",
 			func() {
-				store.files["tasks/pr-123.md"] = seedFile("pr-123", "planning", -1, true)
+				store.seed(
+					"pr-123",
+					seedFrontmatter("pr-123", "planning", -1, true),
+					"## Objective\n\nreview the PR\n",
+				)
 				req := buildFailedPlanningTask(
 					"pr-123",
 					"minimax B-case: plan JSON started with B not {",
@@ -260,7 +283,8 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				fm, raw := storedFrontmatter("tasks/pr-123.md")
+				task := storedTask("pr-123")
+				fm := lib.TaskFrontmatter(task.Frontmatter)
 
 				count, _ := fm.Int("planning_retry_count")
 				Expect(count).To(Equal(1))
@@ -273,8 +297,8 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 				_, parseErr := uuid.Parse(newID)
 				Expect(parseErr).To(BeNil())
 
-				Expect(raw).To(ContainSubstring("## Progress"))
-				Expect(raw).To(ContainSubstring("retry 1/3:"))
+				Expect(task.Body).To(ContainSubstring("## Progress"))
+				Expect(task.Body).To(ContainSubstring("retry 1/3:"))
 
 				// No PR is in silent limbo yet — below the cap, nothing is posted.
 				Expect(github.count()).To(Equal(0))
@@ -286,14 +310,19 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 		It(
 			"escalates to human_review, clears the assignee, and posts exactly one COMMENT review to GitHub",
 			func() {
-				store.files["tasks/pr-124.md"] = seedFile("pr-124", "planning", 3, true)
+				store.seed(
+					"pr-124",
+					seedFrontmatter("pr-124", "planning", 3, true),
+					"## Objective\n\nreview the PR\n",
+				)
 				req := buildFailedPlanningTask("pr-124", "still malformed after three tries")
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				fm, raw := storedFrontmatter("tasks/pr-124.md")
+				task := storedTask("pr-124")
+				fm := lib.TaskFrontmatter(task.Frontmatter)
 
 				phase, _ := fm.String("phase")
 				Expect(phase).To(Equal("human_review"))
@@ -301,7 +330,7 @@ var _ = Describe("PlanningRetryGate (integration)", func() {
 				assignee, _ := fm.String("assignee")
 				Expect(assignee).To(Equal(""))
 
-				Expect(raw).To(ContainSubstring("retry 3/3:"))
+				Expect(task.Body).To(ContainSubstring("retry 3/3:"))
 
 				Expect(github.count()).To(Equal(1))
 				review := github.reviews[0]

@@ -18,12 +18,11 @@ import (
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // maxControllerPlanningRetries is the frozen cap on controller-side planning
@@ -47,38 +46,36 @@ type PlanningRetryGate interface {
 
 // NewPlanningRetryGate constructs the gate. vaultName is the controller's
 // VAULT_NAME, used to heal legacy task files that lack a target_vault stamp.
-// resolver is the scanner's identifier→path index, consulted by the lookup before
-// it walks the vault.
+// taskDir is only used to render the human-facing PR comment, which names the
+// task by a path-shaped string; the write itself addresses the task by
+// identifier.
 func NewPlanningRetryGate(
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
-	resolver result.TaskPathResolver,
 	humans result.HumanAssignees,
 ) PlanningRetryGate {
 	return &planningRetryGate{
-		gitClient:       gitClient,
+		client:          client,
 		taskDir:         taskDir,
 		vaultName:       vaultName,
 		currentDateTime: currentDateTime,
 		prCommenter:     prCommenter,
 		metrics:         m,
-		resolver:        resolver,
 		humanAssignees:  humans,
 	}
 }
 
 type planningRetryGate struct {
-	gitClient       gitclient.GitClient
+	client          vaultapi.Client
 	taskDir         string
 	vaultName       string
 	currentDateTime libtime.CurrentDateTimeGetter
 	prCommenter     prcomment.PRCommenter
 	metrics         metrics.Metrics
-	resolver        result.TaskPathResolver
 	// humanAssignees names the assignee values that are human owners, so the
 	// human_review chokepoint retains them instead of clearing them.
 	humanAssignees result.HumanAssignees
@@ -89,16 +86,19 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 		return false, nil
 	}
 
-	relPath, existingFrontmatter, findErr := result.FindTaskFilePath(
-		ctx, g.gitClient, g.taskDir, req.TaskIdentifier, g.resolver,
-	)
-	if findErr != nil {
-		return false, errors.Wrapf(ctx, findErr, "planning-retry: find task file")
+	task, err := g.client.ReadTask(ctx, string(req.TaskIdentifier))
+	if err != nil {
+		if errors.Is(err, vaultapi.ErrNotFound) {
+			glog.Warningf(
+				"planning-retry: task file not found for %s; skipping",
+				req.TaskIdentifier,
+			)
+			return false, nil
+		}
+		return false, errors.Wrapf(ctx, err, "planning-retry: read task")
 	}
-	if relPath == "" {
-		glog.Warningf("planning-retry: task file not found for %s; skipping", req.TaskIdentifier)
-		return false, nil
-	}
+
+	existingFrontmatter := lib.TaskFrontmatter(task.Frontmatter)
 
 	phase := existingFrontmatter.Phase()
 	phaseValue := ""
@@ -119,41 +119,49 @@ func (g *planningRetryGate) Handle(ctx context.Context, req lib.Task) (handled b
 	}
 
 	if count >= maxControllerPlanningRetries {
-		return g.escalate(ctx, req, relPath, existingFrontmatter)
+		return g.escalate(ctx, req, task)
+	}
+
+	// Re-read before writing: the typed PATCH carries no compare-and-swap of its
+	// own, so this second read is the baseline the retry change is checked
+	// against. A task that moved between the two reads must not be forced back
+	// to planning.
+	current, err := g.client.ReadTask(ctx, task.ID)
+	if err != nil {
+		if errors.Is(err, vaultapi.ErrNotFound) {
+			glog.Warningf(
+				"planning-retry: task file not found for %s; skipping",
+				req.TaskIdentifier,
+			)
+			return false, nil
+		}
+		return false, errors.Wrapf(ctx, err, "planning-retry: re-read task")
 	}
 
 	reason := g.extractReason(string(req.Content))
-	bump := false
-	ts := g.currentDateTime.Now().UTC().Format("2006-01-02T15:04:05Z07:00")
+	ts := g.currentDateTime.Now().UTC().Format(time.RFC3339)
 
-	msg := "[agent-task-controller] planning retry " + strconv.Itoa(
-		count+1,
-	) + "/3 for task " + string(
-		req.TaskIdentifier,
-	)
-	absPath := filepath.Join(g.gitClient.Path(), relPath)
+	fields, newBody, changed := g.buildRetryChange(current, count, reason, ts)
+	if !changed {
+		return true, nil
+	}
 
-	modifyErr := g.gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx, absPath, g.buildRetryModifyFn(ctx, count, reason, ts, &bump), msg,
-	)
-	if modifyErr != nil {
+	if _, err := g.client.PatchTaskWithBody(ctx, current.ID, fields, newBody); err != nil {
 		return false, errors.Wrapf(
 			ctx,
-			modifyErr,
+			err,
 			"planning-retry: write retry for task %s",
 			req.TaskIdentifier,
 		)
 	}
 
-	if bump {
-		g.metrics.PlanningRetryTotal("retry").Inc()
-		glog.V(2).Infof(
-			"planning-retry: attempt %d/3 for task %s (reason=%q)",
-			count+1,
-			req.TaskIdentifier,
-			reason,
-		)
-	}
+	g.metrics.PlanningRetryTotal("retry").Inc()
+	glog.V(2).Infof(
+		"planning-retry: attempt %d/3 for task %s (reason=%q)",
+		count+1,
+		req.TaskIdentifier,
+		reason,
+	)
 	return true, nil
 }
 
@@ -217,99 +225,94 @@ func sanitizeReason(raw string) string {
 	return sanitized
 }
 
-func (g *planningRetryGate) buildRetryModifyFn(
-	ctx context.Context,
+// buildRetryChange computes the field set and body for one retry write against
+// the freshly-read task. count is the baseline Handle decided on: a task whose
+// counter or phase moved since that read produces changed=false, so a stale read
+// never forces a task back into planning. The same read supplies the body, so
+// the duplicate-bullet guard sees the bytes the write is about to replace.
+func (g *planningRetryGate) buildRetryChange(
+	current *vaultapi.Task,
 	count int,
 	reason string,
 	ts string,
-	bump *bool,
-) func(current []byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		*bump = false
-		fmStr, err := result.ExtractFrontmatter(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
-		}
-		body, err := result.ExtractBody(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract body")
-		}
-		var fm lib.TaskFrontmatter
-		if err := yaml.Unmarshal([]byte(fmStr), &fm); err != nil {
-			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
-		}
+) (fields map[string]any, body string, changed bool) {
+	fm := lib.TaskFrontmatter(current.Frontmatter)
 
-		onDiskCount, _ := fm.Int("planning_retry_count")
-		if onDiskCount != count {
-			return current, nil
-		}
-		// Re-check the phase against THIS read, not the one Handle saw: the task
-		// may have moved past planning between FindTaskFilePath and here, and a
-		// stale read must never force it back to planning.
-		if phase := fm.Phase(); phase == nil ||
-			phase.String() != domain.TaskPhasePlanning.String() {
-			return current, nil
-		}
-
-		retryLine := "retry " + strconv.Itoa(count+1) + "/3: " + reason + " at " + ts
-		retryLineBullet := "- " + retryLine
-		for _, line := range strings.Split(body, "\n") {
-			if strings.TrimSpace(line) == retryLineBullet {
-				return current, nil
-			}
-		}
-
-		*bump = true
-
-		fm["planning_retry_count"] = count + 1
-		fm["phase"] = "planning"
-		fm["task_identifier"] = uuid.NewString()
-
-		// Heal-on-write: stamp target_vault on legacy files lacking it so the
-		// non-owning controller permanently stops falling through. The gate runs
-		// after the routing predicate in NewTaskResultExecutor and returns
-		// handled=true, so the executor returns before WriteResult and the
-		// result-path heal never fires for these writes.
-		result.HealTargetVault(fm, g.vaultName)
-
-		newBody := appendProgressLine(body, retryLineBullet)
-
-		marshaled, err := yaml.Marshal(map[string]any(fm))
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
-		}
-		return []byte("---\n" + string(marshaled) + "---\n" + newBody), nil
+	onDiskCount, _ := fm.Int("planning_retry_count")
+	if onDiskCount != count {
+		return nil, "", false
 	}
+	// Re-check the phase against THIS read, not the one Handle saw: the task may
+	// have moved past planning between the two reads, and a stale read must never
+	// force it back to planning.
+	if phase := fm.Phase(); phase == nil ||
+		phase.String() != domain.TaskPhasePlanning.String() {
+		return nil, "", false
+	}
+
+	retryLine := "retry " + strconv.Itoa(count+1) + "/3: " + reason + " at " + ts
+	retryLineBullet := "- " + retryLine
+	for _, line := range strings.Split(current.Body, "\n") {
+		if strings.TrimSpace(line) == retryLineBullet {
+			return nil, "", false
+		}
+	}
+
+	fields = map[string]any{
+		"planning_retry_count": count + 1,
+		"phase":                "planning",
+		"task_identifier":      uuid.NewString(),
+	}
+	g.healTargetVault(fields, fm)
+
+	return fields, appendProgressLine(current.Body, retryLineBullet), true
 }
 
 func (g *planningRetryGate) escalate(
 	ctx context.Context,
 	req lib.Task,
-	relPath string,
-	existingFrontmatter lib.TaskFrontmatter,
+	task *vaultapi.Task,
 ) (bool, error) {
 	reason := g.extractReason(string(req.Content))
 	ts := g.currentDateTime.Now().UTC().Format(time.RFC3339)
 
-	msg := "[agent-task-controller] planning retry exhausted for task " + string(req.TaskIdentifier)
-	absPath := filepath.Join(g.gitClient.Path(), relPath)
+	// Re-read for the same reason buildRetryChange does: the typed PATCH carries
+	// no compare-and-swap, so the write is checked against a read taken here.
+	current, err := g.client.ReadTask(ctx, task.ID)
+	if err != nil {
+		if errors.Is(err, vaultapi.ErrNotFound) {
+			glog.Warningf(
+				"planning-retry: task file not found for %s; skipping",
+				req.TaskIdentifier,
+			)
+			return false, nil
+		}
+		return false, errors.Wrapf(ctx, err, "planning-retry: re-read task for escalation")
+	}
 
-	firstEscalation := true
-	modifyErr := g.gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx, absPath, g.buildEscalationModifyFn(ctx, &firstEscalation, reason, ts), msg,
-	)
-	if modifyErr != nil {
+	fields, newBody, firstEscalation, changed := g.buildEscalationChange(current, reason, ts)
+	if !changed {
+		return true, nil
+	}
+
+	if _, err := g.client.PatchTaskWithBody(ctx, current.ID, fields, newBody); err != nil {
 		return false, errors.Wrapf(
 			ctx,
-			modifyErr,
+			err,
 			"planning-retry: escalation write for task %s",
 			req.TaskIdentifier,
 		)
 	}
 
 	if firstEscalation {
-		commentBody := "Automated pr-review planning failed after 3 controller retries and 3 in-agent retries. Last error: " + reason + ". Please investigate " + relPath + "."
-		if commentErr := g.prCommenter.PostComment(ctx, existingFrontmatter, commentBody); commentErr != nil {
+		commentBody := "Automated pr-review planning failed after 3 controller retries and 3 in-agent retries. Last error: " + reason + ". Please investigate " + g.taskRelPath(
+			current,
+		) + "."
+		if commentErr := g.prCommenter.PostComment(
+			ctx,
+			lib.TaskFrontmatter(current.Frontmatter),
+			commentBody,
+		); commentErr != nil {
 			glog.Warningf(
 				"planning-retry: github COMMENT post failed: task=%s err=%v",
 				req.TaskIdentifier,
@@ -326,62 +329,73 @@ func (g *planningRetryGate) escalate(
 	return true, nil
 }
 
-func (g *planningRetryGate) buildEscalationModifyFn(
-	ctx context.Context,
-	firstEscalation *bool,
+// buildEscalationChange computes the field set and body for the escalation
+// write. firstEscalation is false when the terminal retry bullet is already in
+// the body, which keeps the caller from posting the comment or bumping the
+// "exhausted" metric for a write that repeats an earlier one.
+func (g *planningRetryGate) buildEscalationChange(
+	current *vaultapi.Task,
 	reason, ts string,
-) func(current []byte) ([]byte, error) {
-	return func(current []byte) ([]byte, error) {
-		fmStr, err := result.ExtractFrontmatter(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract frontmatter")
-		}
-		body, err := result.ExtractBody(ctx, current)
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "extract body")
-		}
-		var fm lib.TaskFrontmatter
-		if err := yaml.Unmarshal([]byte(fmStr), &fm); err != nil {
-			return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
-		}
+) (fields map[string]any, body string, firstEscalation bool, changed bool) {
+	fm := lib.TaskFrontmatter(current.Frontmatter)
 
-		// Re-check the phase against THIS read: a task that moved past planning
-		// between FindTaskFilePath and here must not be escalated back into the
-		// human queue. Clearing firstEscalation keeps the caller from posting the
-		// escalation comment or bumping the "exhausted" metric for a write that
-		// did not happen.
-		if phase := fm.Phase(); phase == nil ||
-			phase.String() != domain.TaskPhasePlanning.String() {
-			*firstEscalation = false
-			return current, nil
-		}
-
-		// Idempotency: check if terminal retry line already present
-		for _, line := range strings.Split(body, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "retry 3/3:") {
-				*firstEscalation = false
-				break
-			}
-		}
-
-		if *firstEscalation {
-			body = appendProgressLine(body, "- retry 3/3: "+reason+" at "+ts)
-		}
-
-		fm["phase"] = "human_review"
-		result.ClearAssigneeIfHumanReview(fm, g.humanAssignees)
-
-		// Heal-on-write: stamp target_vault on legacy files lacking it (same
-		// rationale as buildRetryModifyFn — the gate's handled=true return
-		// bypasses the result-path heal).
-		result.HealTargetVault(fm, g.vaultName)
-
-		marshaled, err := yaml.Marshal(map[string]any(fm))
-		if err != nil {
-			return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
-		}
-		return []byte("---\n" + string(marshaled) + "---\n" + body), nil
+	// Re-check the phase against THIS read: a task that moved past planning
+	// between the two reads must not be escalated back into the human queue.
+	if phase := fm.Phase(); phase == nil ||
+		phase.String() != domain.TaskPhasePlanning.String() {
+		return nil, "", false, false
 	}
+
+	firstEscalation = true
+	// Idempotency: check if terminal retry line already present
+	for _, line := range strings.Split(current.Body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "retry 3/3:") {
+			firstEscalation = false
+			break
+		}
+	}
+
+	body = current.Body
+	if firstEscalation {
+		body = appendProgressLine(body, "- retry 3/3: "+reason+" at "+ts)
+	}
+
+	// The phase is set on the map BEFORE the assignee decision: the chokepoint
+	// only clears an assignee whose phase is already human_review.
+	fm["phase"] = "human_review"
+	fields = map[string]any{"phase": "human_review"}
+	before, hadBefore := fm["assignee"]
+	result.ClearAssigneeIfHumanReview(fm, g.humanAssignees)
+	after, hasAfter := fm["assignee"]
+	if hadBefore != hasAfter || before != after {
+		fields["assignee"] = fm["assignee"]
+	}
+
+	g.healTargetVault(fields, fm)
+
+	return fields, body, firstEscalation, true
+}
+
+// healTargetVault adds the target_vault stamp to a patch whose task file lacks
+// it. The original heal-on-write mutated the whole frontmatter document before
+// rewriting it; a field PATCH only writes the keys it names, so the stamp has to
+// be named explicitly. A present value (any value) is never overridden — the
+// same rule result.HealTargetVault enforces.
+func (g *planningRetryGate) healTargetVault(fields map[string]any, fm lib.TaskFrontmatter) {
+	if _, ok := fm["target_vault"]; !ok {
+		fields["target_vault"] = g.vaultName
+	}
+}
+
+// taskRelPath renders the vault-relative path a human reading the escalation PR
+// comment can act on. The typed read reports no path, so it is derived from the
+// task's title — the comment is for a human, and an identifier is less useful
+// there than a path.
+func (g *planningRetryGate) taskRelPath(t *vaultapi.Task) string {
+	if g.taskDir == "" {
+		return t.Title + ".md"
+	}
+	return filepath.Join(g.taskDir, t.Title+".md")
 }
 
 func appendProgressLine(body string, line string) string {
