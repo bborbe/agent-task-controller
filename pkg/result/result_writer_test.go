@@ -851,7 +851,8 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				Expect(s).To(ContainSubstring("phase: ai_review"))
 				Expect(s).NotTo(ContainSubstring("human_review"))
 				Expect(s).NotTo(ContainSubstring("Retry Escalation"))
-				Expect(s).NotTo(ContainSubstring("spawn_notification"))
+				// the spawn marker is written, not consumed — the record must show a spawn
+				Expect(s).To(ContainSubstring("spawn_notification: true"))
 			})
 
 			It("does not modify retry_count when spawn_notification is absent", func() {
@@ -920,8 +921,9 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						Expect(s).NotTo(ContainSubstring("\nassignee: pr-reviewer-agent"))
 						// previous_assignee populated by clearAssignee
 						Expect(s).To(ContainSubstring("previous_assignee: pr-reviewer-agent"))
-						// spawn_notification key consumed by the early-return branch
-						Expect(s).NotTo(ContainSubstring("spawn_notification"))
+						// spawn_notification survives the write — the early-return branch no
+						// longer deletes it, so the record keeps its spawn marker
+						Expect(s).To(ContainSubstring("spawn_notification: true"))
 						// no escalation sections — this is a legitimate handoff, not a cap path
 						Expect(s).NotTo(ContainSubstring("## Retry Escalation"))
 						Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
@@ -1218,8 +1220,8 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					// trigger counts preserved
 					Expect(s).To(ContainSubstring("trigger_count: 3"))
 					Expect(s).To(ContainSubstring("max_triggers: 3"))
-					// spawn_notification consumed (deleted) by the branch after cap enforcement
-					Expect(s).NotTo(ContainSubstring("spawn_notification"))
+					// spawn_notification survives — it is no longer deleted from the written map
+					Expect(s).To(ContainSubstring("spawn_notification: true"))
 					// escalation section present exactly once (not duplicated)
 					Expect(strings.Count(s, "## Trigger Cap Escalation")).To(Equal(1))
 					// agent's fresh result content is present

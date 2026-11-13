@@ -742,7 +742,7 @@ func (r *resultWriter) buildResultModifyFn(
 		HealTargetVault(merged, r.vaultName)
 		ClearCurrentJobIfTerminal(merged)
 		mergedBody := mergeBody(bodyStr, string(req.Content))
-		body := r.applyRetryCounter(merged, currentOnDisk, mergedBody)
+		body := r.applyRetryCounter(merged, currentOnDisk, req.Frontmatter, mergedBody)
 
 		// Detect the escalation here rather than hooking the chokepoint: all four
 		// escalation rows funnel through applyRetryCounter (-> applyTriggerCap /
@@ -786,7 +786,10 @@ func (r *resultWriter) buildResultModifyFn(
 	}
 }
 
-func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, body string) string {
+func (r *resultWriter) applyRetryCounter(
+	merged, existing, incoming lib.TaskFrontmatter,
+	body string,
+) string {
 	if isTerminalStatus(merged.Status()) {
 		return body
 	}
@@ -818,8 +821,27 @@ func (r *resultWriter) applyRetryCounter(merged, existing lib.TaskFrontmatter, b
 	// Routes through ClearAssigneeIfHumanReview (spec 042) so the partial-update executor shares the same chokepoint.
 	ClearAssigneeIfHumanReview(merged, r.humanAssignees)
 
-	if merged.SpawnNotification() {
-		delete(merged, "spawn_notification")
+	// The short-circuit is decided from the INCOMING frontmatter, never from
+	// merged, and the key is NOT deleted.
+	//
+	// merged inherits the on-disk spawn_notification:true written by the executor's
+	// spawn command, so testing it would fire on every later result write. The old
+	// code deleted the key to make the branch fire exactly once — and that delete is
+	// what stripped spawn_notification from the task file: merged is marshalled
+	// verbatim a few lines up in buildResultModifyFn, so the first result write after
+	// a spawn wrote a file carrying current_job and job_started_at but no
+	// spawn_notification (measured 2026-11-12, task 561f36f9, commit abb64beeeb).
+	//
+	// ⚠️ Do not "simplify" this back to merged.SpawnNotification(), and do not
+	// re-add a delete: the delete is the only thing that made the branch one-shot, so
+	// restoring it silently drops the key from the record again; testing merged
+	// without deleting short-circuits every write and skips applyRetryCap — the
+	// ba1bad61 regression this branch was added for.
+	//
+	// Reading the incoming value is behaviourally free today: applyRetryCap returns
+	// immediately unless the task carries max_retries, and no live task does (0 of
+	// 11578 in the personal vault, measured 2026-11-13).
+	if incoming.SpawnNotification() {
 		return body
 	}
 
