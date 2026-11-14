@@ -16,10 +16,10 @@ import (
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 
-	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/publisher"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // redriveTriggerPhases is the phase allow-list a task must be in to be re-driven.
@@ -57,7 +57,7 @@ type RedriveSweep interface {
 // (executor down, config missing) produces at most one event per interval
 // rather than a flood.
 func NewRedriveSweep(
-	gitClient gitrestclient.GitClient,
+	client vaultapi.Client,
 	publisher publisher.TaskPublisher,
 	taskDir string,
 	branch base.Branch,
@@ -66,7 +66,7 @@ func NewRedriveSweep(
 	m metrics.Metrics,
 ) RedriveSweep {
 	return &redriveSweep{
-		gitClient:       gitClient,
+		client:          client,
 		publisher:       publisher,
 		taskDir:         taskDir,
 		branch:          branch,
@@ -79,7 +79,7 @@ func NewRedriveSweep(
 }
 
 type redriveSweep struct {
-	gitClient       gitrestclient.GitClient
+	client          vaultapi.Client
 	publisher       publisher.TaskPublisher
 	taskDir         string
 	branch          base.Branch
@@ -117,10 +117,7 @@ func (s *redriveSweep) Run(ctx context.Context) error {
 // file hash has not changed since creation.
 func (s *redriveSweep) SweepOnce(ctx context.Context) error {
 	s.metrics.ScanCyclesTotal("redrive").Inc()
-	if err := s.gitClient.Pull(ctx); err != nil {
-		return errors.Wrapf(ctx, err, "redrive sweep git pull")
-	}
-	paths, err := s.gitClient.ListFiles(ctx, s.taskDir+"/*.md")
+	tasks, err := s.client.ListTasks(ctx, vaultapi.Filter{})
 	if err != nil {
 		return errors.Wrapf(ctx, err, "redrive sweep list tasks")
 	}
@@ -136,13 +133,8 @@ func (s *redriveSweep) SweepOnce(ctx context.Context) error {
 			delete(s.published, id)
 		}
 	}
-	for _, relPath := range paths {
-		content, err := s.gitClient.ReadFile(ctx, relPath)
-		if err != nil {
-			glog.Warningf("redrive sweep: read %s: %v", relPath, err)
-			continue
-		}
-		task := scanner.ParseTask(ctx, content)
+	for _, listed := range tasks {
+		task := scanner.ParseTaskFields(listed.Frontmatter, listed.Body)
 		if task == nil || !s.eligible(*task) {
 			continue
 		}

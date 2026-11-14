@@ -14,17 +14,17 @@ import (
 	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/redrive"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var _ = Describe("RedriveSweep", func() {
 	var (
 		ctx       = context.Background()
-		gitClient *mocks.GitClient
+		client    *mocks.VaultAPIClient
 		publisher *mocks.TaskPublisher
 		clock     time.Time
 		sweep     redrive.RedriveSweep
@@ -40,9 +40,14 @@ var _ = Describe("RedriveSweep", func() {
 		})
 	}
 
-	// taskContent builds a task markdown file with the given frontmatter.
-	taskContent := func(id, status, phase, stage, assignee string, extra map[string]string) []byte {
-		fm := map[string]interface{}{
+	// taskValue builds one listed task. The typed listing returns frontmatter and
+	// body already split, so the sweep never sees the file's bytes — the shape
+	// that replaced taskContent's `---\n<yaml>---\nbody` round trip.
+	taskValue := func(
+		id, status, phase, stage, assignee string,
+		extra map[string]string,
+	) vaultapi.Task {
+		fm := map[string]any{
 			"task_identifier": id,
 			"status":          status,
 			"phase":           phase,
@@ -54,27 +59,23 @@ var _ = Describe("RedriveSweep", func() {
 		for k, v := range extra {
 			fm[k] = v
 		}
-		y, err := yaml.Marshal(fm)
-		Expect(err).NotTo(HaveOccurred())
-		return []byte("---\n" + string(y) + "---\nbody\n")
+		return vaultapi.Task{ID: id, Title: id, Frontmatter: fm, Body: "body\n"}
 	}
 
 	BeforeEach(func() {
-		gitClient = &mocks.GitClient{}
+		client = &mocks.VaultAPIClient{}
 		publisher = &mocks.TaskPublisher{}
 		clock = time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 		sweep = redrive.NewRedriveSweep(
-			gitClient, publisher, taskDir, branch, interval, fixedClock(), metrics.New(),
+			client, publisher, taskDir, branch, interval, fixedClock(), metrics.New(),
 		)
 	})
 
 	Describe("SweepOnce", func() {
 		Context("with an eligible never-spawned task", func() {
 			BeforeEach(func() {
-				gitClient.PullReturns(nil)
-				gitClient.ListFilesReturns([]string{"24 Tasks/prod-1.md"}, nil)
-				gitClient.ReadFileReturns(
-					taskContent(
+				client.ListTasksReturns([]vaultapi.Task{
+					taskValue(
 						"11111111-1111-1111-1111-111111111111",
 						"in_progress",
 						"execution",
@@ -82,8 +83,7 @@ var _ = Describe("RedriveSweep", func() {
 						"sentry-analyzer-agent",
 						nil,
 					),
-					nil,
-				)
+				}, nil)
 			})
 
 			It("publishes a TaskUpdated event", func() {
@@ -110,11 +110,8 @@ var _ = Describe("RedriveSweep", func() {
 			DescribeTable(
 				"skips the task",
 				func(status, phase, stage, assignee string, extra map[string]string) {
-					gitClient.PullReturns(nil)
-					gitClient.ListFilesReturns([]string{"24 Tasks/t.md"}, nil)
-					gitClient.ReadFileReturnsOnCall(
-						0,
-						taskContent(
+					client.ListTasksReturns([]vaultapi.Task{
+						taskValue(
 							"11111111-1111-1111-1111-111111111111",
 							status,
 							phase,
@@ -122,8 +119,7 @@ var _ = Describe("RedriveSweep", func() {
 							assignee,
 							extra,
 						),
-						nil,
-					)
+					}, nil)
 					Expect(sweep.SweepOnce(ctx)).To(Succeed())
 					Expect(publisher.PublishChangedCallCount()).To(Equal(0))
 				},
@@ -163,23 +159,23 @@ var _ = Describe("RedriveSweep", func() {
 			)
 		})
 
-		Context("when git pull fails", func() {
+		// The typed client has no Pull: vault-api owns the working copy, so there is
+		// nothing for the controller to pull. The listing is the first thing that can
+		// fail, and it must fail the sweep rather than read as an empty population.
+		Context("when the listing fails", func() {
 			It("returns the error and publishes nothing", func() {
-				gitClient.PullReturns(errors.New("pull failed"))
+				client.ListTasksReturns(nil, errors.New("vault-api 503"))
 				Expect(
 					sweep.SweepOnce(ctx),
-				).To(MatchError(ContainSubstring("redrive sweep git pull")))
+				).To(MatchError(ContainSubstring("redrive sweep list tasks")))
 				Expect(publisher.PublishChangedCallCount()).To(Equal(0))
 			})
 		})
 
 		Context("when a publish fails", func() {
 			It("logs and continues with the next task", func() {
-				gitClient.PullReturns(nil)
-				gitClient.ListFilesReturns([]string{"24 Tasks/a.md", "24 Tasks/b.md"}, nil)
-				gitClient.ReadFileReturnsOnCall(
-					0,
-					taskContent(
+				client.ListTasksReturns([]vaultapi.Task{
+					taskValue(
 						"11111111-1111-1111-1111-111111111111",
 						"in_progress",
 						"execution",
@@ -187,11 +183,7 @@ var _ = Describe("RedriveSweep", func() {
 						"sentry-analyzer-agent",
 						nil,
 					),
-					nil,
-				)
-				gitClient.ReadFileReturnsOnCall(
-					1,
-					taskContent(
+					taskValue(
 						"22222222-2222-2222-2222-222222222222",
 						"in_progress",
 						"execution",
@@ -199,19 +191,20 @@ var _ = Describe("RedriveSweep", func() {
 						"sentry-analyzer-agent",
 						nil,
 					),
-					nil,
-				)
+				}, nil)
 				publisher.PublishChangedReturnsOnCall(0, errors.New("kafka down"))
 				Expect(sweep.SweepOnce(ctx)).To(Succeed())
 				Expect(publisher.PublishChangedCallCount()).To(Equal(2))
 			})
 		})
 
-		Context("with files that are not task files", func() {
+		Context("with entries that are not tasks", func() {
 			It("skips them without publishing", func() {
-				gitClient.PullReturns(nil)
-				gitClient.ListFilesReturns([]string{"24 Tasks/readme.md"}, nil)
-				gitClient.ReadFileReturnsOnCall(0, []byte("no frontmatter here\n"), nil)
+				// No task_identifier: ParseTaskFields refuses it, which is the same
+				// answer ParseTask gives a file with no parseable frontmatter.
+				client.ListTasksReturns([]vaultapi.Task{
+					{Frontmatter: map[string]any{"title": "readme"}, Body: "no frontmatter here\n"},
+				}, nil)
 				Expect(sweep.SweepOnce(ctx)).To(Succeed())
 				Expect(publisher.PublishChangedCallCount()).To(Equal(0))
 			})
@@ -220,11 +213,8 @@ var _ = Describe("RedriveSweep", func() {
 
 	Describe("published event", func() {
 		It("carries the task identifier", func() {
-			gitClient.PullReturns(nil)
-			gitClient.ListFilesReturns([]string{"24 Tasks/prod-1.md"}, nil)
-			gitClient.ReadFileReturnsOnCall(
-				0,
-				taskContent(
+			client.ListTasksReturns([]vaultapi.Task{
+				taskValue(
 					"11111111-1111-1111-1111-111111111111",
 					"in_progress",
 					"execution",
@@ -232,8 +222,7 @@ var _ = Describe("RedriveSweep", func() {
 					"sentry-analyzer-agent",
 					nil,
 				),
-				nil,
-			)
+			}, nil)
 			Expect(sweep.SweepOnce(ctx)).To(Succeed())
 			_, task := publisher.PublishChangedArgsForCall(0)
 			Expect(

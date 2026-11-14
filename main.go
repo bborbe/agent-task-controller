@@ -199,7 +199,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	redriveSweep := redrive.NewRedriveSweep(
-		gitClient,
+		vaultClient,
 		taskPublisher,
 		a.TaskDir,
 		a.Branch,
