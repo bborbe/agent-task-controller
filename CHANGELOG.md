@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- feat(ci): add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line
+- feat: add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line
 
 ## v0.29.0
 
