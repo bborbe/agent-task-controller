@@ -10,6 +10,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,17 +51,38 @@ func (f fileVault) tasks() ([]vaultapi.Task, error) {
 	return tasks, err
 }
 
+// pathFor returns the file the task actually lives in. It walks rather than
+// reconstructing the path from the title, because a task file may sit in a
+// subdirectory the title does not name.
 func (f fileVault) pathFor(id string) (string, bool, error) {
-	tasks, err := f.tasks()
-	if err != nil {
+	var found string
+	err := filepath.Walk(f.dir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path) // #nosec G304 -- test-only path
+		if readErr != nil {
+			return nil
+		}
+		fields, _, splitErr := splitRendered(context.Background(), raw)
+		if splitErr != nil {
+			return nil
+		}
+		fieldID, _ := fields["task_identifier"].(string)
+		title := strings.TrimSuffix(filepath.Base(path), ".md")
+		if fieldID == id || title == id {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, filepath.SkipAll) {
 		return "", false, err
 	}
-	for _, task := range tasks {
-		if task.ID == id || task.Title == id {
-			return filepath.Join(f.dir, task.Title+".md"), true, nil
-		}
-	}
-	return "", false, nil
+	return found, found != "", nil
 }
 
 func (f fileVault) ListTasks(_ context.Context, _ vaultapi.Filter) ([]vaultapi.Task, error) {

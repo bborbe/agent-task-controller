@@ -12,6 +12,7 @@ package scanner_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,17 +99,32 @@ func (t *testVaultClient) tasks() ([]vaultapi.Task, error) {
 	return tasks, err
 }
 
+// pathFor returns the file the task actually lives in. It must walk rather than
+// reconstruct the path from the title: a task file may sit in a subdirectory the
+// title does not name, and a reconstructed path writes a second file beside it.
 func (t *testVaultClient) pathFor(id string) (string, bool, error) {
-	tasks, err := t.tasks()
-	if err != nil {
+	var found string
+	err := filepath.Walk(t.path, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		task, readErr := t.taskAt(path)
+		if readErr != nil {
+			return nil
+		}
+		if task.ID == id || task.Title == id {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, filepath.SkipAll) {
 		return "", false, err
 	}
-	for _, task := range tasks {
-		if task.ID == id || task.Title == id {
-			return filepath.Join(t.path, task.Title+".md"), true, nil
-		}
-	}
-	return "", false, nil
+	return found, found != "", nil
 }
 
 func (t *testVaultClient) ListTasks(

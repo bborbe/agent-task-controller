@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 
-	lib "github.com/bborbe/agent"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,6 +28,15 @@ import (
 type convergenceGitClient struct {
 	path        string
 	commitCount int
+	// writes counts the typed mutations the scanner performs, which is what the
+	// specs mean by "exactly one write" now that the file seam has no write hook.
+	writes *int
+}
+
+func (c *convergenceGitClient) countWrite() {
+	if c.writes != nil {
+		*c.writes++
+	}
 }
 
 var _ gitclient.GitClient = (*convergenceGitClient)(nil)
@@ -62,6 +70,7 @@ func (c *convergenceGitClient) PatchTask(
 	id string,
 	fields map[string]any,
 ) (*vaultapi.Task, error) {
+	c.countWrite()
 	return fileVault{c.path}.PatchTask(ctx, id, fields)
 }
 
@@ -71,6 +80,7 @@ func (c *convergenceGitClient) PatchTaskWithBody(
 	fields map[string]any,
 	body string,
 ) (*vaultapi.Task, error) {
+	c.countWrite()
 	return fileVault{c.path}.PatchTaskWithBody(ctx, id, fields, body)
 }
 
@@ -84,6 +94,7 @@ func (c *convergenceGitClient) ReaddressTask(
 	next string,
 	previous string,
 ) (*vaultapi.Task, error) {
+	c.countWrite()
 	return fileVault{c.path}.ReaddressTask(ctx, id, next, previous)
 }
 
@@ -150,9 +161,9 @@ type convergenceHarness struct {
 func newConvergenceHarness(dir string, autoInject bool) *convergenceHarness {
 	h := &convergenceHarness{
 		dir:     dir,
-		git:     &convergenceGitClient{path: dir},
 		results: make(chan ScanResult, 1),
 	}
+	h.git = &convergenceGitClient{path: dir, writes: &h.writeCount}
 	h.scanner = &vaultScanner{
 		client: h.git,
 		taskDir:   ".",
@@ -272,112 +283,16 @@ var convergenceBlockStyleFixtures = []struct {
 var _ = Describe("task_identifier repair convergence guard (spec 009)", func() {
 	ctx := context.Background()
 
-	It(
-		"AC2: refuses a non-converging repair with zero writes, one ERROR log, one counter increment",
-		func() {
-			for _, fx := range convergenceAC2Fixtures {
-				dir, err := os.MkdirTemp("", "scanner-spec009-ac2-*")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(
-					os.WriteFile(filepath.Join(dir, fx.relPath), []byte(fx.content), 0600),
-				).To(Succeed())
-				h := newConvergenceHarness(dir, true)
-
-				before := skipCounterValue(metrics.ReasonRepairNotConverging)
-				var results []ScanResult
-				captured := captureGlogWarnings(func() {
-					results = h.runCycles(ctx, 5)
-				})
-
-				Expect(h.writeCount).To(Equal(0), fx.relPath)
-				Expect(h.git.commitCount).To(Equal(0), fx.relPath)
-				onDisk, err := os.ReadFile(
-					filepath.Join(dir, fx.relPath),
-				) // #nosec G304 -- test-only path
-				Expect(err).NotTo(HaveOccurred(), fx.relPath)
-				Expect(string(onDisk)).To(Equal(fx.content), fx.relPath)
-				Expect(
-					countLinesMatching([]byte(captured), haltLogFor(fx.relPath)),
-				).To(Equal(1), fx.relPath)
-				Expect(
-					skipCounterValue(metrics.ReasonRepairNotConverging)-before,
-				).To(Equal(1.0), fx.relPath)
-				for _, r := range results {
-					Expect(r.Changed).To(BeEmpty(), fx.relPath)
-				}
-
-				Expect(os.RemoveAll(dir)).To(Succeed())
-			}
-		},
-	)
-
-	It("AC3: the halt self-clears when the file content changes", func() {
-		dir, err := os.MkdirTemp("", "scanner-spec009-ac3-*")
-		Expect(err).NotTo(HaveOccurred())
-		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
-		relPath := "ac3.md"
-		Expect(
-			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureB), 0600),
-		).To(Succeed())
-		h := newConvergenceHarness(dir, true)
-
-		// Reach the halted state: five cycles refuse the repair, zero writes.
-		captureGlogWarnings(func() {
-			h.runCycles(ctx, 5)
-		})
-		Expect(h.writeCount).To(Equal(0))
-
-		// The re-arm is content-keyed: no time-based, cycle-count-based, or
-		// process-global flag participates in the decision. The only signal is the
-		// on-disk hash differing from the halted state's stored hash.
-		repairable := "---\ntask_identifier: 501\nstatus: in_progress\n---\nbody\n"
-		Expect(os.WriteFile(filepath.Join(dir, relPath), []byte(repairable), 0600)).To(Succeed())
-		before := skipCounterValue(metrics.ReasonRepairNotConverging)
-		captured := captureGlogWarnings(func() {
-			h.runCycles(ctx, 1)
-		})
-
-		Expect(h.writeCount).To(Equal(1))
-		finalBytes, err := os.ReadFile(
-			filepath.Join(dir, relPath),
-		) // #nosec G304 -- test-only path
-		Expect(err).NotTo(HaveOccurred())
-		Expect(countLinesMatching(finalBytes, convergenceKeyLineRe)).To(Equal(1))
-		fm, err := extractFrontmatter(ctx, finalBytes)
-		Expect(err).NotTo(HaveOccurred())
-		var fmMap map[string]interface{}
-		Expect(yaml.Unmarshal([]byte(fm), &fmMap)).To(Succeed())
-		idStr, isString := fmMap["task_identifier"].(string)
-		Expect(isString).To(BeTrue())
-		_, parseErr := uuid.Parse(idStr)
-		Expect(parseErr).NotTo(HaveOccurred())
-		Expect(
-			skipCounterValue(metrics.ReasonRepairNotConverging) - before,
-		).To(Equal(0.0))
-		Expect(countLinesMatching([]byte(captured), haltLogAnywhereRe)).To(Equal(0))
-	})
-
-	It("AC4: a halted file never emits an empty identifier on delete", func() {
-		dir, err := os.MkdirTemp("", "scanner-spec009-ac4-*")
-		Expect(err).NotTo(HaveOccurred())
-		defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
-		relPath := "ac4.md"
-		Expect(
-			os.WriteFile(filepath.Join(dir, relPath), []byte(convergenceFixtureB), 0600),
-		).To(Succeed())
-		h := newConvergenceHarness(dir, true)
-
-		captureGlogWarnings(func() {
-			h.runCycles(ctx, 5)
-		})
-		Expect(h.writeCount).To(Equal(0))
-
-		Expect(os.Remove(filepath.Join(dir, relPath))).To(Succeed())
-		results := h.runCycles(ctx, 1)
-
-		Expect(results[0].Deleted).NotTo(ContainElement(lib.TaskIdentifier("")))
-		Expect(h.writeCount).To(Equal(0))
-	})
+	// AC2, AC3 and AC4 asserted the convergence guard's halt: a repair that could not
+	// be proven to converge was refused with zero writes, the halt self-cleared on a
+	// content change, and a halted file never emitted an empty identifier.
+	//
+	// The guard is gone with the write. The typed re-address answers with the task it
+	// stored, so a success IS the convergence proof and a refusal is an error the
+	// caller reports; there is no halt state left to assert, and the identifier is
+	// minted by the API rather than composed here, so none of the three can fire.
+	// AC5 and AC6 below keep the half that still holds: a healthy or repairable file
+	// converges in exactly one write and logs no halt.
 
 	It("AC5: stays silent on a healthy file with a valid UUID", func() {
 		dir, err := os.MkdirTemp("", "scanner-spec009-ac5-healthy-*")
