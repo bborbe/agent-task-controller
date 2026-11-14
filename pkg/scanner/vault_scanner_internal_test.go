@@ -214,7 +214,10 @@ var _ = Describe("injectAndStore", func() {
 			)
 			Expect(task).To(BeNil())
 			Expect(written).To(Equal(""))
-			Expect(werr).To(BeFalse())
+			// A repair the API cannot complete is now a write error, not a silent
+			// skip: the old path parsed the bytes itself and could decide to do
+			// nothing, while the typed re-address either stores the task or fails.
+			Expect(werr).To(BeTrue())
 			Expect(counterValue(metrics.ReasonInjectTaskIdentifierFailed)).To(Equal(initial + 1))
 
 			// Other reason labels must not tick (compared to initial values)
