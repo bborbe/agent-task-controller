@@ -46,16 +46,9 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 		cancel    context.CancelFunc
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.GitClient
 		fakeVault *mocks.VaultAPIClient
 		clock     *libtimemocks.CurrentDateTimeGetter
 		resolver  scanner.VaultScanner
-
-		failReadMutex sync.Mutex
-		failReadOnce  string
-		// failReadAlwaysPath fails every read of that path, modelling a git-rest
-		// that stays unavailable instead of answering once.
-		failReadAlwaysPath string
 	)
 
 	oldPath := func() string { return filepath.Join(taskDir, oldTitle+".md") }
@@ -76,44 +69,6 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 			),
 			0600,
 		)).To(Succeed())
-
-		failReadOnce = ""
-		failReadAlwaysPath = ""
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, globErr := filepath.Glob(filepath.Join(tmpDir, glob))
-			if globErr != nil {
-				return nil, globErr
-			}
-			rel := make([]string, 0, len(matches))
-			for _, m := range matches {
-				r, relErr := filepath.Rel(tmpDir, m)
-				if relErr != nil {
-					return nil, relErr
-				}
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			failReadMutex.Lock()
-			fail := failReadOnce == relPath || failReadAlwaysPath == relPath
-			if failReadOnce == relPath {
-				failReadOnce = ""
-			}
-			failReadMutex.Unlock()
-			if fail {
-				return nil, errors.New("GET " + relPath + " returned 503: unavailable")
-			}
-			content, readErr := os.ReadFile(
-				filepath.Join(tmpDir, relPath),
-			) // #nosec G304 -- test-only path
-			if readErr != nil {
-				return nil, errors.New("GET " + relPath + " returned 404: not found")
-			}
-			return content, nil
-		}
 
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)))
@@ -183,7 +138,7 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 			0600,
 		)).To(Succeed())
 		executor := command.NewCreateTaskExecutor(
-			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, resolver,
+			fakeVault, taskDir, "openclaw", clock, testK, resolver,
 		)
 
 		_, _, err := executor.HandleCommand(ctx, nil, createCmd())
@@ -195,7 +150,7 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 		Expect(path).To(Equal(newPath()))
 
 		writePath, _, findErr := result.FindTaskFilePath(
-			ctx, fakeGit, taskDir, lib.TaskIdentifier(duplicatedID), resolver,
+			ctx, fakeVault, taskDir, lib.TaskIdentifier(duplicatedID), resolver,
 		)
 		Expect(findErr).NotTo(HaveOccurred())
 		Expect(writePath).To(Equal(newPath()))

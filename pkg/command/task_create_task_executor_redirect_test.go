@@ -34,7 +34,6 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 		ctx       context.Context
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.GitClient
 		fakeVault *mocks.VaultAPIClient
 		clock     *libtimemocks.CurrentDateTimeGetter
 		schemaID  cdb.SchemaID
@@ -48,27 +47,6 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
-
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.AtomicWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			content []byte,
-			message string,
-		) error {
-			return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
-		}
-		fakeGit.AtomicWriteIfAbsentAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			content []byte,
-			message string,
-		) error {
-			return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
-		}
-		// Default: every title path is free unless a test overrides ReadFile.
-		fakeGit.ReadFileReturns(nil, errors.New("GET file returned 404: not found"))
 
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
@@ -123,19 +101,6 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 		return err == nil
 	}
 
-	// stubReadFileFromDisk makes the fake git client read seeded files from
-	// tmpDir instead of the default 404 stub, so the verify-before-redirect read
-	// sees real content.
-	stubReadFileFromDisk := func(git *mocks.GitClient, root string) {
-		git.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			content, err := os.ReadFile(filepath.Join(root, relPath))
-			if err != nil {
-				return nil, errors.New("GET " + relPath + " returned 404: not found")
-			}
-			return content, nil
-		}
-	}
-
 	Context("identifier already has a file under a different title (regression)", func() {
 		It(
 			"ExistingIdentifierTitleIsReused: posts the create under the existing file's title stem",
@@ -145,11 +110,10 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 					"Existing Title",
 					"---\ntask_identifier: "+existingID+"\nassignee: alice\nstatus: in_progress\n---\nbody\n",
 				)
-				stubReadFileFromDisk(fakeGit, tmpDir)
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Existing Title.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(existingID),
@@ -182,11 +146,10 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 					"Renamed Away",
 					"---\ntask_identifier: "+occupantID+"\nassignee: alice\nstatus: completed\n---\nbody\n",
 				)
-				stubReadFileFromDisk(fakeGit, tmpDir)
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Renamed Away.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(staleID),
@@ -213,11 +176,11 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 			func() {
 				// Cannot verify the occupant => cannot redirect: an unverified
 				// redirect is the overwrite path itself.
-				fakeGit.ReadFileReturns(nil, errors.New("GET tasks/Gone.md returned 500: boom"))
+				fakeVault.ReadTaskReturns(nil, errors.New("read failed"))
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Gone.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("cccccccc-3333-5333-8333-333333333333"),
@@ -247,11 +210,10 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 					"---\ntask_identifier: "+instanceID+"\nassignee: alice\nstatus: completed\n"+
 						"created_by: recurring-task-creator\n---\nbody\n",
 				)
-				stubReadFileFromDisk(fakeGit, tmpDir)
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Monthly Recurring - 2026-08.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(instanceID),
@@ -283,7 +245,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				errors.New("duplicate: tasks/a.md, tasks/b.md"),
 			)
 			redirectingExecutor := command.NewCreateTaskExecutor(
-				fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 			)
 			cmdObj := buildCmdObj(task.CreateCommand{
 				TaskIdentifier: lib.TaskIdentifier("ambiguous-id"),
