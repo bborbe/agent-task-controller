@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.30.0
 
 - refactor: port the planning-retry gate off `gitrestclient` onto the typed vault API, the last caller that addressed a task by vault path. `Handle` now reads the task by identifier and writes with one `PatchTaskWithBody`, so the `retry n/3` bullet and the `planning_retry_count`/`phase`/`task_identifier` bump still move in a single commit. The compare-and-swap survives as a second `ReadTask` immediately before the write: a task whose counter or phase moved between the two reads produces no patch at all, which is what the old `AtomicReadModifyWriteAndCommitPush` closure guaranteed and what the typed surface's per-task serialisation alone does not. The escalation path is ported the same way and keeps its duplicate-`retry 3/3` guard, so a redelivered escalation still posts no second COMMENT. `NewPlanningRetryGate` loses its `TaskPathResolver` parameter — the identifier is the address — and keeps `taskDir`, now used only to render the human-facing `Please investigate <path>` comment, which a human reads and where an identifier is less useful than a path. Heal-on-write is preserved as a named `target_vault` field in the patch, because a field PATCH writes only the keys it names, unlike the whole-document rewrite it replaces.
 
