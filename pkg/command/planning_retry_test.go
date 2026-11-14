@@ -7,6 +7,8 @@ package command_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -27,37 +29,85 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var _ = Describe("PlanningRetryGate", func() {
 	var (
 		ctx           context.Context
-		fakeGit       *mocks.GitClient
+		tmpDir        string
+		fakeVault     *mocks.VaultAPIClient
 		fakeCommenter *mocks.PRCommenter
 		clock         libtime.CurrentDateTimeGetter
 		gate          command.PlanningRetryGate
 		taskDir       string
+		// seed writes a task file the FS-backed client addresses by identifier.
+		seed func(id string, content []byte)
+		// stored reads the task file back, which is what the old suite took from
+		// the git fake's captured write closure.
+		stored func(id string) []byte
+		// moveAfterFirstRead replaces the on-disk file once the gate has taken its
+		// first read, simulating a task that moves between the two reads.
+		moveAfterFirstRead func(id string, content []byte)
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		fakeGit = &mocks.GitClient{}
+		var err error
+		tmpDir, err = os.MkdirTemp("", "planning-retry")
+		Expect(err).To(BeNil())
+		taskDir = "tasks"
+		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0700)).To(BeNil())
+
+		seed = func(id string, content []byte) {
+			Expect(
+				os.WriteFile(filepath.Join(tmpDir, taskDir, id+".md"), content, 0600),
+			).To(BeNil())
+		}
+		stored = func(id string) []byte {
+			raw, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, id+".md"))
+			Expect(readErr).To(BeNil())
+			return raw
+		}
+
+		fakeVault = newFSTaskClient(tmpDir, taskDir)
+		baseRead := fakeVault.ReadTaskStub
+		reads := 0
+		var movedID string
+		var moved []byte
+		moveAfterFirstRead = func(id string, content []byte) {
+			movedID = id
+			moved = content
+		}
+		fakeVault.ReadTaskStub = func(
+			readCtx context.Context,
+			id string,
+		) (*vaultapi.Task, error) {
+			reads++
+			if reads > 1 && moved != nil && id == movedID {
+				seed(id, moved)
+				moved = nil
+			}
+			return baseRead(readCtx, id)
+		}
+
 		fakeCommenter = &mocks.PRCommenter{}
 		clockVal := &libtimemocks.CurrentDateTimeGetter{}
 		clockVal.NowReturns(libtime.DateTime(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)))
 		clock = clockVal
-		taskDir = "tasks"
-		fakeGit.PathReturns("/repo")
 		gate = command.NewPlanningRetryGate(
-			fakeGit,
+			fakeVault,
 			taskDir,
 			"openclaw",
 			clock,
 			fakeCommenter,
 			metrics.New(),
 			nil,
-			nil,
 		)
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(BeNil())
 	})
 
 	buildPRReviewTask := func(taskID string, phaseVal string, content string) lib.Task {
@@ -113,17 +163,16 @@ var _ = Describe("PlanningRetryGate", func() {
 					"execution",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(
+				seed(
+					"pr-123",
 					onDiskFileWithPhase("pr-123", "execution", 0, "## Objective\nreview the PR\n"),
-					nil,
 				)
 
 				before := testutil.ToFloat64(metrics.PlanningRetryTotal.WithLabelValues("retry"))
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 				Expect(
 					testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -148,7 +197,7 @@ var _ = Describe("PlanningRetryGate", func() {
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 				Expect(
 					testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -160,17 +209,13 @@ var _ = Describe("PlanningRetryGate", func() {
 		Context("success result", func() {
 			It("returns handled=false and does not write", func() {
 				req := buildPRReviewTask("pr-123", "planning", "## Result\nStatus: done\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(
-					onDiskFile("pr-123", 0, "## Objective\nreview the PR\n"),
-					nil,
-				)
+				seed("pr-123", onDiskFile("pr-123", 0, "## Objective\nreview the PR\n"))
 
 				before := testutil.ToFloat64(metrics.PlanningRetryTotal.WithLabelValues("retry"))
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 				Expect(
 					testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -193,25 +238,14 @@ var _ = Describe("PlanningRetryGate", func() {
 				}
 				Expect(req.Frontmatter.Phase()).To(BeNil())
 
-				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				// Capture the stub's own invocation, not a second call after Handle
-				// returns — the assertion must describe the path the gate ran.
-				var resultBytes []byte
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					out, invokeErr := modify(diskContent)
-					resultBytes = out
-					return invokeErr
-				}
+				seed("pr-123", onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n"))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(1))
 
-				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
+				resultFM, err := result.ExtractFrontmatter(ctx, stored("pr-123"))
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
 				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
@@ -241,13 +275,12 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
 				Expect(diskFM.Phase().String()).To(Equal("execution"))
 
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
+				seed("pr-123", diskContent)
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -278,13 +311,12 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(yaml.Unmarshal([]byte(diskFMStr), &diskFM)).To(BeNil())
 				Expect(diskFM.Phase().String()).To(Equal("planning"))
 
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
+				seed("pr-123", diskContent)
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(1))
 			})
 		})
 
@@ -295,16 +327,14 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := []byte(
+				seed("pr-123", []byte(
 					"---\ntask_identifier: pr-123\ntask_type: pr-review\nassignee: pr-reviewer-agent\nstatus: in_progress\nplanning_retry_count: 0\n---\n## Objective\n\nreview the PR\n",
-				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
+				))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -315,22 +345,21 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				fakeGit.ListFilesReturns([]string{}, nil)
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeFalse())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 		})
 	})
 
-	Describe("the on-disk phase is re-checked inside the write closure", func() {
-		// Handle reads the phase from FindTaskFilePath, but the write happens in a
-		// closure that re-reads the file. A task that moves past planning between
-		// those two reads must not be forced back — neither by the retry write nor
-		// by the escalation write. The stub invokes the closure with the moved
-		// bytes, which is exactly what AtomicReadModifyWriteAndCommitPush does.
+	Describe("the on-disk phase is re-checked on the second read", func() {
+		// Handle reads the task, then re-reads before writing. A task that moves
+		// past planning between those two reads must not be forced back — neither
+		// by the retry write nor by the escalation write. The read hook replaces
+		// the file after the first read, which is exactly what a concurrent writer
+		// does.
 		Context("retry path: the task moves past planning before the write", func() {
 			It("leaves the file untouched and does not bump the counter", func() {
 				req := buildPRReviewTask(
@@ -338,22 +367,14 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
+				seed("pr-123", onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n"))
 				moved := onDiskFileWithPhase(
 					"pr-123",
 					"execution",
 					0,
 					"## Objective\n\nreview the PR\n",
 				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var written []byte
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					out, invokeErr := modify(moved)
-					written = out
-					return invokeErr
-				}
+				moveAfterFirstRead("pr-123", moved)
 
 				beforeRetry := testutil.ToFloat64(
 					metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -361,7 +382,8 @@ var _ = Describe("PlanningRetryGate", func() {
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
-				Expect(written).To(Equal(moved))
+				Expect(stored("pr-123")).To(Equal(moved))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 
 				Expect(
 					testutil.ToFloat64(
@@ -378,7 +400,7 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
+				seed("pr-123", onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true))
 				moved := onDiskFileWithPhase(
 					"pr-123",
 					"human_review",
@@ -386,15 +408,7 @@ var _ = Describe("PlanningRetryGate", func() {
 					"## Objective\n\nreview the PR\n",
 					true,
 				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var written []byte
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					out, invokeErr := modify(moved)
-					written = out
-					return invokeErr
-				}
+				moveAfterFirstRead("pr-123", moved)
 
 				beforeExhausted := testutil.ToFloat64(
 					metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
@@ -402,7 +416,8 @@ var _ = Describe("PlanningRetryGate", func() {
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
-				Expect(written).To(Equal(moved))
+				Expect(stored("pr-123")).To(Equal(moved))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 
 				Expect(fakeCommenter.PostCommentCallCount()).To(Equal(0))
 				Expect(
@@ -423,28 +438,15 @@ var _ = Describe("PlanningRetryGate", func() {
 					"## Result\nStatus: failed\nMessage: minimax B-case empty plan\n",
 				)
 				// On-disk file has no planning_retry_count key
-				diskContent := onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n"))
 
 				before := testutil.ToFloat64(metrics.PlanningRetryTotal.WithLabelValues("retry"))
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(1))
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
-
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -482,30 +484,17 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile(
+				seed("pr-123", onDiskFile(
 					"pr-123",
 					1,
 					"## Objective\n\nreview the PR\n\n## Progress\n\n- retry 1/3: first failure at 2026-07-01T11:00:00Z\n",
-				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
-
+				resultBytes := stored("pr-123")
 				resultFM, _ := result.ExtractFrontmatter(ctx, resultBytes)
 				var fm lib.TaskFrontmatter
 				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
@@ -525,29 +514,18 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile(
+				seed("pr-123", onDiskFile(
 					"pr-123",
 					2,
 					"## Objective\n\nreview the PR\n\n## Progress\n\n- retry 2/3: boom at 2026-07-01T11:00:00Z\n",
-				)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				))
 
 				before := testutil.ToFloat64(metrics.PlanningRetryTotal.WithLabelValues("retry"))
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, _ := capturedModify(diskContent)
+				resultBytes := stored("pr-123")
 				resultFM, _ := result.ExtractFrontmatter(ctx, resultBytes)
 				var fm lib.TaskFrontmatter
 				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
@@ -575,18 +553,7 @@ var _ = Describe("PlanningRetryGate", func() {
 						"planning",
 						"## Result\nStatus: failed\nMessage: boom\n",
 					)
-					diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
-					fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-					fakeGit.ReadFileReturns(diskContent, nil)
-
-					var capturedModify func([]byte) ([]byte, error)
-					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-						capturedModify = modify
-						if _, invokeErr := modify(diskContent); invokeErr != nil {
-							return invokeErr
-						}
-						return nil
-					}
+					seed("pr-123", onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true))
 
 					beforeRetry := testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -597,11 +564,9 @@ var _ = Describe("PlanningRetryGate", func() {
 					handled, err := gate.Handle(ctx, req)
 					Expect(err).To(BeNil())
 					Expect(handled).To(BeTrue())
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(1))
 
-					resultBytes, err := capturedModify(diskContent)
-					Expect(err).To(BeNil())
-
+					resultBytes := stored("pr-123")
 					resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 					Expect(err).To(BeNil())
 					var fm lib.TaskFrontmatter
@@ -648,18 +613,7 @@ var _ = Describe("PlanningRetryGate", func() {
 						"planning",
 						"## Result\nStatus: failed\nMessage: boom\n",
 					)
-					diskContent := onDiskFile("pr-123", 5, "## Objective\n\nreview the PR\n", true)
-					fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-					fakeGit.ReadFileReturns(diskContent, nil)
-
-					var capturedModify func([]byte) ([]byte, error)
-					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-						capturedModify = modify
-						if _, invokeErr := modify(diskContent); invokeErr != nil {
-							return invokeErr
-						}
-						return nil
-					}
+					seed("pr-123", onDiskFile("pr-123", 5, "## Objective\n\nreview the PR\n", true))
 
 					beforeExhausted := testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
@@ -668,9 +622,7 @@ var _ = Describe("PlanningRetryGate", func() {
 					Expect(err).To(BeNil())
 					Expect(handled).To(BeTrue())
 
-					resultBytes, err := capturedModify(diskContent)
-					Expect(err).To(BeNil())
-
+					resultBytes := stored("pr-123")
 					resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 					Expect(err).To(BeNil())
 					var fm lib.TaskFrontmatter
@@ -703,20 +655,9 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
+				seed("pr-123", onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true))
 
 				fakeCommenter.PostCommentReturns(fmt.Errorf("github 503"))
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
 
 				beforeExhausted := testutil.ToFloat64(
 					metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
@@ -725,9 +666,7 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
-
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -756,24 +695,13 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
+				seed("pr-123", onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n"))
 
 				fakeCommenter.PostCommentReturns(
 					fmt.Errorf(
 						"planning-retry: cannot resolve PR from task: no pr_url or repository/pull_request_number in frontmatter",
 					),
 				)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
 
 				beforeExhausted := testutil.ToFloat64(
 					metrics.PlanningRetryTotal.WithLabelValues("exhausted"),
@@ -782,9 +710,7 @@ var _ = Describe("PlanningRetryGate", func() {
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
-
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -813,24 +739,13 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", -2, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", -2, "## Objective\n\nreview the PR\n"))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, _ := capturedModify(diskContent)
+				resultBytes := stored("pr-123")
 				resultFM, _ := result.ExtractFrontmatter(ctx, resultBytes)
 				var fm lib.TaskFrontmatter
 				Expect(yaml.Unmarshal([]byte(resultFM), &fm)).To(BeNil())
@@ -848,39 +763,27 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				// FindTaskFilePath reads count=0 from disk
-				diskContentCount0 := onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContentCount0, nil)
+				// The first read sees count absent -> 0
+				seed("pr-123", onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n"))
 
-				// But the modify closure's re-read sees count=1 (simulating a concurrent bump)
+				// The second read sees count=1 (simulating a concurrent bump)
 				diskContentCount1 := onDiskFile(
 					"pr-123",
 					1,
 					"## Objective\n\nreview the PR\n\n## Progress\n\n- retry 1/3: boom at 2026-07-01T11:00:00Z\n",
 				)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContentCount1); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				moveAfterFirstRead("pr-123", diskContentCount1)
 
 				before := testutil.ToFloat64(metrics.PlanningRetryTotal.WithLabelValues("retry"))
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				// Feed the modify closure the count=1 content (simulating the re-read)
-				resultBytes, err := capturedModify(diskContentCount1)
-				Expect(err).To(BeNil())
-				// Should return unchanged
-				Expect(string(resultBytes)).To(Equal(string(diskContentCount1)))
+				// The second read saw the bumped counter, so the write never ran.
+				Expect(stored("pr-123")).To(Equal(diskContentCount1))
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(0))
 
-				// No metric increment since bump was false
+				// No metric increment since no bump happened
 				Expect(
 					testutil.ToFloat64(
 						metrics.PlanningRetryTotal.WithLabelValues("retry"),
@@ -898,24 +801,12 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: line one\rline two\nmore\n",
 				)
-				diskContent := onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n"))
 
 				_, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 
-				resultBytes, _ := capturedModify(diskContent)
-				body := string(resultBytes)
+				body := string(stored("pr-123"))
 
 				for _, line := range strings.Split(body, "\n") {
 					if strings.Contains(line, "retry 1/3:") {
@@ -934,24 +825,12 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: "+longReason+"\n",
 				)
-				diskContent := onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", -1, "## Objective\n\nreview the PR\n"))
 
 				_, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 
-				resultBytes, _ := capturedModify(diskContent)
-				body := string(resultBytes)
+				body := string(stored("pr-123"))
 
 				for _, line := range strings.Split(body, "\n") {
 					if strings.Contains(line, "retry 1/3:") {
@@ -983,25 +862,13 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n")
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", 0, "## Objective\n\nreview the PR\n"))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -1029,25 +896,13 @@ var _ = Describe("PlanningRetryGate", func() {
 					"planning",
 					"## Result\nStatus: failed\nMessage: boom\n",
 				)
-				diskContent := onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", onDiskFile("pr-123", 3, "## Objective\n\nreview the PR\n", true))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter
@@ -1084,25 +939,13 @@ var _ = Describe("PlanningRetryGate", func() {
 					"status: in_progress\ntarget_vault: personal",
 					1,
 				)
-				diskContent = []byte(stamped)
-				fakeGit.ListFilesReturns([]string{"tasks/pr-123.md"}, nil)
-				fakeGit.ReadFileReturns(diskContent, nil)
-
-				var capturedModify func([]byte) ([]byte, error)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(_ context.Context, _ string, modify func([]byte) ([]byte, error), _ string) error {
-					capturedModify = modify
-					if _, invokeErr := modify(diskContent); invokeErr != nil {
-						return invokeErr
-					}
-					return nil
-				}
+				seed("pr-123", []byte(stamped))
 
 				handled, err := gate.Handle(ctx, req)
 				Expect(err).To(BeNil())
 				Expect(handled).To(BeTrue())
 
-				resultBytes, err := capturedModify(diskContent)
-				Expect(err).To(BeNil())
+				resultBytes := stored("pr-123")
 				resultFM, err := result.ExtractFrontmatter(ctx, resultBytes)
 				Expect(err).To(BeNil())
 				var fm lib.TaskFrontmatter

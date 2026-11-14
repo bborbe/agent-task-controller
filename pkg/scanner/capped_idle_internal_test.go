@@ -99,11 +99,69 @@ var _ = Describe("escalateCappedContent", func() {
 		Expect(string(next)).To(ContainSubstring("**Max triggers:** 1"))
 	})
 
-	It("is idempotent once the assignee is already cleared", func() {
+	// The stuck shape this sweep exists for: the executor refuses to spawn at the cap,
+	// so nothing re-assigns the record, and the restore branch only fires for a status
+	// in the trigger set. An empty assignee must therefore not be a skip condition.
+	It("escalates a capped record that is already unassigned, naming its previous owner", func() {
 		content := taskFile(
 			"assignee: \"\"",
 			"previous_assignee: pr-reviewer-agent",
 			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+
+		fm := frontmatterOf(next)
+		Expect(fm["status"]).To(Equal("hold"))
+		Expect(fm["assignee"]).To(Equal(""))
+		Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+		Expect(string(next)).To(ContainSubstring("## Trigger Cap Escalation"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** pr-reviewer-agent"))
+	})
+
+	It("escalates a capped record that has never had an assignee", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+		Expect(frontmatterOf(next)["status"]).To(Equal("hold"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** (unassigned)"))
+	})
+
+	// An unassigned record that is NOT capped must be left alone. Without this negative
+	// control, a sweep that dropped the assignee guard and also lost isCappedIdle would
+	// park every unassigned row in the vault and this suite would still pass.
+	It("leaves an unassigned record below its cap alone", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 2",
+		)
+
+		_, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeFalse())
+	})
+
+	It("is idempotent once the record is already parked", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"previous_assignee: pr-reviewer-agent",
+			"status: hold",
 			"phase: planning",
 			"ref: \"0000000000000000000000000000000000000000\"",
 			"trigger_count: 3",
@@ -120,6 +178,44 @@ var _ = Describe("escalateCappedContent", func() {
 			"status: in_progress",
 			"phase: planning",
 			"current_job: pr-reviewer-agent-abc-20261028200000",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		_, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeFalse())
+	})
+
+	// `next` is the queued status a record sits in without ever being spawned. A
+	// capped record there is as stuck as an `in_progress` one — moving it forward only
+	// reaches the executor's refusal — and this is the status the live probe row
+	// (probe-sentry-fix-agent-prod) is actually in.
+	It("escalates a capped record sitting in the queued next status", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"previous_assignee: sentry-fix-agent",
+			"status: next",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 8",
+			"max_triggers: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+		Expect(frontmatterOf(next)["status"]).To(Equal("hold"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** sentry-fix-agent"))
+	})
+
+	// A capped backlog record is "someday" work, not a runaway loop; parking it would
+	// turn a deliberate deferral into an escalation.
+	It("leaves a capped backlog record alone", func() {
+		content := taskFile(
+			"assignee: pr-reviewer-agent",
+			"status: backlog",
+			"phase: planning",
 			"ref: \"0000000000000000000000000000000000000000\"",
 			"trigger_count: 3",
 		)
