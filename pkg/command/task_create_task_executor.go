@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
 
+	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
@@ -43,6 +44,7 @@ import (
 // no error, no result event).
 // resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
+	gitClient gitclient.GitClient,
 	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
@@ -144,7 +146,7 @@ func NewCreateTaskExecutor(
 					relPath,
 				)
 			}
-			recordCreatedTaskPath(ctx, resolver, cmd.TaskIdentifier, relPath)
+			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, client, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, client, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, client, currentDateTime, k, cmd, relPath)
@@ -219,6 +221,47 @@ func reuseExistingIdentifierTitle(
 		id, t.Title, fallbackTitle,
 	)
 	return t.Title
+}
+
+// identifierPresence reports whether the task file at relPath declares id.
+//
+// A nil error means the answer is definitive: either the file carries id, or it
+// definitively does not — including when it no longer exists (git-rest answers
+// 404). A non-nil error means the question could not be answered: the read
+// failed for a reason other than absence, or the frontmatter could not be
+// parsed. A caller choosing between "stale index entry" and "duplicate" must
+// treat that as unknown, never as absence: replacing the entry on a transient
+// 503 silently drops the duplicate detection this index exists to keep, which
+// is the very failure mode the duplicate recording was added for.
+func identifierPresence(
+	ctx context.Context,
+	gitClient gitclient.GitClient,
+	relPath string,
+	id lib.TaskIdentifier,
+) (bool, error) {
+	content, err := gitClient.ReadFile(ctx, relPath)
+	if err != nil {
+		if isNotFoundReadError(err) {
+			return false, nil
+		}
+		return false, errors.Wrapf(
+			ctx, err, "read resolved file %s for %s", relPath, id,
+		)
+	}
+	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "extract frontmatter from resolved file %s for %s", relPath, id,
+		)
+	}
+	fm, err := parseTaskFrontmatter(frontmatterStr)
+	if err != nil {
+		return false, errors.Wrapf(
+			ctx, err, "parse frontmatter of resolved file %s for %s", relPath, id,
+		)
+	}
+	actual, _ := fm.String("task_identifier")
+	return actual == string(id), nil
 }
 
 // createThroughAPI materialises the task and settles the three answers the old
@@ -356,6 +399,7 @@ func shortIdentifier(id lib.TaskIdentifier) string {
 // blocks every write for the pod's life.
 func recordCreatedTaskPath(
 	ctx context.Context,
+	gitClient gitclient.GitClient,
 	resolver result.TaskPathResolver,
 	id lib.TaskIdentifier,
 	relPath string,
@@ -367,19 +411,55 @@ func recordCreatedTaskPath(
 	if err != nil {
 		return
 	}
-	if found && filepath.Clean(knownPath) == filepath.Clean(relPath) {
+	if !found {
+		resolver.Record(ctx, id, relPath)
 		return
 	}
-	// The duplicate-detection branch is gone. It existed to catch two files
-	// carrying one identifier — an index entry pointing at a file since rewritten
-	// to another task — and that state is not representable through the typed API,
-	// which returns exactly one task per identifier and refuses a colliding create
-	// server-side before it writes. The guard could only fire on a state the API
-	// cannot produce, which reads as rigour and can never fire. What it did NOT
-	// cover, and still does not: the result writer resolves identifier → path over
-	// git, so a pair already on disk from before the typed surface can still
-	// misroute — that is the result-writer migration's problem, not a guard's.
+	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
+		return
+	}
+	carries, presenceErr := identifierPresence(ctx, gitClient, knownPath, id)
+	if presenceErr != nil {
+		glog.Warningf(
+			"create-task: cannot tell whether index entry %s still carries %s (%v); keeping it rather than replacing it with %s",
+			knownPath,
+			id,
+			presenceErr,
+			relPath,
+		)
+		return
+	}
+	if carries {
+		glog.Warningf(
+			"create-task: task_identifier %s is now carried by both %s and %s; recording both so later writes refuse instead of landing on %s",
+			id,
+			knownPath,
+			relPath,
+			knownPath,
+		)
+		resolver.RecordDuplicate(ctx, id, relPath)
+		return
+	}
+	glog.V(2).Infof(
+		"create-task: index entry %s no longer carries %s; replacing it with %s",
+		knownPath,
+		id,
+		relPath,
+	)
 	resolver.Record(ctx, id, relPath)
+}
+
+// isNotFoundReadError reports whether a gitClient.ReadFile error means the file
+// does not exist (git-rest returns HTTP 404). git-rest's Get does not expose a
+// typed not-found sentinel, so this matches the "404" status embedded in the
+// wrapped error message produced by gitRestClient.Get
+// ("GET <path> returned 404: ..."). A nil error is NOT a not-found error and must
+// be handled by the caller before calling this helper.
+func isNotFoundReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "returned 404")
 }
 
 // validateCreateTaskFrontmatter rejects a create-command whose frontmatter is

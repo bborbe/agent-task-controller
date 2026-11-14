@@ -15,6 +15,7 @@ import (
 	libkv "github.com/bborbe/kv"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
+	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
@@ -231,4 +232,15 @@ func intFromFrontmatter(fm lib.TaskFrontmatter, field string) int {
 	default:
 		return 0
 	}
+}
+
+func parseTaskFrontmatter(frontmatterStr string) (lib.TaskFrontmatter, error) {
+	var fm lib.TaskFrontmatter
+	if err := yaml.Unmarshal([]byte(frontmatterStr), &fm); err != nil {
+		return nil, err
+	}
+	if fm == nil {
+		fm = make(lib.TaskFrontmatter)
+	}
+	return fm, nil
 }

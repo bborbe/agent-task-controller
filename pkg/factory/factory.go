@@ -75,6 +75,7 @@ func CreateCommandConsumer(
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
 		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m, humans),
 		command.NewCreateTaskExecutor(
+			gitClient,
 			vaultClient,
 			taskDir,
 			vaultName,
