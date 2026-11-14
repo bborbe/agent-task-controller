@@ -33,7 +33,9 @@ type testVaultClient struct {
 }
 
 func splitTaskContent(raw []byte) (map[string]any, string, error) {
-	text := string(raw)
+	// CRLF is a legitimate file shape and the real parser accepts it, so the double
+	// normalises before splitting rather than treating the whole file as body.
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if !strings.HasPrefix(text, "---\n") {
 		return map[string]any{}, text, nil
 	}
@@ -45,13 +47,47 @@ func splitTaskContent(raw []byte) (map[string]any, string, error) {
 	frontmatter := rest[:idx]
 	body := strings.TrimPrefix(rest[idx+len("\n---"):], "\n")
 	var fields map[string]any
-	if err := yaml.Unmarshal([]byte(frontmatter), &fields); err != nil {
+	if err := yaml.Unmarshal([]byte(dedupeFrontmatter(frontmatter)), &fields); err != nil {
 		return nil, "", err
 	}
 	if fields == nil {
 		fields = map[string]any{}
 	}
 	return fields, body, nil
+}
+
+// dedupeFrontmatter keeps the LAST value for a repeated top-level key, which is
+// what the real parser does. gopkg.in/yaml.v3 refuses a duplicate key outright, so
+// without this the double would reject a file vault-api accepts.
+func dedupeFrontmatter(frontmatter string) string {
+	lines := strings.Split(frontmatter, "\n")
+	last := make(map[string]int, len(lines))
+	for i, line := range lines {
+		if key, ok := topLevelKey(line); ok {
+			last[key] = i
+		}
+	}
+	kept := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if key, ok := topLevelKey(line); ok && last[key] != i {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// topLevelKey reports the key of an unindented `key: value` line.
+func topLevelKey(line string) (string, bool) {
+	if line == "" || strings.HasPrefix(line, " ") ||
+		strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
+		return "", false
+	}
+	idx := strings.Index(line, ":")
+	if idx <= 0 {
+		return "", false
+	}
+	return line[:idx], true
 }
 
 func renderTaskContent(fields map[string]any, body string) ([]byte, error) {

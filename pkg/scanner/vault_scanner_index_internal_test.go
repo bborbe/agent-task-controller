@@ -217,13 +217,18 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(path).To(Equal(""))
 	})
 
-	It("never indexes the empty identifier a halted repair stores", func() {
-		write("halted.md", "---\n{task_identifier: 501, status: in_progress}\n---\nbody\n")
+	It("never indexes an empty identifier", func() {
+		// The halted repair that used to produce an empty entry is gone: a repair is
+		// now one typed call that either stores a new identifier or fails, so the
+		// scanner can no longer reach a halt. The defensive half still holds, and it
+		// is what this spec keeps: an empty identifier is never indexed and never
+		// resolves, whatever put it in the bookkeeping.
 		write("alpha.md", taskFile(alphaID))
 		cycle()
 
-		Expect(s.hashes["halted.md"].taskIdentifier).To(Equal(lib.TaskIdentifier("")))
-		Expect(s.hashes["alpha.md"].taskIdentifier).To(Equal(lib.TaskIdentifier(alphaID)))
+		s.hashes["halted.md"] = fileEntry{taskIdentifier: lib.TaskIdentifier("")}
+		s.publishIndex()
+
 		Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
 		Expect(s.index).To(HaveLen(1))
 
