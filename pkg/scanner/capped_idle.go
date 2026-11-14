@@ -19,10 +19,23 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
-// cappedIdleStatus is the only status a capped record is escalated from. A record
-// that already reached a terminal status has nothing left to rescue, and escalating
-// it would rewrite history for no gain.
-const cappedIdleStatus = "in_progress"
+// cappedIdleStatuses are the statuses a capped record is escalated from.
+//
+// `in_progress` is the executor's default trigger status. `next` is the queued status
+// a record can sit in without ever being spawned — and a capped `next` record is just
+// as stuck, because moving it to `in_progress` only reaches the refusal. Measured on
+// the openclaw vault 2026-11-14: of 925 capped records, the only non-terminal,
+// idle, unassigned one was `probe-sentry-fix-agent-prod` at `status: next`, so an
+// `in_progress`-only guard skipped the one row the sweep exists for.
+//
+// Terminal statuses are excluded: a record that already reached one has nothing left
+// to rescue, and escalating it would rewrite history for no gain. `hold` is excluded
+// too — it is the escalation's own output, and re-writing it every pass would be an
+// endless no-op commit.
+var cappedIdleStatuses = map[string]struct{}{
+	"in_progress": {},
+	"next":        {},
+}
 
 // cappedEscalatedStatus is the status the sweep moves a rescued record to.
 //
@@ -198,7 +211,7 @@ func escalateCappedContent(
 	if !isCappedIdle(fm) {
 		return nil, false, nil
 	}
-	if fm.Status() != cappedIdleStatus {
+	if _, escalatable := cappedIdleStatuses[string(fm.Status())]; !escalatable {
 		return nil, false, nil
 	}
 	if fm.CurrentJob() != "" {

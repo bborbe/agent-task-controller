@@ -187,6 +187,44 @@ var _ = Describe("escalateCappedContent", func() {
 		Expect(changed).To(BeFalse())
 	})
 
+	// `next` is the queued status a record sits in without ever being spawned. A
+	// capped record there is as stuck as an `in_progress` one — moving it forward only
+	// reaches the executor's refusal — and this is the status the live probe row
+	// (probe-sentry-fix-agent-prod) is actually in.
+	It("escalates a capped record sitting in the queued next status", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"previous_assignee: sentry-fix-agent",
+			"status: next",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 8",
+			"max_triggers: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+		Expect(frontmatterOf(next)["status"]).To(Equal("hold"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** sentry-fix-agent"))
+	})
+
+	// A capped backlog record is "someday" work, not a runaway loop; parking it would
+	// turn a deliberate deferral into an escalation.
+	It("leaves a capped backlog record alone", func() {
+		content := taskFile(
+			"assignee: pr-reviewer-agent",
+			"status: backlog",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		_, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeFalse())
+	})
+
 	It("does not touch a record that already reached a terminal status", func() {
 		content := taskFile(
 			"assignee: pr-reviewer-agent",
