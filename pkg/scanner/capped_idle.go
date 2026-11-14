@@ -6,8 +6,6 @@ package scanner
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -154,34 +152,52 @@ func (v *vaultScanner) escalateCappedPaths(ctx context.Context, paths []string) 
 	return escalated, writeError
 }
 
-// escalateCappedTask applies the escalation to one file through the atomic
-// read-modify-write path, so it acts on the file as it is on disk at write time
-// rather than on the scan-time snapshot. A concurrent agent result that clears the
-// assignee in between makes the transform a no-op, which is why the transform is
-// idempotent rather than guarded here.
+// escalateCappedTask applies the escalation to one task through the typed
+// PATCH-with-body, so the field changes and the appended section land in one
+// commit. The transform is still escalateCappedContent, run against the task's
+// rendered bytes and then diffed against them — that keeps the escalation's own
+// semantics (which fields it clears, when it skips) in exactly one place, and
+// sends only the keys it actually changed.
+//
+// The typed PATCH replaces named keys and serialises per task, so the read at
+// write time is the API's, not this cycle's: a concurrent agent result that
+// clears the assignee in between makes the diff empty or narrow, which is the
+// same idempotence the atomic read-modify-write provided.
 func (v *vaultScanner) escalateCappedTask(ctx context.Context, relPath string) (bool, error) {
-	fullAbsPath := filepath.Join(v.gitClient.Path(), relPath)
-	wrote := false
-	err := v.gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx,
-		fullAbsPath,
-		func(current []byte) ([]byte, error) {
-			next, changed, terr := escalateCappedContent(ctx, current, libtime.DateTime(time.Now()))
-			if terr != nil {
-				return nil, terr
-			}
-			if !changed {
-				return current, nil
-			}
-			wrote = true
-			return next, nil
-		},
-		fmt.Sprintf("[agent-task-controller] escalate capped task %s", relPath),
-	)
-	if err != nil {
-		return false, errors.Wrapf(ctx, err, "atomic escalation")
+	current, readErr := v.ops.readFile(ctx, relPath)
+	if readErr != nil {
+		return false, errors.Wrapf(ctx, readErr, "read capped task")
 	}
-	return wrote, nil
+	next, changed, terr := escalateCappedContent(ctx, current, libtime.DateTime(time.Now()))
+	if terr != nil {
+		return false, terr
+	}
+	if !changed {
+		return false, nil
+	}
+	currentFields, _, splitErr := splitRendered(ctx, current)
+	if splitErr != nil {
+		return false, errors.Wrapf(ctx, splitErr, "split capped task")
+	}
+	nextFields, nextBody, splitErr := splitRendered(ctx, next)
+	if splitErr != nil {
+		return false, errors.Wrapf(ctx, splitErr, "split escalated task")
+	}
+	taskID := stringValue(currentFields, "task_identifier")
+	if taskID == "" {
+		// A capped record always carries an identifier, but the fallback keeps the
+		// write addressed rather than failing it on a shape the API resolves by name.
+		taskID = taskAddressFromPath(relPath)
+	}
+	if _, err := v.client.PatchTaskWithBody(
+		ctx,
+		taskID,
+		changedFields(currentFields, nextFields),
+		nextBody,
+	); err != nil {
+		return false, errors.Wrapf(ctx, err, "patch escalated task")
+	}
+	return true, nil
 }
 
 // escalateCappedContent applies the escalation to one file's bytes.

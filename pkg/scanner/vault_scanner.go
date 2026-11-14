@@ -7,10 +7,10 @@ package scanner
 import (
 	"context"
 	"crypto/sha256"
-	"fmt"
-	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,8 +20,8 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // ScanResult holds the outcome of a single vault scan cycle.
@@ -78,16 +78,21 @@ type fileEntry struct {
 	phase string
 }
 
-// fileOps holds pluggable file I/O functions so the scanner can operate over
-// either a local filesystem or the git-rest HTTP API.
+// fileOps is the scanner's read seam. It is file-shaped on purpose: every helper
+// in this package (task age, open-task census, capped-idle sweep, stuck-planning
+// gauge) asks for a vault-relative path and gets that file's bytes, and the
+// typed client is adapted to that shape in one place rather than in seven.
+//
+// There is no writeFile: a write is now a typed mutation (PatchTask, or
+// ReaddressTask for the identifier repair), and a path-addressed write is exactly
+// what this migration removes.
 type fileOps struct {
 	listFiles func(ctx context.Context, glob string) ([]string, error)
 	readFile  func(ctx context.Context, relPath string) ([]byte, error)
-	writeFile func(ctx context.Context, relPath string, content []byte) error
 }
 
 type vaultScanner struct {
-	gitClient       gitclient.GitClient
+	client          vaultapi.Client
 	taskDir         string
 	pollInterval    time.Duration
 	hashes          map[string]fileEntry
@@ -124,42 +129,104 @@ type vaultScanner struct {
 	index map[lib.TaskIdentifier][]string
 }
 
-// newLocalFileOps creates fileOps backed by the local filesystem rooted at basePath.
-func newLocalFileOps(basePath string) fileOps {
-	return fileOps{
-		listFiles: func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(basePath, glob))
-			if err != nil {
-				return nil, err
-			}
-			rel := make([]string, 0, len(matches))
-			for _, m := range matches {
-				r, relErr := filepath.Rel(basePath, m)
-				if relErr != nil {
-					continue
-				}
-				rel = append(rel, r)
-			}
-			return rel, nil
-		},
-		readFile: func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(
-				filepath.Join(basePath, relPath),
-			) // #nosec G304 -- basePath is a trusted vault path
-		},
-		writeFile: func(_ context.Context, relPath string, content []byte) error {
-			return os.WriteFile(
-				filepath.Join(basePath, relPath),
-				content,
-				0600,
-			) // #nosec G306 -- controlled task file
-		},
-	}
+// typedFileOps adapts the typed vault API to the file-shaped seam above.
+//
+// ⚠️ **The path is derived, not reported.** The typed client returns tasks, not
+// files, and there is no path on a task; the vault-relative path is composed from
+// the task's title exactly as `pkg/command/planning_retry.go:taskRelPath` already
+// does. It is a KEY for the scanner's bookkeeping and a human-readable label — it
+// is never handed to a write, because every write is addressed by identifier. A
+// file whose name differs from its title therefore gets an approximate path here,
+// which is harmless precisely because nothing writes to it.
+//
+// The last listing is kept so readFile can answer a path it was just given
+// without a second round trip, and so the bytes it returns are a faithful
+// rendering of the task the API described rather than a re-read that may have
+// moved underneath the cycle.
+type typedFileOps struct {
+	client  vaultapi.Client
+	taskDir string
+
+	mutex  sync.RWMutex
+	byPath map[string]vaultapi.Task
 }
 
-// NewVaultScanner creates a VaultScanner that polls git and scans the task directory.
+func newTypedFileOps(client vaultapi.Client, taskDir string) fileOps {
+	typed := &typedFileOps{
+		client:  client,
+		taskDir: taskDir,
+		byPath:  make(map[string]vaultapi.Task),
+	}
+	return fileOps{listFiles: typed.list, readFile: typed.read}
+}
+
+// taskRelPath composes the vault-relative path a task's title implies. An empty
+// title has no path, and the caller skips it: a task the API could not name is
+// not one the scanner can key.
+func taskRelPath(taskDir string, task vaultapi.Task) string {
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		return ""
+	}
+	return filepath.Join(taskDir, title+".md")
+}
+
+func (t *typedFileOps) list(_ context.Context, _ string) ([]string, error) {
+	tasks, err := t.client.ListTasks(context.Background(), vaultapi.Filter{})
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(tasks))
+	byPath := make(map[string]vaultapi.Task, len(tasks))
+	for _, task := range tasks {
+		relPath := taskRelPath(t.taskDir, task)
+		if relPath == "" {
+			continue
+		}
+		paths = append(paths, relPath)
+		byPath[relPath] = task
+	}
+	t.mutex.Lock()
+	t.byPath = byPath
+	t.mutex.Unlock()
+	return paths, nil
+}
+
+// read renders the task last listed at relPath as the markdown this package
+// parses. Rendering rather than re-fetching keeps the cycle internally
+// consistent: every helper in one pass sees the same snapshot.
+func (t *typedFileOps) read(_ context.Context, relPath string) ([]byte, error) {
+	t.mutex.RLock()
+	task, ok := t.byPath[relPath]
+	t.mutex.RUnlock()
+	if !ok {
+		return nil, errors.Errorf(
+			context.Background(), "no task listed at %s in the current cycle", relPath,
+		)
+	}
+	return renderTask(context.Background(), task)
+}
+
+// renderTask writes a task back as the frontmatter block plus body this package
+// already knows how to parse.
+func renderTask(ctx context.Context, task vaultapi.Task) ([]byte, error) {
+	frontmatter := task.Frontmatter
+	if frontmatter == nil {
+		frontmatter = map[string]any{}
+	}
+	rendered, err := yaml.Marshal(frontmatter)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "marshal frontmatter for %s", task.ID)
+	}
+	return []byte("---\n" + string(rendered) + "---\n" + task.Body), nil
+}
+
+// NewVaultScanner creates a VaultScanner that reads the vault through the typed
+// API. There is one constructor, not two: the local-file-ops variant existed only
+// to serve a clone this controller no longer holds, and a second constructor would
+// be a dead path the grep criterion cannot see.
 func NewVaultScanner(
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	pollInterval time.Duration,
 	trigger <-chan struct{},
@@ -169,45 +236,13 @@ func NewVaultScanner(
 	metricsInterval time.Duration,
 ) VaultScanner {
 	return &vaultScanner{
-		gitClient:       gitClient,
+		client:          client,
 		taskDir:         taskDir,
 		pollInterval:    pollInterval,
 		hashes:          make(map[string]fileEntry),
 		trigger:         trigger,
 		metrics:         m,
-		ops:             newLocalFileOps(gitClient.Path()),
-		autoInject:      autoInject,
-		vaultName:       vaultName,
-		metricsInterval: metricsInterval,
-		index:           make(map[lib.TaskIdentifier][]string),
-	}
-}
-
-// NewGitRestVaultScanner creates a VaultScanner that reads and writes vault files
-// via the gitclient.GitClient interface methods (ListFiles, ReadFile, WriteFile).
-// Use this constructor when git-rest HTTP mode is enabled.
-func NewGitRestVaultScanner(
-	gitClient gitclient.GitClient,
-	taskDir string,
-	pollInterval time.Duration,
-	trigger <-chan struct{},
-	m metrics.Metrics,
-	autoInject bool,
-	vaultName string,
-	metricsInterval time.Duration,
-) VaultScanner {
-	return &vaultScanner{
-		gitClient:    gitClient,
-		taskDir:      taskDir,
-		pollInterval: pollInterval,
-		hashes:       make(map[string]fileEntry),
-		trigger:      trigger,
-		metrics:      m,
-		ops: fileOps{
-			listFiles: gitClient.ListFiles,
-			readFile:  gitClient.ReadFile,
-			writeFile: gitClient.WriteFile,
-		},
+		ops:             newTypedFileOps(client, taskDir),
 		autoInject:      autoInject,
 		vaultName:       vaultName,
 		metricsInterval: metricsInterval,
@@ -268,22 +303,21 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 	}
 }
 
-// RunCycle executes a single scan cycle (git pull + file scan + optional commit/push).
+// RunCycle executes a single scan cycle (list + file scan).
 // Exported for use in scanner_test package; prefer Run() in production.
+//
+// There is no pull and no commit: vault-api owns the working copy and commits
+// every write server-side, so the cycle is one listing plus the repairs it
+// decides to make. A repair that fails no longer withholds the publish — the
+// failure is already visible in the metrics and the log, and the records the
+// cycle did read are still worth publishing.
 func (v *vaultScanner) RunCycle(ctx context.Context, results chan<- ScanResult) {
-	if err := v.gitClient.Pull(ctx); err != nil {
-		glog.Warningf("git pull failed: %v", err)
-		return
-	}
-	glog.V(3).Infof("git pull succeeded, scanning %s", v.taskDir)
+	glog.V(3).Infof("scanning %s", v.taskDir)
 
-	changed, deleted, written, writeError := v.scanFiles(ctx)
+	changed, deleted, repaired, repairError := v.scanFiles(ctx)
 
-	if len(written) > 0 && !writeError {
-		if err := v.gitClient.CommitAndPush(ctx, "[agent-task-controller] update task metadata"); err != nil {
-			glog.Warningf("git commit+push failed, skipping publish: %v", err)
-			return
-		}
+	if len(repaired) > 0 && repairError {
+		glog.Warningf("scan cycle repaired %d task(s) with at least one failure", len(repaired))
 	}
 
 	result := ScanResult{Changed: changed, Deleted: deleted}
@@ -609,7 +643,7 @@ func (v *vaultScanner) processFile(
 			v.metrics.SkippedFilesTotal(metrics.ReasonAutoInjectDisabled).Inc()
 			return nil, "", false
 		}
-		return v.injectAndStore(ctx, content, relPath, currentFMAssignee, hash, "")
+		return v.repairIdentifier(ctx, relPath, currentFMAssignee, hash, "")
 	}
 	if !isString || !isValidUUID(taskID) {
 		if !v.autoInject {
@@ -631,14 +665,7 @@ func (v *vaultScanner) processFile(
 			glog.Warningf("replacing invalid task_identifier of type %T in %s", rawTaskID, relPath)
 		}
 		previous := recordablePrevious(taskID, isString)
-		return v.injectAndStore(
-			ctx,
-			removeTaskIdentifier(content),
-			relPath,
-			currentFMAssignee,
-			hash,
-			previous,
-		)
+		return v.repairIdentifier(ctx, relPath, currentFMAssignee, hash, previous)
 	}
 	if !v.isIdentifierUnique(taskID, relPath) {
 		if !v.autoInject {
@@ -650,21 +677,14 @@ func (v *vaultScanner) processFile(
 			return nil, "", false
 		}
 		glog.Warningf("replacing duplicate task_identifier %q in %s", taskID, relPath)
-		return v.injectAndStore(
-			ctx,
-			removeTaskIdentifier(content),
-			relPath,
-			currentFMAssignee,
-			hash,
-			"",
-		)
+		return v.repairIdentifier(ctx, relPath, currentFMAssignee, hash, "")
 	}
 	prevEntry := v.hashes[relPath]
 	currentPhase := phaseString(frontmatter)
 
 	// Detect empty → named assignee transition (operator re-delegated a parked task).
 	if currentFMAssignee != "" && prevEntry.taskIdentifier != "" && prevEntry.assignee == "" {
-		wrote, werr := v.writeCounterReset(ctx, relPath)
+		wrote, werr := v.writeCounterReset(ctx, relPath, taskID)
 		if werr {
 			return nil, "", true
 		}
@@ -729,158 +749,114 @@ func phaseString(frontmatter lib.TaskFrontmatter) string {
 	return ""
 }
 
-// injectAndStore generates a UUID, writes it into the file via ops.writeFile,
-// and records a sentinel hash entry with the file's current assignee. When
-// previous is non-empty it is recorded as task_identifier_previous in the same
-// single write, so a result that was already in flight under the replaced
-// identifier can still resolve to this file.
+// repairIdentifier mints a new task_identifier for the file at relPath through
+// the typed re-address verb, and records a sentinel hash entry with the file's
+// current assignee so the next cycle publishes it.
 //
-// Before persisting, the candidate bytes are re-evaluated through the exact parse
-// pipeline processFile uses on the next cycle (repairConverges). A repair that
-// would not clear its own trigger is refused entirely — nothing written, nothing
-// committed, zero footprint in the vault — and the file is remembered by its
-// on-disk hash so processFile's content-hash short-circuit suppresses every
-// further attempt until the file's bytes change on disk.
+// When previous is non-empty it travels in the SAME request, so the replaced
+// address keeps resolving for a result already in flight — the mechanism behind
+// agent-task-controller#127. A separate write would leave a window where neither
+// address resolves.
 //
-// onDiskHash is the sha256 of the bytes processFile READ this cycle, not of the
-// candidate bytes. Storing the real on-disk hash is exactly what makes a halt ride
-// the existing short-circuit and re-arm on content change, and is what makes the
-// halt path behave differently from the zero-hash sentinel a successful write
-// stores.
+// The old code re-parsed its own candidate bytes through repairConverges before
+// writing, because a write it could not prove had cleared the trigger was worse
+// than no write. That guard is gone with the write: the API answers with the task
+// it stored, so a success IS the convergence proof, and a refusal is a failure
+// this function reports rather than one it must predict.
+//
+// On failure the on-disk hash is stored anyway, so the repair rides the existing
+// content-hash short-circuit and re-arms only when the file's bytes change — the
+// same halt semantics the convergence guard provided.
 //
 // Returns (nil task, writtenRelPath, writeError).
-func (v *vaultScanner) injectAndStore(
+func (v *vaultScanner) repairIdentifier(
 	ctx context.Context,
-	content []byte,
 	relPath string,
 	currentAssignee lib.TaskAssignee,
 	onDiskHash [32]byte,
 	previous string,
 ) (*lib.Task, string, bool) {
 	id := uuid.New().String()
-	newContent, injectErr := injectTaskIdentifierWithPrevious(ctx, content, id, previous)
-	if injectErr != nil {
-		glog.Warningf("skipping %s: failed to inject task_identifier: %v", relPath, injectErr)
+	address := taskAddressFromPath(relPath)
+	if _, err := v.client.ReaddressTask(ctx, address, id, previous); err != nil {
+		glog.Warningf("failed to repair task_identifier for %s: %v", relPath, err)
 		v.metrics.SkippedFilesTotal(metrics.ReasonInjectTaskIdentifierFailed).Inc()
-		return nil, "", false
-	}
-	if !repairConverges(ctx, newContent, id) {
-		// The offending value is deliberately NOT interpolated: a large sequence or
-		// mapping under task_identifier must not be usable to flood the log. The path
-		// is the only thing an operator needs to find the file.
-		glog.Errorf("task_identifier repair did not converge, halting repair for: %s", relPath)
-		v.metrics.SkippedFilesTotal(metrics.ReasonRepairNotConverging).Inc()
 		v.hashes[relPath] = fileEntry{
-			hash:           onDiskHash,
-			taskIdentifier: "",
-			assignee:       currentAssignee,
+			hash:     onDiskHash,
+			assignee: currentAssignee,
 		}
-		return nil, "", false
-	}
-	if writeErr := v.ops.writeFile(ctx, relPath, newContent); writeErr != nil {
-		glog.Warningf("failed to write %s: %v", relPath, writeErr)
 		return nil, "", true
 	}
 	v.hashes[relPath] = fileEntry{
-		hash:           [32]byte{},
-		taskIdentifier: lib.TaskIdentifier(id),
-		assignee:       currentAssignee,
+		hash:     [32]byte{},
+		assignee: currentAssignee,
 	}
 	return nil, relPath, false
 }
 
-// repairConverges reports whether candidate — the exact bytes injectAndStore is
-// about to persist — clears the repair trigger. It re-evaluates the candidate
-// through the same pipeline processFile runs on the next cycle: frontmatter
-// extraction, duplicate-key deduplication (last-wins), and YAML unmarshal.
-// Reusing that exact pipeline, rather than inspecting the injected line, is what
-// catches the accumulator shape: post-injection the deduped view can resolve
-// task_identifier back to the stale value instead of the minted UUID.
-//
-// It returns true only when the re-evaluated task_identifier is present, is a
-// string, and equals id. Every failure inside the pipeline is non-convergence,
-// never an error to swallow: bytes that cannot be parsed cannot be proven to have
-// cleared the trigger, so they are refused (fail-closed). The V(3) diagnostics
-// carry the parse error only — never file content — so a crafted value cannot be
-// used to flood the log.
-func repairConverges(ctx context.Context, candidate []byte, id string) bool {
-	fmYAML, extractErr := extractFrontmatter(ctx, candidate)
-	if extractErr != nil {
-		glog.V(3).Infof("convergence guard: extract frontmatter failed: %v", extractErr)
-		return false
+// splitRendered parses a rendered task back into its frontmatter map and body.
+// It is the inverse of renderTask, and the only place a write path needs to see
+// a task as fields rather than as bytes.
+func splitRendered(ctx context.Context, content []byte) (map[string]any, string, error) {
+	fmYAML, err := extractFrontmatter(ctx, content)
+	if err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "extract frontmatter")
 	}
-	dedupedYAML, _, dedupErr := DeduplicateFrontmatter(ctx, fmYAML)
-	if dedupErr != nil {
-		glog.V(3).Infof("convergence guard: deduplicate frontmatter failed: %v", dedupErr)
-		return false
+	var fields map[string]any
+	if err := yaml.Unmarshal([]byte(fmYAML), &fields); err != nil {
+		return nil, "", errors.Wrapf(ctx, err, "unmarshal frontmatter")
 	}
-	var fmMap map[string]interface{}
-	if unmarshalErr := yaml.Unmarshal([]byte(dedupedYAML), &fmMap); unmarshalErr != nil {
-		glog.V(3).Infof("convergence guard: unmarshal frontmatter failed: %v", unmarshalErr)
-		return false
-	}
-	raw, present := fmMap["task_identifier"]
-	if !present {
-		return false
-	}
-	resolved, isString := raw.(string)
-	if !isString {
-		return false
-	}
-	return resolved == id
+	return fields, extractBody(content), nil
 }
 
-// writeCounterReset resets trigger_count to 0 through the
-// controller's atomic read-modify-write path, so the reset is applied to the
-// file as it is on disk at write time rather than to the scan-time snapshot.
-// The previous whole-file write from that snapshot raced the executor's
-// trigger_count increment and produced the frontmatter conflict git-rest
-// quarantined (2026-10-19, merge 622e8c24b0: trigger_count 3 vs 0).
+// changedFields returns the keys whose value differs between the two maps, which
+// is what a typed PATCH wants: it replaces only the keys it is given, so sending
+// the whole frontmatter would rewrite fields this path never touched.
+func changedFields(current, next map[string]any) map[string]any {
+	fields := make(map[string]any)
+	for key, value := range next {
+		if existing, ok := current[key]; ok && reflect.DeepEqual(existing, value) {
+			continue
+		}
+		fields[key] = value
+	}
+	return fields
+}
+
+// stringValue reads a frontmatter key that is expected to be a string.
+func stringValue(fields map[string]any, key string) string {
+	value, _ := fields[key].(string)
+	return value
+}
+
+// taskAddressFromPath derives the address the API resolves for a vault-relative
+// task path: its title, which is the filename without the directory and suffix.
+// The API keys identifier, name and slug in one space, so a file carrying an
+// invalid identifier still resolves by this address — which is exactly the file
+// the repair exists for.
+func taskAddressFromPath(relPath string) string {
+	return strings.TrimSuffix(filepath.Base(relPath), ".md")
+}
+
+// writeCounterReset resets trigger_count to 0 through the typed PATCH, which
+// replaces only the keys it names and serialises per task. That is the atomicity
+// the 2026-10-19 fix bought: the previous whole-file write from the scan-time
+// snapshot raced the executor's trigger_count increment and produced the
+// frontmatter conflict git-rest quarantined (commit 950df8df47, trigger_count 3
+// vs 0). The read-modify-write loop is gone with the write — PATCH is the atomic
+// unit now, so there is no snapshot to race.
 // Returns (relPath, false) on success, ("", true) on write error.
 func (v *vaultScanner) writeCounterReset(
 	ctx context.Context,
 	relPath string,
+	taskID string,
 ) (string, bool) {
-	fullAbsPath := filepath.Join(v.gitClient.Path(), relPath)
-	err := v.gitClient.AtomicReadModifyWriteAndCommitPush(
-		ctx,
-		fullAbsPath,
-		func(current []byte) ([]byte, error) {
-			return resetCounters(ctx, current)
-		},
-		fmt.Sprintf("[agent-task-controller] reset counters for %s", relPath),
-	)
-	if err != nil {
-		glog.Warningf("writeCounterReset: atomic reset failed for %s: %v", relPath, err)
+	if _, err := v.client.PatchTask(ctx, taskID, map[string]any{"trigger_count": 0}); err != nil {
+		glog.Warningf("writeCounterReset: patch failed for %s: %v", relPath, err)
 		return "", true
 	}
 	glog.V(2).Infof("writeCounterReset: reset trigger_count for %s", relPath)
 	return relPath, false
-}
-
-// resetCounters applies trigger_count: 0 to the frontmatter it is given,
-// preserving every other field and the body verbatim. It runs
-// inside AtomicReadModifyWriteAndCommitPush, so its input is the file as it is
-// on disk at write time, not the scanner's earlier read.
-func resetCounters(ctx context.Context, current []byte) ([]byte, error) {
-	frontmatterStr, err := extractFrontmatter(ctx, current)
-	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "extract frontmatter")
-	}
-	var fm map[string]interface{}
-	if err := yaml.Unmarshal([]byte(frontmatterStr), &fm); err != nil {
-		return nil, errors.Wrapf(ctx, err, "unmarshal frontmatter")
-	}
-	if fm == nil {
-		fm = make(map[string]interface{})
-	}
-	fm["trigger_count"] = 0
-
-	newFmYAML, err := yaml.Marshal(fm)
-	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "marshal frontmatter")
-	}
-	return []byte("---\n" + string(newFmYAML) + "---\n" + extractBody(current)), nil
 }
 
 func (v *vaultScanner) collectDeleted(

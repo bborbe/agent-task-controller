@@ -180,10 +180,10 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 
 	trigger := make(chan struct{}, 1)
 	vaultScanner := a.createVaultScanner(
-		gitClient,
+		vaultClient,
 		trigger,
 		autoInject,
-		scanner.NewGitRestVaultScanner,
+		scanner.NewVaultScanner,
 	)
 	taskPublisher := publisher.NewTaskPublisher(
 		eventObjectSender,
@@ -286,11 +286,11 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	return service.Run(ctx, components...)
 }
 
-// vaultScannerConstructor is the signature shared by both scanner constructors.
-// It is a parameter of createVaultScanner so the wiring can be exercised without
+// vaultScannerConstructor is the scanner constructor's signature. It is a
+// parameter of createVaultScanner so the wiring can be exercised without
 // running Run.
 type vaultScannerConstructor func(
-	gitClient gitrestclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	pollInterval time.Duration,
 	trigger <-chan struct{},
@@ -303,13 +303,13 @@ type vaultScannerConstructor func(
 // createVaultScanner builds the process's single VaultScanner. The constructor is
 // injected so a test can record the arguments this wiring passes.
 func (a *application) createVaultScanner(
-	gitClient gitrestclient.GitClient,
+	client vaultapi.Client,
 	trigger chan struct{},
 	autoInject bool,
 	constructor vaultScannerConstructor,
 ) scanner.VaultScanner {
 	return constructor(
-		gitClient,
+		client,
 		a.TaskDir,
 		a.PollInterval,
 		trigger,
