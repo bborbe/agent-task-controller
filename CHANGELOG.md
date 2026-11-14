@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line
+
 ## v0.30.1
 
 - fix: escalate a capped record that sits in `status: next`, not only one in `in_progress`. The capped-idle sweep's status guard admitted `in_progress` alone, so a record the executor refuses forever was skipped whenever it had moved to the queued status. `next` is the status a record sits in without ever being spawned, and a capped record there is just as stuck — moving it forward only reaches the refusal. Measured on the openclaw vault 2026-11-14: of 925 capped records, the only non-terminal, idle, unassigned one was `probe-sentry-fix-agent-prod` at `status: next`, so the previous guard skipped the one row the sweep exists for. The escalatable set is now `in_progress` and `next`; terminal statuses stay excluded (nothing left to rescue), `hold` stays excluded because it is the escalation's own output (re-writing it every pass would be an endless no-op commit), and `backlog` stays excluded as deliberate "someday" work rather than a runaway loop. `docs/controller-design.md` § Capped-Idle Sweep updated.
