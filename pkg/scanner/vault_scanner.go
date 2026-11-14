@@ -200,9 +200,17 @@ func (t *typedFileOps) read(_ context.Context, relPath string) ([]byte, error) {
 	task, ok := t.byPath[relPath]
 	t.mutex.RUnlock()
 	if !ok {
-		return nil, errors.Errorf(
-			context.Background(), "no task listed at %s in the current cycle", relPath,
-		)
+		// The sweep reads a path the last listing may not have covered — a record
+		// created after that listing, or one read by a pass that never listed. The
+		// path carries the task's title, which is an address the API resolves, so a
+		// miss falls back to one typed read rather than failing the escalation.
+		found, readErr := t.client.ReadTask(context.Background(), taskAddressFromPath(relPath))
+		if readErr != nil {
+			return nil, errors.Wrapf(
+				context.Background(), readErr, "no task listed or readable at %s", relPath,
+			)
+		}
+		task = *found
 	}
 	return renderTask(context.Background(), task)
 }
