@@ -29,6 +29,7 @@ func aliasContent(frontmatter string) string {
 // newAliasScanner returns a scanner whose file operations are bound to tmpDir.
 func newAliasScanner(tmpDir string, writeCount *int) *vaultScanner {
 	return &vaultScanner{
+		client:  fileVault{dir: tmpDir},
 		metrics: metrics.New(),
 		hashes:  make(map[string]fileEntry),
 		ops: fileOps{

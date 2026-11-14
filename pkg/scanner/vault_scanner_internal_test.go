@@ -187,6 +187,7 @@ var _ = Describe("injectAndStore", func() {
 		"increments inject_task_identifier_failed counter when InjectTaskIdentifier returns error",
 		func() {
 			v := &vaultScanner{
+				client:  fileVault{dir: os.TempDir()},
 				metrics: metrics.New(),
 				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
@@ -673,6 +674,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 			var writeCount int
 			v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 				metrics: metrics.New(),
 				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
@@ -771,6 +773,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		var writeCount int
 		var lastWritten []byte
 		v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -816,6 +819,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		var writeCount int
 		nonNilTasks := 0
 		v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -859,6 +863,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		var writeCount int
 		v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -904,6 +909,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		var writeCount int
 		v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{

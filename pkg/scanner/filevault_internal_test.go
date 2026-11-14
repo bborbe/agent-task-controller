@@ -196,3 +196,45 @@ func renderTaskContentForTest(fields map[string]any, body string) ([]byte, error
 		Body:        body,
 	})
 }
+
+// countingVault records the typed writes a scanner performs, so a spec can keep
+// asserting "exactly one write" now that there is no fileOps.writeFile hook.
+type countingVault struct {
+	fileVault
+	writes *int
+}
+
+func (c *countingVault) count() {
+	if c.writes != nil {
+		*c.writes++
+	}
+}
+
+func (c *countingVault) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	c.count()
+	return c.fileVault.PatchTask(ctx, id, fields)
+}
+
+func (c *countingVault) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	c.count()
+	return c.fileVault.PatchTaskWithBody(ctx, id, fields, body)
+}
+
+func (c *countingVault) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	c.count()
+	return c.fileVault.ReaddressTask(ctx, id, next, previous)
+}
