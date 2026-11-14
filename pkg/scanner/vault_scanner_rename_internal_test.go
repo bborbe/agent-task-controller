@@ -62,9 +62,10 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 			index:      make(map[lib.TaskIdentifier][]string),
 		}
 
-		changed, deleted, writtenPaths, writeError := v.scanFiles(ctx)
+		changed, deleted, writtenPaths, writeError, listed := v.scanFiles(ctx)
 
 		Expect(writeError).To(BeFalse())
+			Expect(listed).To(BeTrue())
 		Expect(writes).To(BeEmpty(), "a rename must not write the file")
 		Expect(writtenPaths).To(BeEmpty())
 		Expect(deleted).To(ConsistOf(lib.TaskIdentifier(renameID)))
@@ -114,9 +115,10 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 				index:      make(map[lib.TaskIdentifier][]string),
 			}
 
-			changed, deleted, writtenPaths, writeError := v.scanFiles(ctx)
+			changed, deleted, writtenPaths, writeError, listed := v.scanFiles(ctx)
 
 			Expect(writeError).To(BeFalse())
+			Expect(listed).To(BeTrue())
 			Expect(writeCount).To(Equal(1), "exactly one file is re-minted")
 			Expect(writtenPaths).To(Equal([]string{secondPath}))
 			Expect(deleted).To(BeEmpty())

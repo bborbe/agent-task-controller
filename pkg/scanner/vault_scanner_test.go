@@ -299,21 +299,15 @@ var _ = Describe("VaultScanner", func() {
 				s.RunCycle(ctx, results)
 				Expect(results).To(Receive())
 
-				// Operator re-delegates.
-				delegatedContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
+				// Operator re-delegates, and a concurrent writer moves the task to
+				// execution before the reset lands. The old whole-file write reverted
+				// this to the scan-time snapshot's phase; the typed PATCH names only
+				// trigger_count, so the phase must survive by construction rather than
+				// by a re-read. There is no read-modify-write hook to interleave with
+				// any more — the PATCH is the atomic unit — so the concurrent write is
+				// modelled by seeding the state it produces.
+				delegatedContent := "---\ntask_identifier: " + taskID + "\nstatus: in_progress\nphase: execution\nassignee: claude\ntrigger_count: 3\nretry_count: 2\n---\n# body\n"
 				Expect(os.WriteFile(absPath, []byte(delegatedContent), 0600)).To(Succeed())
-
-				// A concurrent writer moves the task to execution after the
-				// scanner's scan-time read but before the atomic reset. The old
-				// whole-file write reverted this to the snapshot's phase; the
-				// atomic reset must preserve it.
-				fakeGit.beforeRMW = func(p string) {
-					b, err := os.ReadFile(p) // #nosec G304 -- test-only path
-					Expect(err).To(BeNil())
-					updated := strings.Replace(string(b), "phase: planning", "phase: execution", 1)
-					Expect(os.WriteFile(p, []byte(updated), 0600)).To(Succeed())
-				}
-				defer func() { fakeGit.beforeRMW = nil }()
 
 				// Second scan: detects the transition and resets the live file.
 				s.RunCycle(ctx, results)

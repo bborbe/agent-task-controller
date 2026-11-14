@@ -314,7 +314,12 @@ func (v *vaultScanner) Run(ctx context.Context, results chan<- ScanResult) error
 func (v *vaultScanner) RunCycle(ctx context.Context, results chan<- ScanResult) {
 	glog.V(3).Infof("scanning %s", v.taskDir)
 
-	changed, deleted, repaired, repairError := v.scanFiles(ctx)
+	changed, deleted, repaired, repairError, listed := v.scanFiles(ctx)
+	if !listed {
+		// A cycle that could not list the vault publishes nothing: reporting an
+		// empty result would read downstream as "every task disappeared".
+		return
+	}
 
 	if len(repaired) > 0 && repairError {
 		glog.Warningf("scan cycle repaired %d task(s) with at least one failure", len(repaired))
@@ -329,12 +334,12 @@ func (v *vaultScanner) RunCycle(ctx context.Context, results chan<- ScanResult) 
 
 func (v *vaultScanner) scanFiles(
 	ctx context.Context,
-) ([]lib.Task, []lib.TaskIdentifier, []string, bool) {
+) ([]lib.Task, []lib.TaskIdentifier, []string, bool, bool) {
 	glob := v.taskDir + "/*.md"
 	paths, err := v.ops.listFiles(ctx, glob)
 	if err != nil {
 		glog.Warningf("list %s failed: %v", glob, err)
-		return nil, nil, nil, false
+		return nil, nil, nil, false, false
 	}
 	// Build the cycle's path set and prune vanished paths BEFORE processing any
 	// file. isIdentifierUnique answers against v.hashes, so a rename's old path
@@ -354,7 +359,7 @@ func (v *vaultScanner) scanFiles(
 	for _, relPath := range paths {
 		select {
 		case <-ctx.Done():
-			return nil, nil, nil, false
+			return nil, nil, nil, false, false
 		default:
 		}
 		task, wrote, werr := v.processFile(ctx, relPath)
@@ -382,7 +387,7 @@ func (v *vaultScanner) scanFiles(
 	v.metrics.UpdateGoStuckPlanningTasks().
 		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
 	v.publishIndex()
-	return changed, deleted, written, writeError
+	return changed, deleted, written, writeError, true
 }
 
 // publishIndex rebuilds the identifier→path index from the scanner's bookkeeping and
