@@ -41,14 +41,23 @@ var _ gitclient.GitClient = (*sweepGitClient)(nil)
 
 // The typed surface. The git-rest methods above stay so the file's older
 // assertions still compile; the scanner reads through these.
+//
+// The read counter is bumped here as well as in ReadFile: the specs use it to
+// prove a pass actually ran, and a pass is now a typed listing plus typed reads.
 func (c *sweepGitClient) ListTasks(
 	ctx context.Context,
 	filter vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
+	c.mu.Lock()
+	c.readFileCalls++
+	c.mu.Unlock()
 	return fileVault{c.dir}.ListTasks(ctx, filter)
 }
 
 func (c *sweepGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	c.mu.Lock()
+	c.readFileCalls++
+	c.mu.Unlock()
 	return fileVault{c.dir}.ReadTask(ctx, id)
 }
 
