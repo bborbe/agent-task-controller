@@ -121,8 +121,8 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 
 		// Trigger-only boot: Run builds the index once and then only waits on a
 		// trigger nothing sends.
-		resolver = scanner.NewGitRestVaultScanner(
-			fakeGit, taskDir, 0, make(chan struct{}), metrics.New(), true, "openclaw", 0,
+		resolver = scanner.NewVaultScanner(
+			fakeVault, taskDir, 0, make(chan struct{}), metrics.New(), true, "openclaw", 0,
 		)
 		go func() {
 			defer GinkgoRecover()

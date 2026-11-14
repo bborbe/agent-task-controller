@@ -26,6 +26,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 func extractFrontmatterStr(fileContent string) string {
@@ -51,146 +52,130 @@ type testGitClient struct {
 	beforeRMW func(absPath string)
 }
 
-func (t *testGitClient) EnsureCloned(_ context.Context) error { return nil }
+// vault returns a stateless file-backed client rooted at the same directory, so
+// this double is a thin alias for testVaultClient with the fields the older
+// tests still name.
+func (t *testGitClient) vault() *testVaultClient { return &testVaultClient{path: t.path} }
 
-func (t *testGitClient) Pull(_ context.Context) error { return t.pullErr }
-
-func (t *testGitClient) Path() string { return t.path }
-
-func (t *testGitClient) CommitAndPush(_ context.Context, _ string) error {
-	return t.commitPushErr
+func (t *testGitClient) ListTasks(
+	ctx context.Context,
+	filter vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	return t.vault().ListTasks(ctx, filter)
 }
 
-func (t *testGitClient) AtomicWriteAndCommitPush(
-	_ context.Context,
-	_ string,
-	_ []byte,
-	_ string,
-) error {
-	return t.commitPushErr
+func (t *testGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	return t.vault().ReadTask(ctx, id)
 }
 
-func (t *testGitClient) AtomicWriteIfAbsentAndCommitPush(
-	_ context.Context,
-	_ string,
-	_ []byte,
-	_ string,
-) error {
-	return t.commitPushErr
+func (t *testGitClient) CreateTask(
+	ctx context.Context,
+	task vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return t.vault().CreateTask(ctx, task, opts)
 }
 
-func (t *testGitClient) AtomicReadModifyWriteAndCommitPush(
-	_ context.Context,
-	absPath string,
-	modify func([]byte) ([]byte, error),
-	_ string,
-) error {
-	if t.commitPushErr != nil {
-		return t.commitPushErr
-	}
-	if t.beforeRMW != nil {
-		t.beforeRMW(absPath)
-	}
-	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
-	if err != nil {
-		return err
-	}
-	updated, err := modify(current)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
+func (t *testGitClient) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	return t.vault().PatchTask(ctx, id, fields)
 }
 
-func (t *testGitClient) ListFiles(_ context.Context, _ string) ([]string, error) { return nil, nil }
+func (t *testGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	return t.vault().PatchTaskWithBody(ctx, id, fields, body)
+}
 
-func (t *testGitClient) ReadFile(_ context.Context, _ string) ([]byte, error) { return nil, nil }
+func (t *testGitClient) PutBody(ctx context.Context, id string, body string) error {
+	return t.vault().PutBody(ctx, id, body)
+}
 
-func (t *testGitClient) WriteFile(_ context.Context, _ string, _ []byte) error { return nil }
+func (t *testGitClient) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	return t.vault().ReaddressTask(ctx, id, next, previous)
+}
 
-// fileOpsTestGitClient is a test double with real file I/O for NewGitRestVaultScanner tests.
+// fileOpsTestGitClient is the file-backed double the git-rest-era tests were
+// written against. It keeps its name and path field so those tests read the same,
+// and satisfies vaultapi.Client through testVaultClient.
 type fileOpsTestGitClient struct {
 	path          string
 	pullErr       error
 	commitPushErr error
 }
 
-func (t *fileOpsTestGitClient) EnsureCloned(_ context.Context) error { return nil }
+func (t *fileOpsTestGitClient) vault() *testVaultClient { return &testVaultClient{path: t.path} }
 
-func (t *fileOpsTestGitClient) Pull(_ context.Context) error { return t.pullErr }
-
-func (t *fileOpsTestGitClient) Path() string { return t.path }
-
-func (t *fileOpsTestGitClient) CommitAndPush(_ context.Context, _ string) error {
-	return t.commitPushErr
+func (t *fileOpsTestGitClient) ListTasks(
+	ctx context.Context,
+	filter vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	return t.vault().ListTasks(ctx, filter)
 }
 
-func (t *fileOpsTestGitClient) AtomicWriteAndCommitPush(
-	_ context.Context,
-	_ string,
-	_ []byte,
-	_ string,
-) error {
-	return t.commitPushErr
+func (t *fileOpsTestGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	return t.vault().ReadTask(ctx, id)
 }
 
-func (t *fileOpsTestGitClient) AtomicWriteIfAbsentAndCommitPush(
-	_ context.Context,
-	_ string,
-	_ []byte,
-	_ string,
-) error {
-	return t.commitPushErr
+func (t *fileOpsTestGitClient) CreateTask(
+	ctx context.Context,
+	task vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return t.vault().CreateTask(ctx, task, opts)
 }
 
-func (t *fileOpsTestGitClient) AtomicReadModifyWriteAndCommitPush(
-	_ context.Context,
-	absPath string,
-	modify func([]byte) ([]byte, error),
-	_ string,
-) error {
-	if t.commitPushErr != nil {
-		return t.commitPushErr
-	}
-	current, err := os.ReadFile(absPath) // #nosec G304 -- test-only path
-	if err != nil {
-		return err
-	}
-	updated, err := modify(current)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
+func (t *fileOpsTestGitClient) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	return t.vault().PatchTask(ctx, id, fields)
 }
 
-func (t *fileOpsTestGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
-	matches, err := filepath.Glob(filepath.Join(t.path, glob))
-	if err != nil {
-		return nil, err
-	}
-	var rel []string
-	for _, m := range matches {
-		r, _ := filepath.Rel(t.path, m)
-		rel = append(rel, r)
-	}
-	return rel, nil
+func (t *fileOpsTestGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	return t.vault().PatchTaskWithBody(ctx, id, fields, body)
 }
 
-func (t *fileOpsTestGitClient) ReadFile(_ context.Context, relPath string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(t.path, relPath)) // #nosec G304 -- test-only path
+func (t *fileOpsTestGitClient) PutBody(ctx context.Context, id string, body string) error {
+	return t.vault().PutBody(ctx, id, body)
 }
 
-func (t *fileOpsTestGitClient) WriteFile(_ context.Context, relPath string, content []byte) error {
-	return os.WriteFile(filepath.Join(t.path, relPath), content, 0600)
+func (t *fileOpsTestGitClient) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	return t.vault().ReaddressTask(ctx, id, next, previous)
 }
 
-// failingReadFileOpsGitClient shadows ReadFile to always fail while keeping
-// the real ListFiles implementation from fileOpsTestGitClient.
+// failingReadFileOpsGitClient shadows the listing so a test can make the scan's
+// read pass fail while the rest of the double keeps working.
 type failingReadFileOpsGitClient struct {
 	*fileOpsTestGitClient
 }
 
-func (f *failingReadFileOpsGitClient) ReadFile(_ context.Context, _ string) ([]byte, error) {
+func (f *failingReadFileOpsGitClient) ListTasks(
+	_ context.Context,
+	_ vaultapi.Filter,
+) ([]vaultapi.Task, error) {
 	return nil, os.ErrNotExist
 }
 
@@ -680,11 +665,11 @@ var _ = Describe("VaultScanner", func() {
 		})
 	})
 
-	Describe("NewGitRestVaultScanner", func() {
+	Describe("NewVaultScanner", func() {
 		It("uses fileOps (ListFiles/ReadFile/WriteFile) through the fileOps interface", func() {
 			// fileOpsTestGitClient provides real ListFiles/ReadFile/WriteFile implementations
 			gitClient := &fileOpsTestGitClient{path: tmpDir}
-			vs := scanner.NewGitRestVaultScanner(
+			vs := scanner.NewVaultScanner(
 				gitClient,
 				taskDir,
 				time.Hour,
@@ -1186,7 +1171,7 @@ var _ = Describe("VaultScanner", func() {
 					fileOpsTestGitClient: &fileOpsTestGitClient{path: tmpDir},
 				}
 
-				vs := scanner.NewGitRestVaultScanner(
+				vs := scanner.NewVaultScanner(
 					failingClient,
 					taskDir,
 					time.Hour,

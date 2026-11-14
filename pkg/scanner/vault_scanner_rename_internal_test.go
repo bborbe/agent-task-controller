@@ -55,10 +55,6 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
 					return []byte(newContent), nil
 				},
-				writeFile: func(_ context.Context, relPath string, _ []byte) error {
-					writes = append(writes, relPath)
-					return nil
-				},
 			},
 			autoInject: true,
 			index:      make(map[lib.TaskIdentifier][]string),
@@ -102,11 +98,6 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 					},
 					readFile: func(_ context.Context, _ string) ([]byte, error) {
 						return []byte(duplicateContent), nil
-					},
-					writeFile: func(_ context.Context, relPath string, content []byte) error {
-						writes = append(writes, relPath)
-						lastWritten = append([]byte(nil), content...)
-						return nil
 					},
 				},
 				autoInject: true,

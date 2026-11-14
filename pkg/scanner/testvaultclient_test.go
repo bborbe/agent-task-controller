@@ -152,7 +152,29 @@ func (t *testVaultClient) PatchTask(
 	id string,
 	fields map[string]any,
 ) (*vaultapi.Task, error) {
-	return t.PatchTaskWithBody(context.Background(), id, fields, "")
+	if t.patchErr != nil {
+		return nil, t.patchErr
+	}
+	path, found, err := t.pathFor(id)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, vaultapi.ErrNotFound
+	}
+	current, err := t.taskAt(path)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range fields {
+		current.Frontmatter[key] = value
+	}
+	// A fields-only patch leaves the body alone, which is the real route's
+	// contract: only PATCH carrying a body key replaces it.
+	if err := t.write(path, current.Frontmatter, current.Body); err != nil {
+		return nil, err
+	}
+	return t.ReadTask(context.Background(), id)
 }
 
 func (t *testVaultClient) PatchTaskWithBody(
@@ -177,9 +199,6 @@ func (t *testVaultClient) PatchTaskWithBody(
 	}
 	for key, value := range fields {
 		current.Frontmatter[key] = value
-	}
-	if body == "" {
-		body = current.Body
 	}
 	if err := t.write(path, current.Frontmatter, body); err != nil {
 		return nil, err

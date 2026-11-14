@@ -256,7 +256,7 @@ var _ = Describe("ReaddressTask", func() {
 		})
 
 		It("posts the new identifier to the readdress route", func() {
-			moved, err := client.ReaddressTask(ctx, "task-1", "task-2")
+			moved, err := client.ReaddressTask(ctx, "task-1", "task-2", "")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(moved.ID).To(Equal("task-2"))
 
@@ -276,7 +276,7 @@ var _ = Describe("ReaddressTask", func() {
 		})
 
 		It("refuses rather than merging two tasks into one address", func() {
-			_, err := client.ReaddressTask(ctx, "task-1", "task-2")
+			_, err := client.ReaddressTask(ctx, "task-1", "task-2", "")
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, vaultapi.ErrAlreadyExists)).To(BeTrue())
 

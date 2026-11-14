@@ -46,7 +46,7 @@ var _ = Describe("open task census ticker", func() {
 	It("publishes on its own ticker under a zero poll interval without scanning (AC 16)", func() {
 		const vault = "census-ticker"
 		git := newTaskAgeTickerGitClient()
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -121,7 +121,7 @@ var _ = Describe("open task census ticker", func() {
 				"github-update-go",
 			),
 		)
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -155,7 +155,7 @@ var _ = Describe("open task census ticker", func() {
 				"github-update-go",
 			),
 		)
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,

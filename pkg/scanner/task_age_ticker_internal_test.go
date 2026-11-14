@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // taskAgeTickerGitClient is a mutex-guarded in-memory gitclient.GitClient. The
@@ -39,6 +41,82 @@ type taskAgeTickerGitClient struct {
 }
 
 var _ gitclient.GitClient = (*taskAgeTickerGitClient)(nil)
+
+// The typed surface. This double keeps its tasks in memory, so the listing is
+// built from that map rather than from disk.
+func (c *taskAgeTickerGitClient) ListTasks(
+	_ context.Context,
+	_ vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tasks := make([]vaultapi.Task, 0, len(c.files))
+	for relPath, content := range c.files {
+		fields, body, err := splitRendered(context.Background(), []byte(content))
+		if err != nil {
+			continue
+		}
+		id, _ := fields["task_identifier"].(string)
+		tasks = append(tasks, vaultapi.Task{
+			ID:          id,
+			Title:       strings.TrimSuffix(filepath.Base(relPath), ".md"),
+			Frontmatter: fields,
+			Body:        body,
+		})
+	}
+	return tasks, nil
+}
+
+func (c *taskAgeTickerGitClient) ReadTask(
+	_ context.Context,
+	id string,
+) (*vaultapi.Task, error) {
+	tasks, _ := c.ListTasks(context.Background(), vaultapi.Filter{})
+	for _, task := range tasks {
+		if task.ID == id || task.Title == id {
+			return &task, nil
+		}
+	}
+	return nil, vaultapi.ErrNotFound
+}
+
+func (c *taskAgeTickerGitClient) CreateTask(
+	_ context.Context,
+	task vaultapi.Task,
+	_ vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrAlreadyExists
+}
+
+func (c *taskAgeTickerGitClient) PatchTask(
+	_ context.Context,
+	_ string,
+	_ map[string]any,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrNotFound
+}
+
+func (c *taskAgeTickerGitClient) PatchTaskWithBody(
+	_ context.Context,
+	_ string,
+	_ map[string]any,
+	_ string,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrNotFound
+}
+
+func (c *taskAgeTickerGitClient) PutBody(_ context.Context, _ string, _ string) error {
+	return vaultapi.ErrNotFound
+}
+
+func (c *taskAgeTickerGitClient) ReaddressTask(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrNotFound
+}
 
 func newTaskAgeTickerGitClient() *taskAgeTickerGitClient {
 	return &taskAgeTickerGitClient{files: make(map[string]string)}
@@ -142,7 +220,7 @@ var _ = Describe("task age metrics ticker", func() {
 		Expect(taskAgeTickerOldest(vault)).To(Equal(0.0))
 
 		git := newTaskAgeTickerGitClient()
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -185,7 +263,7 @@ var _ = Describe("task age metrics ticker", func() {
 		git := newTaskAgeTickerGitClient()
 		git.setFile("tasks/aged.md", taskAgeTickerRecord(2*time.Hour))
 
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -212,7 +290,7 @@ var _ = Describe("task age metrics ticker", func() {
 
 		git := newTaskAgeTickerGitClient()
 		git.setFile("tasks/aged.md", taskAgeTickerRecord(10*24*time.Hour))
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -234,7 +312,7 @@ var _ = Describe("task age metrics ticker", func() {
 
 		git := newTaskAgeTickerGitClient()
 		git.setFile("tasks/aged.md", taskAgeTickerRecord(10*24*time.Hour))
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,

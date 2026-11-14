@@ -20,6 +20,7 @@ import (
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // convergenceGitClient is a no-op gitclient.GitClient so RunCycle-driven specs can
@@ -31,6 +32,60 @@ type convergenceGitClient struct {
 }
 
 var _ gitclient.GitClient = (*convergenceGitClient)(nil)
+
+// The typed surface, over the same temp dir. The git-rest methods stay so the
+// file's older assertions still compile.
+func (c *convergenceGitClient) ListTasks(
+	ctx context.Context,
+	filter vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	return fileVault{c.path}.ListTasks(ctx, filter)
+}
+
+func (c *convergenceGitClient) ReadTask(
+	ctx context.Context,
+	id string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.ReadTask(ctx, id)
+}
+
+func (c *convergenceGitClient) CreateTask(
+	ctx context.Context,
+	task vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.CreateTask(ctx, task, opts)
+}
+
+func (c *convergenceGitClient) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.PatchTask(ctx, id, fields)
+}
+
+func (c *convergenceGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.PatchTaskWithBody(ctx, id, fields, body)
+}
+
+func (c *convergenceGitClient) PutBody(ctx context.Context, id string, body string) error {
+	return fileVault{c.path}.PutBody(ctx, id, body)
+}
+
+func (c *convergenceGitClient) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.ReaddressTask(ctx, id, next, previous)
+}
 
 func (t *convergenceGitClient) EnsureCloned(_ context.Context) error { return nil }
 
@@ -99,7 +154,7 @@ func newConvergenceHarness(dir string, autoInject bool) *convergenceHarness {
 		results: make(chan ScanResult, 1),
 	}
 	h.scanner = &vaultScanner{
-		gitClient: h.git,
+		client: h.git,
 		taskDir:   ".",
 		hashes:    make(map[string]fileEntry),
 		metrics:   metrics.New(),
@@ -121,10 +176,6 @@ func newConvergenceHarness(dir string, autoInject bool) *convergenceHarness {
 			},
 			readFile: func(_ context.Context, p string) ([]byte, error) {
 				return os.ReadFile(filepath.Join(dir, p)) // #nosec G304 -- test-only path
-			},
-			writeFile: func(_ context.Context, p string, content []byte) error {
-				h.writeCount++
-				return os.WriteFile(filepath.Join(dir, p), content, 0600)
 			},
 		},
 		autoInject: autoInject,

@@ -63,7 +63,7 @@ func newFSTaskClient(root, taskDir string) *mocks.VaultAPIClient {
 	fake.ListTasksStub = func(_ context.Context, filter vaultapi.Filter) ([]vaultapi.Task, error) {
 		return listFSTasks(dir, filter)
 	}
-	fake.ReaddressTaskStub = func(context.Context, string, string) (*vaultapi.Task, error) {
+	fake.ReaddressTaskStub = func(context.Context, string, string, string) (*vaultapi.Task, error) {
 		panic("newFSTaskClient: ReaddressTask is not wired for this executor")
 	}
 

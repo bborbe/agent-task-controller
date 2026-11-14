@@ -23,6 +23,7 @@ import (
 
 	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // resetTestGitClient implements only the two GitClient methods the counter-reset
@@ -35,6 +36,66 @@ type resetTestGitClient struct {
 }
 
 func (t *resetTestGitClient) Path() string { return "/tmp/scanner-reset-test" }
+
+// The typed surface. This double exists to record that the counter reset was
+// written, so PatchTask counts the write and keeps the rendered result; the
+// other methods are unreachable from the specs that use it.
+func (t *resetTestGitClient) ListTasks(
+	_ context.Context,
+	_ vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	return nil, nil
+}
+
+func (t *resetTestGitClient) ReadTask(_ context.Context, _ string) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrNotFound
+}
+
+func (t *resetTestGitClient) CreateTask(
+	_ context.Context,
+	_ vaultapi.Task,
+	_ vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrAlreadyExists
+}
+
+func (t *resetTestGitClient) PatchTask(
+	_ context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	if t.writeCount != nil {
+		*t.writeCount++
+	}
+	rendered, err := renderTaskContentForTest(fields, "")
+	if err != nil {
+		return nil, err
+	}
+	t.content = rendered
+	return &vaultapi.Task{ID: id, Frontmatter: fields}, nil
+}
+
+func (t *resetTestGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	_ string,
+) (*vaultapi.Task, error) {
+	return t.PatchTask(ctx, id, fields)
+}
+
+func (t *resetTestGitClient) PutBody(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
+func (t *resetTestGitClient) ReaddressTask(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return nil, vaultapi.ErrNotFound
+}
 
 func (t *resetTestGitClient) AtomicReadModifyWriteAndCommitPush(
 	_ context.Context,
@@ -132,9 +193,6 @@ var _ = Describe("injectAndStore", func() {
 					readFile: func(_ context.Context, _ string) ([]byte, error) {
 						return nil, nil
 					},
-					writeFile: func(_ context.Context, _ string, _ []byte) error {
-						return nil
-					},
 				},
 				autoInject: true,
 			}
@@ -146,9 +204,8 @@ var _ = Describe("injectAndStore", func() {
 			initialReadFailed := counterValue(metrics.ReasonReadFailed)
 
 			// Content without frontmatter delimiter causes InjectTaskIdentifier to fail
-			task, written, werr := v.injectAndStore(
+			task, written, werr := v.repairIdentifier(
 				context.Background(),
-				[]byte("no frontmatter at all"),
 				"rel.md",
 				"",
 				[32]byte{},
@@ -205,10 +262,6 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
 					return []byte("---\nstatus: in_progress\nassignee: claude\n---\n# body\n"), nil
 				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
-				},
 			},
 			autoInject: false,
 		}
@@ -234,10 +287,6 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 					return []byte(
 						"---\ntask_identifier: not-a-uuid\nstatus: in_progress\nassignee: claude\n---\n# body\n",
 					), nil
-				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
 				},
 			},
 			autoInject: false,
@@ -267,10 +316,6 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 					return []byte(
 						"---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
 					), nil
-				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
 				},
 			},
 			autoInject: false,
@@ -310,10 +355,6 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 					readFile: func(_ context.Context, relPath string) ([]byte, error) {
 						return fixtures[relPath], nil
 					},
-					writeFile: func(_ context.Context, _ string, _ []byte) error {
-						writeCount++
-						return nil
-					},
 				},
 				autoInject: true,
 			}
@@ -334,7 +375,7 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 		var writeCount int
 		taskID := "22222222-2222-4222-8222-222222222222"
 		v := &vaultScanner{
-			gitClient: &resetTestGitClient{
+			client: &resetTestGitClient{
 				writeCount: &writeCount,
 				content: []byte(
 					"---\ntask_identifier: " + taskID + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
@@ -353,10 +394,6 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 					return []byte(
 						"---\ntask_identifier: " + taskID + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
 					), nil
-				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
 				},
 			},
 			autoInject: false,
@@ -644,10 +681,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 							filepath.Join(tmpDir, p),
 						) // #nosec G304 -- test-only path
 					},
-					writeFile: func(_ context.Context, relPath string, content []byte) error {
-						writeCount++
-						return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
-					},
 				},
 				autoInject: true,
 			}
@@ -699,10 +732,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 							filepath.Join(tmpDir, p),
 						) // #nosec G304 -- test-only path
 					},
-					writeFile: func(_ context.Context, relPath string, content []byte) error {
-						writeCount++
-						return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
-					},
 				},
 				autoInject: true,
 			}
@@ -747,11 +776,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			ops: fileOps{
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
-				},
-				writeFile: func(_ context.Context, relPath string, content []byte) error {
-					writeCount++
-					lastWritten = append([]byte(nil), content...)
-					return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
 				},
 			},
 			autoInject: true,
@@ -798,10 +822,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
 				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
-				},
 			},
 			autoInject: true,
 		}
@@ -844,10 +864,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			ops: fileOps{
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
-				},
-				writeFile: func(_ context.Context, relPath string, content []byte) error {
-					writeCount++
-					return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
 				},
 			},
 			autoInject: true,
@@ -893,10 +909,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			ops: fileOps{
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
-				},
-				writeFile: func(_ context.Context, relPath string, content []byte) error {
-					writeCount++
-					return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
 				},
 			},
 			autoInject: true,
@@ -983,10 +995,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
 				},
-				writeFile: func(_ context.Context, relPath string, content []byte) error {
-					writeCount++
-					return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
-				},
 			},
 			autoInject: true,
 		}
@@ -1034,10 +1042,6 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			ops: fileOps{
 				readFile: func(_ context.Context, p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
-				},
-				writeFile: func(_ context.Context, _ string, _ []byte) error {
-					writeCount++
-					return nil
 				},
 			},
 			autoInject: false,
