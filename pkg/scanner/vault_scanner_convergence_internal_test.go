@@ -17,7 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -39,7 +38,6 @@ func (c *convergenceGitClient) countWrite() {
 	}
 }
 
-var _ gitclient.GitClient = (*convergenceGitClient)(nil)
 
 // The typed surface, over the same temp dir. The git-rest methods stay so the
 // file's older assertions still compile.

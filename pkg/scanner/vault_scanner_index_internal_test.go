@@ -21,7 +21,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -92,7 +91,6 @@ func (c *indexGitClient) ReaddressTask(
 	return fileVault{c.path}.ReaddressTask(ctx, id, next, previous)
 }
 
-var _ gitclient.GitClient = (*indexGitClient)(nil)
 
 func (c *indexGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(c.path, glob))

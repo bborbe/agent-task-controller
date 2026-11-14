@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -30,7 +29,6 @@ import (
 // path calls; the embedded interface is nil and panics if another method is
 // reached, which keeps the fake honest about what the path under test touches.
 type resetTestGitClient struct {
-	gitclient.GitClient
 	writeCount *int
 	content    []byte
 }

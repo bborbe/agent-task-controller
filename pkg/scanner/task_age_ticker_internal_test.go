@@ -22,7 +22,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -32,7 +31,6 @@ import (
 // read and written under mu. It embeds the interface for the methods these specs
 // never exercise.
 type taskAgeTickerGitClient struct {
-	gitclient.GitClient
 
 	mu             sync.Mutex
 	files          map[string]string
@@ -40,7 +38,6 @@ type taskAgeTickerGitClient struct {
 	writeFileCalls int
 }
 
-var _ gitclient.GitClient = (*taskAgeTickerGitClient)(nil)
 
 // The typed surface. This double keeps its tasks in memory, so the listing is
 // built from that map rather than from disk.

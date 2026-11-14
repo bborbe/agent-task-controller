@@ -18,7 +18,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -28,7 +27,6 @@ import (
 // read and written under mu. It embeds the interface for the methods these specs
 // never exercise.
 type sweepGitClient struct {
-	gitclient.GitClient
 
 	dir string
 
@@ -37,7 +35,6 @@ type sweepGitClient struct {
 	readFileCalls int
 }
 
-var _ gitclient.GitClient = (*sweepGitClient)(nil)
 
 // The typed surface. The git-rest methods above stay so the file's older
 // assertions still compile; the scanner reads through these.

@@ -245,7 +245,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	resultWriter := result.NewResultWriter(
-		gitClient,
+		vaultClient,
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,
@@ -264,7 +264,6 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		a.TopicPrefix,
 		resultWriter,
 		vaultScanner,
-		gitClient,
 		vaultClient,
 		a.TaskDir,
 		a.VaultName,
