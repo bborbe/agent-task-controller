@@ -141,6 +141,20 @@ func sweepCappedRecord() string {
 	)
 }
 
+// sweepUnassignedCappedRecord is a record at its cap with no assignee and a recorded
+// previous owner — the shape a restore/clear race leaves behind.
+func sweepUnassignedCappedRecord() string {
+	return sweepRecord(
+		"task_identifier: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		"status: in_progress",
+		"phase: planning",
+		"assignee: \"\"",
+		"previous_assignee: pr-reviewer-agent",
+		"ref: \"0000000000000000000000000000000000000000\"",
+		"trigger_count: 3",
+	)
+}
+
 var _ = Describe("periodic capped-idle sweep", func() {
 	var ctx context.Context
 
@@ -225,6 +239,25 @@ var _ = Describe("periodic capped-idle sweep", func() {
 		Expect(git.pulls()).To(Equal(0))
 	})
 
+	// The row already past the cap with no assignee is the shape that looped forever:
+	// the executor refuses to spawn, so nothing re-assigns it, and the sweep used to
+	// skip it because the escalation body wants a name. It must park anyway.
+	It("escalates a capped record that is already unassigned", func() {
+		dir := GinkgoT().TempDir()
+		writeTask(dir, "unassigned-capped.md", sweepUnassignedCappedRecord())
+
+		git, stop := startScanner(dir, 25*time.Millisecond)
+		defer stop()
+
+		Eventually(func() string { return readTask(dir, "unassigned-capped.md") }, "2s").
+			Should(And(
+				ContainSubstring("status: hold"),
+				ContainSubstring("## Trigger Cap Escalation"),
+				ContainSubstring("**Assignee:** pr-reviewer-agent"),
+			))
+		Expect(git.pulls()).To(Equal(0))
+	})
+
 	It("leaves below-cap, terminal and live-current_job records untouched", func() {
 		dir := GinkgoT().TempDir()
 		belowCap := sweepRecord(
@@ -270,6 +303,7 @@ var _ = Describe("periodic capped-idle sweep", func() {
 	It("rebuilds its candidate set from the pass it just read", func() {
 		dir := GinkgoT().TempDir()
 		writeTask(dir, "capped.md", sweepCappedRecord())
+		writeTask(dir, "unassigned-capped.md", sweepUnassignedCappedRecord())
 		writeTask(dir, "below-cap.md", sweepRecord(
 			"task_identifier: 66666666-6666-4666-8666-666666666666",
 			"status: in_progress",
@@ -286,7 +320,9 @@ var _ = Describe("periodic capped-idle sweep", func() {
 
 		candidates, fileCount, ok := vs.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeTrue())
-		Expect(fileCount).To(Equal(2))
-		Expect(candidates).To(ConsistOf("tasks/capped.md"))
+		Expect(fileCount).To(Equal(3))
+		// The unassigned capped row belongs in the set: the sweep, not the candidate
+		// collector, is where the assignee stops mattering.
+		Expect(candidates).To(ConsistOf("tasks/capped.md", "tasks/unassigned-capped.md"))
 	})
 })

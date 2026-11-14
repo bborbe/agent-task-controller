@@ -33,6 +33,12 @@ const cappedIdleStatus = "in_progress"
 // cleared assignee is what actually ends the loop all live on that constant.
 const cappedEscalatedStatus = result.CappedEscalatedStatus
 
+// unassignedAgentName is what the escalation body reports when the record has no
+// assignee and no previous_assignee to fall back on. It exists so the park does not
+// depend on a live assignee: the section still renders a name field, and a reader can
+// tell "we never knew the owner" from a real agent name.
+const unassignedAgentName = "(unassigned)"
+
 // isCappedIdle reports whether a task's frontmatter is at or past its trigger cap.
 //
 // This is the same predicate the executor refuses on (checkTriggerBudget in
@@ -61,10 +67,15 @@ func isCappedIdle(fm lib.TaskFrontmatter) bool {
 // controller never wrote to any of them.
 //
 // This sweep closes that hole from the side that can see it. It walks the scan
-// index (in memory, no extra reads) and escalates every entry that is capped, still
-// carries an assignee, and has no live job — the same parked state the result
-// writer produces, so a rescued record is indistinguishable from one escalated by a
-// result.
+// index (in memory, no extra reads) and escalates every entry that is capped and has
+// no live job — the same parked state the result writer produces, so a rescued
+// record is indistinguishable from one escalated by a result.
+//
+// The assignee is deliberately NOT part of the candidate filter. An already-empty
+// assignee is the *stuck* shape, not a reason to skip: the executor refuses to spawn
+// at the cap, so nothing re-assigns the record, and the restore branch only fires for
+// a status in the trigger set — which `hold` removes it from. Requiring a live
+// assignee here was half of why such a record looped forever.
 //
 // Returns how many were escalated and whether any write failed. A failed write is
 // reported rather than fatal: the next scan retries, and one unwritable file must not
@@ -72,7 +83,7 @@ func isCappedIdle(fm lib.TaskFrontmatter) bool {
 func (v *vaultScanner) escalateCappedIdleTasks(ctx context.Context) (int, bool) {
 	var paths []string
 	for relPath, entry := range v.hashes {
-		if !entry.capped || entry.assignee == "" {
+		if !entry.capped {
 			continue
 		}
 		paths = append(paths, relPath)
@@ -195,7 +206,16 @@ func escalateCappedContent(
 	}
 	agentName := result.ClearAssignee(fm)
 	if agentName == "" {
-		return nil, false, nil
+		// An already-unassigned capped record is the shape this sweep exists for, not
+		// a reason to skip it. The escalation body wants a name to report, so fall
+		// back to the last known owner, then to a placeholder — but the park still
+		// happens. Requiring a live assignee here was the second half of why such a
+		// record looped forever.
+		if previous, ok := fm.String("previous_assignee"); ok && previous != "" {
+			agentName = previous
+		} else {
+			agentName = unassignedAgentName
+		}
 	}
 	// See cappedEscalatedStatus: without this the executor restores the assignee and
 	// the scanner re-arms the budget, so the rescue would not survive one tick.

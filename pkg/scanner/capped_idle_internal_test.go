@@ -99,11 +99,69 @@ var _ = Describe("escalateCappedContent", func() {
 		Expect(string(next)).To(ContainSubstring("**Max triggers:** 1"))
 	})
 
-	It("is idempotent once the assignee is already cleared", func() {
+	// The stuck shape this sweep exists for: the executor refuses to spawn at the cap,
+	// so nothing re-assigns the record, and the restore branch only fires for a status
+	// in the trigger set. An empty assignee must therefore not be a skip condition.
+	It("escalates a capped record that is already unassigned, naming its previous owner", func() {
 		content := taskFile(
 			"assignee: \"\"",
 			"previous_assignee: pr-reviewer-agent",
 			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+
+		fm := frontmatterOf(next)
+		Expect(fm["status"]).To(Equal("hold"))
+		Expect(fm["assignee"]).To(Equal(""))
+		Expect(fm["previous_assignee"]).To(Equal("pr-reviewer-agent"))
+		Expect(string(next)).To(ContainSubstring("## Trigger Cap Escalation"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** pr-reviewer-agent"))
+	})
+
+	It("escalates a capped record that has never had an assignee", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 3",
+		)
+
+		next, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeTrue())
+		Expect(frontmatterOf(next)["status"]).To(Equal("hold"))
+		Expect(string(next)).To(ContainSubstring("**Assignee:** (unassigned)"))
+	})
+
+	// An unassigned record that is NOT capped must be left alone. Without this negative
+	// control, a sweep that dropped the assignee guard and also lost isCappedIdle would
+	// park every unassigned row in the vault and this suite would still pass.
+	It("leaves an unassigned record below its cap alone", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"status: in_progress",
+			"phase: planning",
+			"ref: \"0000000000000000000000000000000000000000\"",
+			"trigger_count: 2",
+		)
+
+		_, changed, err := escalateCappedContent(ctx, content, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeFalse())
+	})
+
+	It("is idempotent once the record is already parked", func() {
+		content := taskFile(
+			"assignee: \"\"",
+			"previous_assignee: pr-reviewer-agent",
+			"status: hold",
 			"phase: planning",
 			"ref: \"0000000000000000000000000000000000000000\"",
 			"trigger_count: 3",
