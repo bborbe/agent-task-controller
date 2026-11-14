@@ -26,9 +26,10 @@ type testVaultClient struct {
 	path string
 	// listErr, readErr and patchErr let a test make one operation fail without
 	// standing up a whole fake.
-	listErr  error
-	readErr  error
-	patchErr error
+	listErr      error
+	readErr      error
+	patchErr     error
+	readdressErr error
 }
 
 func splitTaskContent(raw []byte) (map[string]any, string, error) {
@@ -258,6 +259,9 @@ func (t *testVaultClient) ReaddressTask(
 	next string,
 	previous string,
 ) (*vaultapi.Task, error) {
+	if t.readdressErr != nil {
+		return nil, t.readdressErr
+	}
 	path, found, err := t.pathFor(id)
 	if err != nil {
 		return nil, err
