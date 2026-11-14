@@ -801,8 +801,9 @@ func (v *vaultScanner) repairIdentifier(
 		return nil, "", true
 	}
 	v.hashes[relPath] = fileEntry{
-		hash:     [32]byte{},
-		assignee: currentAssignee,
+		hash:           [32]byte{},
+		taskIdentifier: lib.TaskIdentifier(id),
+		assignee:       currentAssignee,
 	}
 	return nil, relPath, false
 }
