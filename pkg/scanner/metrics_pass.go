@@ -52,10 +52,11 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 // place, exactly as each instrument behaved on its own. A file that cannot be read
 // or parsed is skipped by both instruments, matching their per-file behaviour.
 //
-// It returns the paths whose frontmatter is capped, still assigned and therefore a
-// candidate for the capped-idle sweep, the number of files it listed, and whether the
-// pass completed — false on a failed listing or a cancelled context, where the caller
-// must not treat an empty candidate set as "nothing to escalate".
+// It returns the paths whose frontmatter is capped and therefore a candidate for the
+// capped-idle sweep — assigned or not, because an already-empty assignee is the stuck
+// shape the sweep exists for — the number of files it listed, and whether the pass
+// completed — false on a failed listing or a cancelled context, where the caller must
+// not treat an empty candidate set as "nothing to escalate".
 // It does not escalate them itself: this function stays read-only, and the caller
 // (sweepCappedIdle) performs the writes. Collecting the candidates here rather than
 // in a pass of its own is what makes the sweep cost nothing extra — this pass
@@ -76,7 +77,7 @@ func (v *vaultScanner) recomputeVaultMetrics(
 	ageCounts := make(map[metrics.TaskAgeBucket]int, len(metrics.AvailableTaskAgeBuckets))
 	oldest := time.Duration(0)
 	censusCounts := make(map[openTaskPair]int, len(v.openTaskPairs))
-	var cappedAssigned []string
+	var cappedCandidates []string
 
 	for _, relPath := range paths {
 		select {
@@ -110,13 +111,16 @@ func (v *vaultScanner) recomputeVaultMetrics(
 
 		// The candidate list the periodic sweep escalates. The clause is the cheap
 		// pre-filter only: escalateCappedContent re-checks every clause against the
-		// on-disk file at write time, so a stale entry here is a no-op.
-		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) && fm.Assignee() != "" {
-			cappedAssigned = append(cappedAssigned, relPath)
+		// on-disk file at write time, so a stale entry here is a no-op. Assignee is
+		// deliberately not part of it: an empty assignee is the stuck shape, not a
+		// reason to skip, so filtering on it here would drop exactly the rows the
+		// sweep exists to park.
+		if fm := lib.TaskFrontmatter(fmMap); isCappedIdle(fm) {
+			cappedCandidates = append(cappedCandidates, relPath)
 		}
 	}
 
 	v.publishTaskAgeCounts(ageCounts, oldest, v.vaultName)
 	v.publishCensusCounts(censusCounts)
-	return cappedAssigned, len(paths), true
+	return cappedCandidates, len(paths), true
 }
