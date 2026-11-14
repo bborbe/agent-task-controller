@@ -38,14 +38,19 @@ type indexGitClient struct {
 	// file's older assertions still compile.
 }
 
+// The typed surface over the same temp dir. The read counter is bumped here too:
+// the specs use it to prove a lookup cost exactly one read, and a lookup is now a
+// typed listing or a typed read.
 func (c *indexGitClient) ListTasks(
 	ctx context.Context,
 	filter vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
+	c.readFileCalls++
 	return fileVault{c.path}.ListTasks(ctx, filter)
 }
 
 func (c *indexGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	c.readFileCalls++
 	return fileVault{c.path}.ReadTask(ctx, id)
 }
 
