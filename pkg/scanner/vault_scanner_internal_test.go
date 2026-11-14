@@ -338,6 +338,10 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 			ctx := context.Background()
 			var writeCount int
 			dup := "11111111-1111-4111-8111-111111111111"
+			tmpDir, err := os.MkdirTemp("", "scanner-spec001-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { Expect(os.RemoveAll(tmpDir)).To(Succeed()) }()
+
 			fixtures := map[string][]byte{
 				"empty-id.md": []byte("---\nstatus: in_progress\nassignee: claude\n---\n# body\n"),
 				"non-uuid.md": []byte(
@@ -347,14 +351,22 @@ var _ = Describe("auto-inject flag gate (spec 001)", func() {
 					"---\ntask_identifier: " + dup + "\nstatus: in_progress\nassignee: claude\n---\n# body\n",
 				),
 			}
+			for name, content := range fixtures {
+				Expect(
+					os.WriteFile(filepath.Join(tmpDir, name), content, 0600),
+				).To(Succeed())
+			}
 			v := &vaultScanner{
+				client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 				metrics: metrics.New(),
 				hashes: map[string]fileEntry{
 					"other.md": {taskIdentifier: lib.TaskIdentifier(dup)},
 				},
 				ops: fileOps{
 					readFile: func(_ context.Context, relPath string) ([]byte, error) {
-						return fixtures[relPath], nil
+						return os.ReadFile(
+							filepath.Join(tmpDir, relPath),
+						) // #nosec G304 -- test-only path
 					},
 				},
 				autoInject: true,
@@ -726,6 +738,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			// assertion is independent of every preceding row.
 			writeCount := 0
 			v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 				metrics: metrics.New(),
 				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
@@ -995,6 +1008,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		writeCount := 0
 		v := &vaultScanner{
+				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
