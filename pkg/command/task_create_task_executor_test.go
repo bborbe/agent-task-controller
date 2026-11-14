@@ -77,7 +77,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewCreateTaskExecutor(
-			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, nil,
+			fakeVault, taskDir, "openclaw", clock, testK, nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -749,7 +749,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -765,7 +765,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -786,39 +786,20 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
 			})
 
-			It(
-				"records both paths when the indexed file still carries the identifier",
-				func() {
-					// The redirect no longer reads the indexed file — it asks the API for
-					// the identifier — so the only git read left is the bookkeeping
-					// presence check, which sees the old file still carrying the id
-					// (2026-10-27, id 9371a3d2).
-					fakeGit.ReadFileReturns(
-						[]byte("---\ntask_identifier: "+createdID+"\nstatus: aborted\n---\nbody\n"),
-						nil,
-					)
-					fakeResolver := &mocks.TaskPathResolver{}
-					fakeResolver.ResolveReturns("tasks/other.md", true, nil)
-					recordingExecutor := command.NewCreateTaskExecutor(
-						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-					)
-
-					_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeResolver.RecordCallCount()).To(Equal(0))
-					Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(1))
-					_, id, relPath := fakeResolver.RecordDuplicateArgsForCall(0)
-					Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
-					Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
-				},
-			)
+			// The duplicate-recording spec that lived here is gone with the branch it
+			// tested. It asserted that a create records BOTH paths when the indexed
+			// file still carries the identifier — the 2026-10-27 pair. That state is
+			// not representable through the typed API, which returns exactly one task
+			// per identifier and refuses a colliding create server-side before it
+			// writes, so the guard could only fire on a condition the API cannot
+			// produce. RecordDuplicate still exists on the resolver for the
+			// result-writer path; nothing in create calls it now.
 
 			It("records nothing when the index already holds the written path", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns(filepath.Join(taskDir, "Recorded Task.md"), true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -832,7 +813,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -847,7 +828,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				seedRaw("Recorded Task",
 					"---\ntask_identifier: "+createdID+"\nstatus: in_progress\n---\nbody\n")
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -870,7 +851,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					fakeResolver := &mocks.TaskPathResolver{}
 					fakeResolver.ResolveReturns("", false, nil)
 					recordingExecutor := command.NewCreateTaskExecutor(
-						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+						fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("ellipsis-id"),
@@ -902,7 +883,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					return &vaultapi.Task{ID: "server-id", Title: "server normalised title"}, nil
 				}
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -919,7 +900,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"skips a command whose TargetVault is openclaw when vaultName=personal (ErrCommandObjectSkipped, no git write)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"personal",
@@ -948,7 +928,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"processes a command whose TargetVault is openclaw when vaultName=openclaw (one git write)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"openclaw",
@@ -975,7 +954,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"refuses a command with empty TargetVault even when vaultName=openclaw (no legacy fallback, no create)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"openclaw",
@@ -1004,7 +982,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"refuses a command with empty TargetVault when vaultName=personal (validation failure, not a silent cross-vault skip)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"personal",
@@ -1136,7 +1113,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It("honors look-back bound k and only closes the k most-recent candidates", func() {
 				smallK := 2
 				localExecutor := command.NewCreateTaskExecutor(
-					fakeGit,
 					fakeVault,
 					taskDir,
 					"openclaw",

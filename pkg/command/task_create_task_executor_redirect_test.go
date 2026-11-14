@@ -149,7 +149,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Existing Title.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(existingID),
@@ -186,7 +186,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Renamed Away.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(staleID),
@@ -217,7 +217,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Gone.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("cccccccc-3333-5333-8333-333333333333"),
@@ -251,7 +251,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/Monthly Recurring - 2026-08.md", true, nil)
 				redirectingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier(instanceID),
@@ -283,7 +283,7 @@ var _ = Describe("NewCreateTaskExecutor identifier redirect", func() {
 				errors.New("duplicate: tasks/a.md, tasks/b.md"),
 			)
 			redirectingExecutor := command.NewCreateTaskExecutor(
-				fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+				fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 			)
 			cmdObj := buildCmdObj(task.CreateCommand{
 				TaskIdentifier: lib.TaskIdentifier("ambiguous-id"),

@@ -183,7 +183,7 @@ var _ = Describe("NewCreateTaskExecutor index bookkeeping on a duplicated identi
 			0600,
 		)).To(Succeed())
 		executor := command.NewCreateTaskExecutor(
-			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, resolver,
+			fakeVault, taskDir, "openclaw", clock, testK, resolver,
 		)
 
 		_, _, err := executor.HandleCommand(ctx, nil, createCmd())
