@@ -26,44 +26,8 @@ const aliasUUID = "33333333-3333-4333-8333-333333333333"
 
 // newAliasResultGit returns a fake Git client backed by tmpDir, mirroring the
 // real-filesystem stub used by the identifier-index tests.
-func newAliasResultGit(tmpDir string) *mocks.GitClient {
-	fakeGit := &mocks.GitClient{}
-	fakeGit.PathReturns(tmpDir)
-	fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-		matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-		if err != nil {
-			return nil, err
-		}
-		var rel []string
-		for _, m := range matches {
-			r, relErr := filepath.Rel(tmpDir, m)
-			if relErr != nil {
-				return nil, relErr
-			}
-			rel = append(rel, r)
-		}
-		return rel, nil
-	}
-	fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-		return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-	}
-	fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-		_ context.Context,
-		absPath string,
-		modify func([]byte) ([]byte, error),
-		_ string,
-	) error {
-		current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-		if err != nil {
-			return err
-		}
-		updated, err := modify(current)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-	}
-	return fakeGit
+func newAliasResultGit(tmpDir string) *mocks.FileVaultClient {
+	return &mocks.FileVaultClient{Dir: tmpDir}
 }
 
 // aliasFrontmatterValue unmarshals the frontmatter of content and returns the

@@ -33,7 +33,6 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 		ctx          context.Context
 		tmpDir       string
 		taskDir      string
-		fakeGit      *mocks.GitClient
 		fakeVault    *mocks.VaultAPIClient
 		fakeResolver *mocks.TaskPathResolver
 		executor     cdb.CommandObjectExecutorTx
@@ -48,45 +47,6 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
-
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test helper
-		}
-		// Wire AtomicReadModifyWriteAndCommitPush to actually call the modify func and write the file.
-		// A nil modify result (idempotency skip) leaves the file untouched.
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			if updated == nil {
-				return nil
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
 
 		// Default miss: every existing spec keeps the walk-only behaviour it had.
 		fakeResolver = &mocks.TaskPathResolver{}
@@ -190,7 +150,6 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 					}),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 			})
 		})
 
@@ -218,7 +177,6 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 				// concurrent body edit is not overwritten.
 				Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
 				Expect(fakeResolver.ResolveCallCount()).To(Equal(0))
-				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
 				Expect(parseFrontmatter(taskFile)["status"]).To(Equal("completed"))
 			})
 		})
@@ -530,8 +488,6 @@ var _ = Describe("NewCompleteTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmd)
 					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
 					// guard fires before the task-file lookup and before any write
-					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
 					Expect(
 						testutil.ToFloat64(
 							metrics.FrontmatterCommandsTotal.WithLabelValues(
