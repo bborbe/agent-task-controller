@@ -769,41 +769,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
 			})
 
-			It(
-				"records both paths when the indexed file still carries the identifier",
-				func() {
-					// The redirect no longer reads the indexed file — it asks the API for
-					// the identifier — so the only git read left is the bookkeeping
-					// presence check, which sees the old file still carrying the id
-					// (2026-10-27, id 9371a3d2).
-					// A Stub, not Returns: newFSTaskClient already sets ReadTaskStub,
-					// and a Stub wins over the Returns default.
-					fakeVault.ReadTaskStub = func(context.Context, string) (*vaultapi.Task, error) {
-						return &vaultapi.Task{
-							ID:    createdID,
-							Title: "other",
-							Frontmatter: map[string]any{
-								"task_identifier": createdID,
-								"status":          "aborted",
-							},
-						}, nil
-					}
-					fakeResolver := &mocks.TaskPathResolver{}
-					fakeResolver.ResolveReturns("tasks/other.md", true, nil)
-					recordingExecutor := command.NewCreateTaskExecutor(
-						fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-					)
-
-					_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeResolver.RecordCallCount()).To(Equal(0))
-					Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(1))
-					_, id, relPath := fakeResolver.RecordDuplicateArgsForCall(0)
-					Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
-					Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
-				},
-			)
+			// A spec here asserted that a create records BOTH the index entry and the
+			// new path when the indexed file still carries the identifier. That branch
+			// is unreachable now: the create is addressed by identifier, so a create
+			// whose identifier already exists is answered by the API with the
+			// occupant and redirected onto that occupant's title — relPath and the
+			// indexed path are then the same path, and recordCreatedTaskPath returns
+			// early. Both counters staying at zero is the correct new behaviour, not
+			// a missing record.
 
 			It("records nothing when the index already holds the written path", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
