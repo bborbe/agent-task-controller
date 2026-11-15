@@ -776,14 +776,18 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					// the identifier — so the only git read left is the bookkeeping
 					// presence check, which sees the old file still carrying the id
 					// (2026-10-27, id 9371a3d2).
-					fakeVault.ReadTaskReturns(&vaultapi.Task{
-						ID:    createdID,
-						Title: "other",
-						Frontmatter: map[string]any{
-							"task_identifier": createdID,
-							"status":          "aborted",
-						},
-					}, nil)
+					// A Stub, not Returns: newFSTaskClient already sets ReadTaskStub,
+					// and a Stub wins over the Returns default.
+					fakeVault.ReadTaskStub = func(context.Context, string) (*vaultapi.Task, error) {
+						return &vaultapi.Task{
+							ID:    createdID,
+							Title: "other",
+							Frontmatter: map[string]any{
+								"task_identifier": createdID,
+								"status":          "aborted",
+							},
+						}, nil
+					}
 					fakeResolver := &mocks.TaskPathResolver{}
 					fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 					recordingExecutor := command.NewCreateTaskExecutor(
