@@ -21,7 +21,6 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
@@ -31,7 +30,6 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		ctx           context.Context
 		tmpDir        string
 		taskDir       string
-		fakeGit       *mocks.FileVaultClient
 		incrementExec cdb.CommandObjectExecutorTx
 		updateExec    cdb.CommandObjectExecutorTx
 		schemaID      cdb.SchemaID
@@ -46,7 +44,6 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
 
 		incrementExec = command.NewIncrementFrontmatterExecutor(
 			newFSTaskClient(tmpDir, taskDir),

@@ -6,10 +6,8 @@ package command_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	lib "github.com/bborbe/agent"

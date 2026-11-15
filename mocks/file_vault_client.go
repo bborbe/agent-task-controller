@@ -30,6 +30,32 @@ type FileVaultClient struct {
 	listCalls  int
 	readCalls  int
 	patchCalls int
+
+	// Only restricts the listing to these vault-relative paths when non-empty.
+	// Specs use it to model an index that sees a narrower set than the whole dir.
+	Only []string
+	// ListErr makes the listing fail, for specs that assert an error path.
+	ListErr error
+	// ReadErrOn makes a read of the named task fail, for specs that model a
+	// transient failure the caller must not mistake for absence.
+	ReadErrOn map[string]error
+	// PatchErr makes every typed write fail, for specs that assert the caller
+	// swallows a write error.
+	PatchErr error
+}
+
+// Seed writes a path→content map into Dir so a typed read finds it.
+func (f *FileVaultClient) Seed(files map[string][]byte) error {
+	for relPath, content := range files {
+		path := filepath.Join(f.Dir, relPath)
+		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0600); err != nil { // #nosec G306
+			return err
+		}
+	}
+	return nil
 }
 
 // ListTasksCallCount reports how many listings were issued.
@@ -43,12 +69,25 @@ func (f *FileVaultClient) PatchTaskWithBodyCallCount() int { return f.patchCalls
 
 func (f *FileVaultClient) tasks() ([]vaultapi.Task, error) {
 	var tasks []vaultapi.Task
+	allowed := make(map[string]struct{}, len(f.Only))
+	for _, relPath := range f.Only {
+		allowed[filepath.Clean(relPath)] = struct{}{}
+	}
 	err := filepath.Walk(f.Dir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if info.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
+		}
+		if len(allowed) > 0 {
+			rel, relErr := filepath.Rel(f.Dir, path)
+			if relErr != nil {
+				return nil
+			}
+			if _, ok := allowed[filepath.Clean(rel)]; !ok {
+				return nil
+			}
 		}
 		task, readErr := f.taskAt(path)
 		if readErr != nil {
@@ -129,12 +168,20 @@ func (f *FileVaultClient) ListTasks(
 	_ vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
 	f.listCalls++
+	if f.ListErr != nil {
+		return nil, f.ListErr
+	}
 	return f.tasks()
 }
 
 // ReadTask returns the task addressed by identifier or title.
 func (f *FileVaultClient) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
 	f.readCalls++
+	if f.ReadErrOn != nil {
+		if err, ok := f.ReadErrOn[id]; ok {
+			return nil, err
+		}
+	}
 	path, found, err := f.pathFor(id)
 	if err != nil {
 		return nil, err
@@ -206,6 +253,9 @@ func (f *FileVaultClient) PatchTaskWithBody(
 	body string,
 ) (*vaultapi.Task, error) {
 	f.patchCalls++
+	if f.PatchErr != nil {
+		return nil, f.PatchErr
+	}
 	return f.patch(id, fields, &body)
 }
 
