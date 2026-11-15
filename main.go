@@ -50,8 +50,8 @@ const githubAPIBaseURL = "https://api.github.com"
 // or disable it would be an opt-out on the shipped behaviour.
 //
 // It was 60s while the two instruments recomputed in independent passes, each
-// listing the task directory and fetching every file over the vault API — ~730
-// GET /api/v1/files/{path} per second on the openclaw vault's ~22,000 task files
+// listing the vault and reading every task over the vault API — ~730 typed
+// reads per second on the openclaw vault's ~22,000 task files
 // (measured 2026-11-03). One pass now publishes both, and 5m cuts the remaining
 // rate a further fivefold.
 //

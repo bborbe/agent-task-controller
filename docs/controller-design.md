@@ -116,7 +116,7 @@ Two mechanisms may therefore legitimately lower a controller-owned counter, and 
 
 What remains true in every case is the guard's actual purpose: no *agent result payload* can raise or lower a controller-owned counter, or revive a terminal status.
 
-**Single writer for `trigger_count`.** The controller is the only service that sets `trigger_count`; the executor only publishes commands, and the result merge pins the on-disk value. Two write paths carry a controller counter write, and neither can rewrite a field it did not name: the increment executor (`task_increment_frontmatter_executor.go`) and the update executor's trigger-scope write (`task_update_frontmatter_executor.go`) both go through the typed vault API's field-level `PATCH /tasks/{id}`, which replaces only the keys in the request; the scanner's Empty-to-Named Reset (`vault_scanner.go` `writeCounterReset`) still goes through `AtomicReadModifyWriteAndCommitPush`, whose modify closure re-reads the live file and changes only the `trigger_count` field. The reset must never rewrite the whole frontmatter from its scan-time snapshot — doing so raced the executor's increment and produced the frontmatter conflict git-rest quarantined on 2026-10-19 (merge `622e8c24b0`, `trigger_count: 3` vs `0`).
+**Single writer for `trigger_count`.** The controller is the only service that sets `trigger_count`; the executor only publishes commands, and the result merge pins the on-disk value. Two write paths carry a controller counter write, and neither can rewrite a field it did not name: the increment executor (`task_increment_frontmatter_executor.go`) and the update executor's trigger-scope write (`task_update_frontmatter_executor.go`) both go through the typed vault API's field-level `PATCH /tasks/{id}`, which replaces only the keys in the request; the scanner's Empty-to-Named Reset (`vault_scanner.go` `writeCounterReset`) goes through the typed API's field-level `PATCH`, which replaces only the keys in the request — the same guarantee, without a caller-side read-modify-write. The reset must never rewrite the whole frontmatter from its scan-time snapshot — doing so raced the executor's increment and produced the frontmatter conflict git-rest quarantined on 2026-10-19 (merge `622e8c24b0`, `trigger_count: 3` vs `0`).
 
 ## Terminal Task Status (create-task dedup)
 
@@ -204,7 +204,7 @@ runs; it returns immediately unless the task carries `max_retries`.
 
 ## Empty-to-Named Reset (spec 021)
 
-When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` back to the file atomically and queues a commit — through git-rest, like every other write. The write goes through `AtomicReadModifyWriteAndCommitPush`: its modify closure re-reads the live file and changes only the `trigger_count` field, so a concurrent write to any other field survives. (The reset no longer touches `retry_count`, which is retired — a legacy record's counter is left exactly as the file carries it.) (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
+When the vault scanner observes a task file whose `assignee` transitions from empty (or absent) to a non-empty agent name, it writes `trigger_count: 0` back to the file atomically and queues a commit — through git-rest, like every other write. The write goes through the typed API's field-level `PATCH`, which names only `trigger_count`, so a concurrent write to any other field survives. (The reset no longer touches `retry_count`, which is retired — a legacy record's counter is left exactly as the file carries it.) (Before 2026-10-19 this was a whole-file write from the scan-time snapshot, which raced the executor's `trigger_count` increment and produced the frontmatter conflict git-rest quarantined — merge `622e8c24b0`, `trigger_count: 3` vs `0`.) This refills the per-attempt budgets for the re-delegated agent without requiring manual counter edits. The reset fires exactly once per empty-to-named transition (named→named and named→empty transitions do not trigger a reset).
 
 ## Typed Frontmatter Commands
 
@@ -289,13 +289,13 @@ The complete executor has no subsection of its own elsewhere in this document; t
 ## Vault Writes via git-rest
 
 The controller holds no local git clone. **Every** vault file operation — read or write,
-whichever executor issues it — ends at the vault's git-rest StatefulSet (`vault-obsidian-<vault>`)
-over HTTP. There are two routes to it, and only one of them is direct:
+whichever executor issues it — goes to vault-api's typed task API, which writes through
+the vault's git-rest StatefulSet (`vault-obsidian-<vault>`). There is no direct route any
+more: the controller addresses tasks by identifier and never names a file path.
 
 | Route | Used by | HTTP call | Who commits |
 |-------|---------|-----------|-------------|
-| Direct to git-rest | scanner reads, result write-back, `complete-task`, empty-to-named reset | `GET`/`POST`/`DELETE /api/v1/files/{relPath}` | git-rest (auto-commit) |
-| Through vault-api | `update-frontmatter`, `increment-frontmatter` | `GET /api/v1/tasks/{id}`, `PATCH /api/v1/tasks/{id}`, `PUT /api/v1/tasks/{id}/content` | vault-api writes the rendered file to git-rest, so **git-rest** still commits |
+| Through vault-api | every caller — scanner, result write-back, `complete-task`, empty-to-named reset, `update-frontmatter`, `increment-frontmatter` | `GET /api/v1/tasks`, `GET /api/v1/tasks/{id}`, `POST /api/v1/tasks`, `PATCH /api/v1/tasks/{id}`, `PUT /api/v1/tasks/{id}/content`, `POST /api/v1/tasks/{id}/readdress` | vault-api writes the rendered file to git-rest, so **git-rest** still commits |
 
 git-rest ensures one commit per write, so **the controller never runs `git add`, `git commit`
 or `git push`** — it has nothing to commit from. The typed route's `PATCH` is described

@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- docs: **sweep the prose that outlived `pkg/gitrestclient`.** The package is gone, but three comments and the design doc still described the retired path-addressed route: `main.go` and `pkg/scanner/metrics_pass.go` quoted `GET /api/v1/files/{path}` as the read the metrics pass costs, `pkg/vaultapi/client.go` introduced the typed client by naming what it replaced, and `docs/controller-design.md` still carried a two-route table with a "Direct to git-rest" row plus two claims that the trigger-count reset goes through `AtomicReadModifyWriteAndCommitPush`. All now describe the typed calls. No behaviour change.
+
 ## v0.31.0
 
 - feat: add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line

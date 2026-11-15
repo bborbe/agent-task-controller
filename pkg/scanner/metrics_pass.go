@@ -43,7 +43,7 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 //
 // The two instruments previously ran as independent passes, each listing the task
 // directory and fetching every file over the vault API. On the openclaw vault's
-// ~22,000 task files that cost ~730 GET /api/v1/files/{path} per second, twice the
+// ~22,000 task files that cost ~730 typed reads per second, twice the
 // rate this pass needs. Splitting parse from classification (taskAgeFromMap,
 // openTaskPairFromMap) keeps the published values identical — only the number of
 // reads changes.
