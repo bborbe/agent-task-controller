@@ -29,17 +29,12 @@ func aliasContent(frontmatter string) string {
 // newAliasScanner returns a scanner whose file operations are bound to tmpDir.
 func newAliasScanner(tmpDir string, writeCount *int) *vaultScanner {
 	return &vaultScanner{
+		client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: writeCount},
 		metrics: metrics.New(),
 		hashes:  make(map[string]fileEntry),
 		ops: fileOps{
 			readFile: func(_ context.Context, p string) ([]byte, error) {
 				return os.ReadFile(filepath.Join(tmpDir, p)) // #nosec G304 -- test-only path
-			},
-			writeFile: func(_ context.Context, relPath string, content []byte) error {
-				if writeCount != nil {
-					*writeCount++
-				}
-				return os.WriteFile(filepath.Join(tmpDir, relPath), content, 0600)
 			},
 		},
 		autoInject: true,

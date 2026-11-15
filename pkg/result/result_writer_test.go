@@ -23,6 +23,8 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var errTest = errors.New("test error")
@@ -48,7 +50,7 @@ var _ = Describe("ResultWriter", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.GitClient
+		fakeGit    *testvault.Client
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		writer     result.ResultWriter
 		taskFile   lib.Task
@@ -64,39 +66,7 @@ var _ = Describe("ResultWriter", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
@@ -155,9 +125,11 @@ var _ = Describe("ResultWriter", func() {
 				Expect(string(written)).To(ContainSubstring("agent-task"))
 				Expect(string(written)).To(ContainSubstring("---\nNew content\n"))
 
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
-				_, _, _, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(msg).To(ContainSubstring(string(identifier)))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
+				// The old assertion read the git commit message for the identifier.
+				// There is no commit any more — the identifier IS the address the
+				// PATCH is sent to — so the write being addressed at all is what the
+				// call count above proves.
 			})
 		})
 
@@ -249,7 +221,7 @@ var _ = Describe("ResultWriter", func() {
 				Expect(string(written)).To(ContainSubstring("status: closed"))
 				Expect(string(written)).NotTo(ContainSubstring("First result"))
 
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(2))
 			})
 		})
 
@@ -268,7 +240,7 @@ var _ = Describe("ResultWriter", func() {
 
 				err := writer.WriteResult(ctx, taskFile)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -438,7 +410,7 @@ var _ = Describe("ResultWriter", func() {
 				Expect(parts[1]).To(ContainSubstring("\n---\n"))
 				Expect(parts[1]).NotTo(ContainSubstring(`\-\-\-`))
 
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
 			})
 		})
 
@@ -552,7 +524,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					Expect(body).To(ContainSubstring("Tags: [[Task]] [[Trading]]"))
 
 					// 9. Committed exactly once
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
 
 					// 10. Verify the full file can be re-read and re-parsed
 					// (simulates controller reading it again on next cycle)
@@ -948,7 +920,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 						Expect(s).NotTo(ContainSubstring("## Retry Escalation"))
 						Expect(s).NotTo(ContainSubstring("## Trigger Cap Escalation"))
 						// exactly one write
-						Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+						Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
 					},
 				)
 			},
@@ -1839,9 +1811,15 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				"preserves a partial frontmatter update that landed between read and modify",
 				func() {
 					// Initial on-disk state: task in_progress, healthcheck-style probe.
+					// The interleaved partial update the old stub simulated is seeded
+					// instead: a concurrent executor already bumped trigger_count and
+					// added spawn_notification. A typed PATCH names only the keys it
+					// changes, so these must survive the completion write — which is the
+					// race fix this spec proves, now guaranteed by construction rather
+					// than by a re-read.
 					writeTaskFile(
 						"probe-task.md",
-						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 1\n---\nProbe body\n",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 2\nspawn_notification: true\n---\nProbe body\n",
 					)
 
 					// Override the BeforeEach stub for this test: simulate a partial
@@ -1852,30 +1830,6 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					// modify with the freshly-re-read bytes. This is exactly what
 					// git-rest does on a CAS retry: it re-reads from disk on each
 					// attempt, so modify sees the interleaved write.
-					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-						ctx context.Context,
-						absPath string,
-						modify func([]byte) ([]byte, error),
-						message string,
-					) error {
-						// Simulate the interleaved partial update: another writer
-						// (the executor) added spawn_notification: true and bumped
-						// trigger_count to 2 between our initial read and the modify
-						// call.
-						interleaved := "---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 2\nspawn_notification: true\n---\nProbe body\n"
-						if err := os.WriteFile(absPath, []byte(interleaved), 0600); err != nil { // #nosec G306 -- test helper
-							return err
-						}
-						current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-						if err != nil {
-							return err
-						}
-						updated, err := modify(current)
-						if err != nil {
-							return err
-						}
-						return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-					}
 
 					// Agent publishes terminal completion: status: completed, phase: done.
 					taskFile = lib.Task{
@@ -1915,7 +1869,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					Expect(s).NotTo(ContainSubstring("Probe body"))
 
 					// 4. Exactly one AtomicReadModifyWriteAndCommitPush call.
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+					Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
 
 					// Note: do NOT assert against spawn_notification here.
 					// applyRetryCounter early-returns when merged.Status() == "completed"
@@ -1929,32 +1883,43 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 		})
 
 		Context("atomic write and push error", func() {
-			It("returns error when AtomicWriteAndCommitPush fails", func() {
-				writeTaskFile(
-					"my-task.md",
-					"---\ntask_identifier: test-task-uuid-1234\nstatus: open\n---\nOld content\n",
-				)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-					ctx context.Context,
-					absPath string,
-					modify func([]byte) ([]byte, error),
-					message string,
-				) error {
-					return errTest
+			It("returns an error when the typed write fails", func() {
+				// The typed PATCH IS the write, and the file-backed double cannot fail
+				// one, so this spec builds a VaultAPIClient that refuses every patch.
+				seeded := vaultapi.Task{
+					ID:    "test-task-uuid-1234",
+					Title: "my-task",
+					Frontmatter: map[string]any{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "open",
+					},
+					Body: "Old content\n",
 				}
+				fakeVault := &mocks.VaultAPIClient{}
+				fakeVault.ListTasksReturns([]vaultapi.Task{seeded}, nil)
+				fakeVault.ReadTaskReturns(&seeded, nil)
+				fakeVault.PatchTaskWithBodyReturns(nil, errTest)
 
-				taskFile = lib.Task{
+				failingTime := &libtimemocks.CurrentDateTimeGetter{}
+				failingTime.NowReturns(
+					libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)),
+				)
+				failing := result.NewResultWriter(
+					fakeVault, taskDir, "openclaw", failingTime, metrics.New(),
+					libtime.NewWaiterDuration(), nil, nil, nil,
+				)
+
+				err := failing.WriteResult(ctx, lib.Task{
 					TaskIdentifier: identifier,
 					Frontmatter: lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "done",
 					},
 					Content: lib.TaskContent("Result\n"),
-				}
-
-				err := writer.WriteResult(ctx, taskFile)
+				})
 				Expect(err).To(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				// The caller-side loop spends its whole retry budget before giving up.
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(3))
 			})
 		})
 
@@ -1978,7 +1943,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				err := writer.WriteResult(ctx, taskFile)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(1))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
 				// Read the actual file the stub wrote.
 				written, readErr := os.ReadFile(filepath.Join(tmpDir, taskDir, "my-task.md"))
 				Expect(readErr).NotTo(HaveOccurred())

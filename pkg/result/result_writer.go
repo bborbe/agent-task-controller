@@ -5,6 +5,7 @@
 package result
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -24,8 +25,8 @@ import (
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 //counterfeiter:generate -o ../../mocks/result_writer.go --fake-name ResultWriter . ResultWriter
@@ -42,7 +43,7 @@ type ResultWriter interface {
 // a nil resolver selects the walk-only behaviour and is a test-only value — no
 // production call site passes nil.
 func NewResultWriter(
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
@@ -54,7 +55,7 @@ func NewResultWriter(
 	opts ...ResultWriterOption,
 ) ResultWriter {
 	w := &resultWriter{
-		gitClient:          gitClient,
+		client:             client,
 		taskDir:            taskDir,
 		vaultName:          vaultName,
 		currentDateTime:    currentDateTime,
@@ -102,7 +103,7 @@ type resultWriter struct {
 	// which the ownership guard rejected at least one incoming field.
 	keptStatePublisher KeptStatePublisher
 
-	gitClient          gitclient.GitClient
+	client             vaultapi.Client
 	taskDir            string
 	vaultName          string
 	currentDateTime    libtime.CurrentDateTimeGetter
@@ -364,7 +365,8 @@ func escalationCoalescingKey(taskName string) (string, bool) {
 // the resolver observed; it is never built from id.
 func resolveFromIndex(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
+	taskDir string,
 	id lib.TaskIdentifier,
 	resolver TaskPathResolver,
 ) (string, lib.TaskFrontmatter, bool, error) {
@@ -379,111 +381,81 @@ func resolveFromIndex(
 		glog.V(2).Infof("FindTaskFilePath: index miss for task %s, falling back to walk", id)
 		return "", nil, false, nil
 	}
-	content, readErr := gitClient.ReadFile(ctx, relPath)
+	task, readErr := client.ReadTask(ctx, string(id))
 	if readErr != nil {
 		glog.V(2).
 			Infof("FindTaskFilePath: index hit %s unreadable (%v), falling back to walk", relPath, readErr)
 		return "", nil, false, nil
 	}
-	frontmatter, fmErr := ExtractFrontmatter(ctx, content)
-	if fmErr != nil {
-		glog.V(2).
-			Infof("FindTaskFilePath: index hit %s has invalid frontmatter (%v), falling back to walk", relPath, fmErr)
-		return "", nil, false, nil
-	}
-	var existingFrontmatter lib.TaskFrontmatter
-	if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFrontmatter); umErr != nil {
-		glog.V(3).
-			Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
-		existingFrontmatter = nil
-	}
-	if carries, ok := existingFrontmatter.String("task_identifier"); !ok || carries != string(id) {
-		// The index is rebuilt once per scan cycle, so a path repurposed since the
-		// last cycle still maps id -> relPath here. Accepting it would write this
-		// task's result onto a file that now belongs to a different task — the
-		// 2026-08-31 incident. The walk compares the identifier before accepting a
-		// match, so the hit path must too. The bytes are already read and parsed,
-		// so the check adds no I/O.
-		glog.V(2).
-			Infof("FindTaskFilePath: index hit %s no longer carries %s, falling back to walk", relPath, id)
-		return "", nil, false, nil
-	}
-	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, relPath)
-	return relPath, existingFrontmatter, true, nil
+	// ⚠️ The path this returns becomes the WRITE ADDRESS (WriteResult derives the
+	// task address from it), so it must come from the task just read — not from the
+	// resolver's cached entry. The index is rebuilt once per cycle; a task renamed
+	// since then still resolves here by identifier, and returning its OLD title
+	// would address a different task (or none) — the 2026-08-31 wrong-task write.
+	existingFrontmatter := lib.TaskFrontmatter(task.Frontmatter)
+	livePath := taskRelPathFor(taskDir, *task)
+	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, livePath)
+	return livePath, existingFrontmatter, true, nil
 }
 
-// FindTaskFilePath returns the relative path of the .md file whose frontmatter has
+// taskRelPathFor composes the vault-relative path a task's title implies. It is a
+// KEY for logging and for the identifier index, never a write address.
+func taskRelPathFor(taskDir string, task vaultapi.Task) string {
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		return ""
+	}
+	return filepath.Join(taskDir, title+".md")
+}
+
+// FindTaskFilePath returns the relative path of the task whose frontmatter has
 // task_identifier == id or a non-empty task_identifier_previous == id, plus the
-// parsed existing frontmatter. A match through task_identifier_previous is never
-// recorded in the identifier→path index: that index is keyed on the current
-// task_identifier only, so an alias identifier falls through to the walk.
+// parsed existing frontmatter.
 //
-// It consults resolver first: on a hit it reads exactly that one file — no directory
-// listing — and on a miss, on a nil resolver, and on a hit whose single read or
-// frontmatter parse fails, it falls back to listing files in taskDir via gitClient and
-// reading each one. A resolver error is returned as-is and does not trigger the walk.
+// It consults resolver first: on a hit it reads exactly that one task — no listing
+// — and on a miss, on a nil resolver, and on a hit whose read fails, it falls back
+// to listing the vault's tasks. A resolver error is returned as-is and does not
+// trigger the walk.
 //
 // Returns ("", nil, nil) when no match is found (not an error).
-// Returns ("", nil, err) naming both paths when more than one file carries id: the match is
-// ambiguous, so no caller may write. Callers must check the error before treating an empty
-// path as "not found" — the two outcomes mean opposite things.
+// Returns ("", nil, err) naming both paths when more than one task carries id: the
+// match is ambiguous, so no caller may write.
 func FindTaskFilePath(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	id lib.TaskIdentifier,
 	resolver TaskPathResolver,
 ) (string, lib.TaskFrontmatter, error) {
-	indexPath, indexFrontmatter, hit, resolveErr := resolveFromIndex(ctx, gitClient, id, resolver)
+	indexPath, indexFrontmatter, hit, resolveErr := resolveFromIndex(
+		ctx, client, taskDir, id, resolver,
+	)
 	if resolveErr != nil {
 		return "", nil, resolveErr
 	}
 	if hit {
 		return indexPath, indexFrontmatter, nil
 	}
-	glob := taskDir + "/*.md"
-	paths, err := gitClient.ListFiles(ctx, glob)
+	tasks, err := client.ListTasks(ctx, vaultapi.Filter{})
 	if err != nil {
-		return "", nil, errors.Wrapf(ctx, err, "list task files with glob %s", glob)
+		return "", nil, errors.Wrapf(ctx, err, "list tasks")
 	}
 	var matchedRelPath string
 	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
-	for _, relPath := range paths {
-		content, readErr := gitClient.ReadFile(ctx, relPath)
-		if readErr != nil {
-			glog.V(3).Infof("FindTaskFilePath: skip %s (read error: %v)", relPath, readErr)
-			continue
-		}
-		frontmatter, fmErr := ExtractFrontmatter(ctx, content)
-		if fmErr != nil {
-			glog.V(3).Infof("FindTaskFilePath: skip %s (frontmatter error: %v)", relPath, fmErr)
-			continue
-		}
-		var fm struct {
-			TaskIdentifier         string `yaml:"task_identifier"`
-			TaskIdentifierPrevious string `yaml:"task_identifier_previous"`
-		}
-		if umErr := yaml.Unmarshal([]byte(frontmatter), &fm); umErr != nil {
-			glog.V(3).Infof("FindTaskFilePath: skip %s (unmarshal error: %v)", relPath, umErr)
-			continue
-		}
-		glog.V(3).
-			Infof("FindTaskFilePath: file %s has task_identifier=%s", relPath, fm.TaskIdentifier)
-		matched, viaPrevious := taskIdentifierMatch(
-			fm.TaskIdentifier, fm.TaskIdentifierPrevious, id,
-		)
+	for _, task := range tasks {
+		current, _ := task.Frontmatter["task_identifier"].(string)
+		previous, _ := task.Frontmatter["task_identifier_previous"].(string)
+		relPath := taskRelPathFor(taskDir, task)
+		matched, viaPrevious := taskIdentifierMatch(current, previous, id)
 		if !matched {
 			continue
 		}
-		// Two files sharing one identifier — whether by the current key or the
-		// recorded predecessor — is never resolvable: picking either one writes
-		// an agent's result onto a file that may belong to a different task. The
-		// previous behaviour silently kept the LAST match from an unsorted
-		// ListFiles, which on 2026-08-31 marked `Sentry Alert Fan-Out -
-		// 2026-08-31` done/completed carrying another task's analysis, for a run
-		// no executor ever performed. Fail loudly instead — the caller must not
-		// write anything.
+		// Two tasks sharing one identifier — whether by the current key or the
+		// recorded predecessor — is never resolvable: picking either one writes an
+		// agent's result onto a task that may belong to a different one. The old
+		// behaviour silently kept the LAST match, which on 2026-08-31 marked a task
+		// done carrying another task's analysis. Fail loudly instead.
 		if matchedRelPath != "" {
 			return "", nil, errors.Errorf(
 				ctx,
@@ -494,13 +466,7 @@ func FindTaskFilePath(
 		matchedRelPath = relPath
 		matchedByPrevious = viaPrevious
 		logTaskFileMatch(relPath, id, viaPrevious)
-		var existingFm lib.TaskFrontmatter
-		if umErr := yaml.Unmarshal([]byte(frontmatter), &existingFm); umErr != nil {
-			glog.V(3).
-				Infof("FindTaskFilePath: could not unmarshal existing frontmatter for %s: %v", relPath, umErr)
-		} else {
-			existingFrontmatter = existingFm
-		}
+		existingFrontmatter = lib.TaskFrontmatter(task.Frontmatter)
 	}
 	if !matchedByPrevious {
 		recordWalkMatch(ctx, resolver, id, matchedRelPath)
@@ -558,7 +524,7 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		var err error
 		matchedRelPath, _, err = FindTaskFilePath(
 			ctx,
-			r.gitClient,
+			r.client,
 			r.taskDir,
 			req.TaskIdentifier,
 			r.resolver,
@@ -622,16 +588,15 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 		return nil
 	}
 
-	absPath := filepath.Join(r.gitClient.Path(), matchedRelPath)
-	commitMessage := fmt.Sprintf(
-		"[agent-task-controller] write result for task %s",
-		req.TaskIdentifier,
-	)
-	glog.V(2).Infof("WriteResult: writing and pushing for task %s", req.TaskIdentifier)
+	// The matched path is a title-derived key, and the API resolves a title, so the
+	// same address works whether the match came through the current identifier or
+	// the recorded predecessor. No absolute path is composed: there is no clone.
+	taskAddress := taskAddressFromRelPath(matchedRelPath)
+	glog.V(2).Infof("WriteResult: writing for task %s", req.TaskIdentifier)
 	writeStart := r.currentDateTime.Now()
-	if err := r.writeAndPublish(ctx, absPath, req, matchedRelPath, commitMessage); err != nil {
+	if err := r.writeAndPublish(ctx, taskAddress, req, matchedRelPath); err != nil {
 		r.metrics.ResultsWrittenTotal("error").Inc()
-		return errors.Wrapf(ctx, err, "atomic read-modify-write and push failed")
+		return errors.Wrapf(ctx, err, "read-modify-write failed")
 	}
 
 	glog.V(2).Infof("WriteResult: completed successfully for task %s in %dms",
@@ -651,25 +616,68 @@ func (r *resultWriter) WriteResult(ctx context.Context, req lib.Task) error {
 // genuinely performed.
 func (r *resultWriter) writeAndPublish(
 	ctx context.Context,
-	absPath string,
+	taskAddress string,
 	req lib.Task,
 	matchedRelPath string,
-	commitMessage string,
 ) error {
 	var escalated *escalation
 	var kept *lib.Task
-	if err := r.gitClient.AtomicReadModifyWriteAndCommitPush(
+	modify := r.buildResultModifyFn(
 		ctx,
-		absPath,
-		r.buildResultModifyFn(
+		req,
+		func(e escalation) { escalated = &e },
+		func(t *lib.Task) { kept = t },
+	)
+	// The caller-side read-modify-write loop the port keeps deliberately: a PATCH
+	// can be retried exactly as a commit could, and the modify closure is the one
+	// place the merge rules live. The escalation recorder stays set-only for the
+	// same reason it always was — an attempt that re-reads a now-empty assignee must
+	// not erase an escalation an earlier attempt performed.
+	var lastErr error
+	for attempt := 1; attempt <= resultWriteAttempts; attempt++ {
+		current, readErr := r.client.ReadTask(ctx, taskAddress)
+		if readErr != nil {
+			return errors.Wrapf(ctx, readErr, "read task %s", taskAddress)
+		}
+		rendered, renderErr := renderTaskForWrite(current)
+		if renderErr != nil {
+			return errors.Wrapf(ctx, renderErr, "render task %s", taskAddress)
+		}
+		next, modifyErr := modify(rendered)
+		if modifyErr != nil {
+			return modifyErr
+		}
+		if bytes.Equal(next, rendered) {
+			// The closure decided nothing changes: no write, no retry.
+			lastErr = nil
+			break
+		}
+		nextFields, nextBody, splitErr := splitRenderedForWrite(ctx, next)
+		if splitErr != nil {
+			return errors.Wrapf(ctx, splitErr, "split task %s", taskAddress)
+		}
+		fields := changedFieldsForWrite(current.Frontmatter, nextFields)
+		if _, patchErr := r.client.PatchTaskWithBody(
+			ctx, current.ID, fields, nextBody,
+		); patchErr != nil {
+			lastErr = patchErr
+			glog.V(2).Infof(
+				"WriteResult: patch attempt %d of %d failed for %s: %v",
+				attempt, resultWriteAttempts, taskAddress, patchErr,
+			)
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return errors.Wrapf(
 			ctx,
-			req,
-			func(e escalation) { escalated = &e },
-			func(t *lib.Task) { kept = t },
-		),
-		commitMessage,
-	); err != nil {
-		return err
+			lastErr,
+			"patch task %s after %d attempts",
+			taskAddress,
+			resultWriteAttempts,
+		)
 	}
 	if escalated != nil {
 		escalated.taskName = taskNameFromRelPath(matchedRelPath)
@@ -679,6 +687,65 @@ func (r *resultWriter) writeAndPublish(
 		r.publishKeptState(ctx, *kept)
 	}
 	return nil
+}
+
+// resultWriteAttempts bounds the caller-side read-modify-write loop. It mirrors
+// the git-retry budget the old atomic write had: enough to survive a transient
+// conflict, few enough that a persistent failure surfaces quickly.
+const resultWriteAttempts = 3
+
+// renderTaskForWrite writes a task back as the frontmatter block plus body the
+// modify closure expects, so the closure stays the single home of the merge rules.
+func renderTaskForWrite(task *vaultapi.Task) ([]byte, error) {
+	frontmatter := task.Frontmatter
+	if frontmatter == nil {
+		frontmatter = map[string]any{}
+	}
+	rendered, err := yaml.Marshal(frontmatter)
+	if err != nil {
+		return nil, err
+	}
+	return []byte("---\n" + string(rendered) + "---\n" + task.Body), nil
+}
+
+// splitRenderedForWrite parses a rendered task back into fields and body.
+func splitRenderedForWrite(
+	ctx context.Context,
+	content []byte,
+) (map[string]any, string, error) {
+	frontmatter, err := ExtractFrontmatter(ctx, content)
+	if err != nil {
+		return nil, "", err
+	}
+	var fields map[string]any
+	if err := yaml.Unmarshal([]byte(frontmatter), &fields); err != nil {
+		return nil, "", err
+	}
+	body, err := ExtractBody(ctx, content)
+	if err != nil {
+		return nil, "", err
+	}
+	return fields, body, nil
+}
+
+// changedFieldsForWrite returns the keys whose value differs, which is what a
+// typed PATCH wants: it replaces only the keys it is given.
+func changedFieldsForWrite(current, next map[string]any) map[string]any {
+	fields := make(map[string]any)
+	for key, value := range next {
+		if existing, ok := current[key]; ok && reflect.DeepEqual(existing, value) {
+			continue
+		}
+		fields[key] = value
+	}
+	return fields
+}
+
+// taskAddressFromRelPath is the address the API resolves for a task path: its
+// title. The API keys identifier, name and slug in one space, so a result that
+// arrived under a repaired identifier still reaches its task.
+func taskAddressFromRelPath(relPath string) string {
+	return strings.TrimSuffix(filepath.Base(relPath), ".md")
 }
 
 // publishKeptState republishes the state the guard kept on disk, so every

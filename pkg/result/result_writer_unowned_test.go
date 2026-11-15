@@ -19,6 +19,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // A result reaches every controller when its frontmatter carries no target_vault,
@@ -30,7 +31,7 @@ var _ = Describe("ResultWriter task-file miss outcome", func() {
 	var (
 		ctx         context.Context
 		tmpDir      string
-		fakeGit     *mocks.GitClient
+		fakeGit     *testvault.Client
 		fakeMetrics *mocks.Metrics
 		writer      result.ResultWriter
 	)
@@ -42,10 +43,8 @@ var _ = Describe("ResultWriter task-file miss outcome", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
 		// No task file matches, so every lookup attempt misses.
-		fakeGit.ListFilesReturns(nil, nil)
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeMetrics = &mocks.Metrics{}
 		fakeMetrics.ResultsWrittenTotalReturns(prometheus.NewCounter(prometheus.CounterOpts{

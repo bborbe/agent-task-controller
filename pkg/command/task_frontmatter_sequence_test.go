@@ -21,7 +21,6 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 )
@@ -31,7 +30,6 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		ctx           context.Context
 		tmpDir        string
 		taskDir       string
-		fakeGit       *mocks.GitClient
 		incrementExec cdb.CommandObjectExecutorTx
 		updateExec    cdb.CommandObjectExecutorTx
 		schemaID      cdb.SchemaID
@@ -45,40 +43,6 @@ var _ = Describe("Frontmatter sequence integration", func() {
 
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
-
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test helper
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
 
 		incrementExec = command.NewIncrementFrontmatterExecutor(
 			newFSTaskClient(tmpDir, taskDir),

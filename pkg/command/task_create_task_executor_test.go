@@ -25,6 +25,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
@@ -35,7 +36,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		ctx       context.Context
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.GitClient
+		fakeGit   *testvault.Client
 		fakeVault *mocks.VaultAPIClient
 		executor  cdb.CommandObjectExecutorTx
 		schemaID  cdb.SchemaID
@@ -51,33 +52,17 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.AtomicWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			content []byte,
-			message string,
-		) error {
-			return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
-		}
-		fakeGit.AtomicWriteIfAbsentAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			content []byte,
-			message string,
-		) error {
-			return os.WriteFile(absPath, content, 0600) // #nosec G306 -- test helper
-		}
-		// Default: every title path is free unless a test overrides ReadFile.
-		fakeGit.ReadFileReturns(nil, errors.New("GET file returned 404: not found"))
+		// The scanner and the create executor both address tasks by identifier, so
+		// one file-backed client serves both. Specs that used to stub ListFiles and
+		// ReadFile now seed the temp dir instead.
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewCreateTaskExecutor(
-			fakeGit, fakeVault, taskDir, "openclaw", clock, testK, nil,
+			fakeVault, taskDir, "openclaw", clock, testK, nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -246,11 +231,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		})
 
 		Context("new filename", func() {
-			It("writes exactly once and returns nil when ReadFile reports not-found (AC3)", func() {
-				fakeGit.ReadFileReturns(
-					nil,
-					errors.New("GET 24 Tasks/Brand New.md returned 404: not found"),
-				)
+			It("writes exactly once and returns nil when ReadTask reports not-found (AC3)", func() {
+				// The presence check is a typed read now; ErrNotFound means the index
+				// entry names no task, so nothing is recorded as a duplicate.
+				fakeVault.ReadTaskReturns(nil, vaultapi.ErrNotFound)
 				cmdObj := buildCmdObj(task.CreateCommand{
 					TaskIdentifier: lib.TaskIdentifier("brand-new"),
 					Title:          "Brand New",
@@ -749,7 +733,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -765,7 +749,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -786,39 +770,20 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
 			})
 
-			It(
-				"records both paths when the indexed file still carries the identifier",
-				func() {
-					// The redirect no longer reads the indexed file — it asks the API for
-					// the identifier — so the only git read left is the bookkeeping
-					// presence check, which sees the old file still carrying the id
-					// (2026-10-27, id 9371a3d2).
-					fakeGit.ReadFileReturns(
-						[]byte("---\ntask_identifier: "+createdID+"\nstatus: aborted\n---\nbody\n"),
-						nil,
-					)
-					fakeResolver := &mocks.TaskPathResolver{}
-					fakeResolver.ResolveReturns("tasks/other.md", true, nil)
-					recordingExecutor := command.NewCreateTaskExecutor(
-						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-					)
-
-					_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
-					Expect(err).NotTo(HaveOccurred())
-
-					Expect(fakeResolver.RecordCallCount()).To(Equal(0))
-					Expect(fakeResolver.RecordDuplicateCallCount()).To(Equal(1))
-					_, id, relPath := fakeResolver.RecordDuplicateArgsForCall(0)
-					Expect(id).To(Equal(lib.TaskIdentifier(createdID)))
-					Expect(relPath).To(Equal(filepath.Join(taskDir, "Recorded Task.md")))
-				},
-			)
+			// A spec here asserted that a create records BOTH the index entry and the
+			// new path when the indexed file still carries the identifier. That branch
+			// is unreachable now: the create is addressed by identifier, so a create
+			// whose identifier already exists is answered by the API with the
+			// occupant and redirected onto that occupant's title — relPath and the
+			// indexed path are then the same path, and recordCreatedTaskPath returns
+			// early. Both counters staying at zero is the correct new behaviour, not
+			// a missing record.
 
 			It("records nothing when the index already holds the written path", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns(filepath.Join(taskDir, "Recorded Task.md"), true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -832,7 +797,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver := &mocks.TaskPathResolver{}
 				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -847,7 +812,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				seedRaw("Recorded Task",
 					"---\ntask_identifier: "+createdID+"\nstatus: in_progress\n---\nbody\n")
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -870,7 +835,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					fakeResolver := &mocks.TaskPathResolver{}
 					fakeResolver.ResolveReturns("", false, nil)
 					recordingExecutor := command.NewCreateTaskExecutor(
-						fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+						fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("ellipsis-id"),
@@ -902,7 +867,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					return &vaultapi.Task{ID: "server-id", Title: "server normalised title"}, nil
 				}
 				recordingExecutor := command.NewCreateTaskExecutor(
-					fakeGit, fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
+					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -919,7 +884,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"skips a command whose TargetVault is openclaw when vaultName=personal (ErrCommandObjectSkipped, no git write)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"personal",
@@ -948,7 +912,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"processes a command whose TargetVault is openclaw when vaultName=openclaw (one git write)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"openclaw",
@@ -975,7 +938,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"refuses a command with empty TargetVault even when vaultName=openclaw (no legacy fallback, no create)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"openclaw",
@@ -1004,7 +966,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				"refuses a command with empty TargetVault when vaultName=personal (validation failure, not a silent cross-vault skip)",
 				func() {
 					executor := command.NewCreateTaskExecutor(
-						fakeGit,
 						fakeVault,
 						taskDir,
 						"personal",
@@ -1136,7 +1097,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 			It("honors look-back bound k and only closes the k most-recent candidates", func() {
 				smallK := 2
 				localExecutor := command.NewCreateTaskExecutor(
-					fakeGit,
 					fakeVault,
 					taskDir,
 					"openclaw",
@@ -1256,22 +1216,17 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W26.md"}, nil)
+				fakeGit.Only = []string{"tasks/Weekly Sched - 2026W26.md"}
 				fileContents := map[string][]byte{
 					"tasks/Weekly Sched - 2026W26.md": []byte(
 						"---\ntask_identifier: weekly-w26\nassignee: claude\nstatus: aborted\n---\nbody\n",
 					),
 				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				Expect(fakeGit.Seed(fileContents)).To(Succeed())
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			// AC: not eligible — auto_abort_prior absent
@@ -1288,12 +1243,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W27.md"}, nil)
+				fakeGit.Only = []string{"tasks/Weekly Sched - 2026W27.md"}
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.ListTasksCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			// AC: ListFiles error swallowed
@@ -1310,11 +1265,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns(nil, errors.New("git-rest 503"))
+				fakeGit.ListErr = errors.New("git-rest 503")
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			// AC: per-candidate read error swallowed, others processed
@@ -1332,17 +1287,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					},
 				})
 
-				fakeGit.ListFilesReturns([]string{"tasks/Weekly Sched - 2026W27.md"}, nil)
+				fakeGit.Only = []string{"tasks/Weekly Sched - 2026W27.md"}
 				fileContents := map[string][]byte{
 					"tasks/Weekly Sched - 2026W27.md": inProgress("weekly-w27"),
 				}
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if content, ok := fileContents[relPath]; ok {
-						return content, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
-				fakeGit.AtomicReadModifyWriteAndCommitPushReturns(errors.New("git-rest 503"))
+				Expect(fakeGit.Seed(fileContents)).To(Succeed())
+				fakeGit.PatchErr = errors.New("git-rest 503")
 
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
@@ -1521,22 +1471,6 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					Expect(
 						os.WriteFile(filepath.Join(tmpDir, priorPath), priorContent, 0600),
 					).To(Succeed())
-					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-						_ context.Context,
-						absPath string,
-						modify func([]byte) ([]byte, error),
-						_ string,
-					) error {
-						current, readErr := os.ReadFile(absPath)
-						if readErr != nil {
-							return readErr
-						}
-						updated, modifyErr := modify(current)
-						if modifyErr != nil {
-							return modifyErr
-						}
-						return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-					}
 
 					_, _, err := executor.HandleCommand(
 						ctx,
@@ -1544,8 +1478,8 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), fm),
 					)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.ListTasksCallCount()).To(Equal(0))
+					Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 
 					after, readErr := os.ReadFile(filepath.Join(tmpDir, priorPath))
 					Expect(readErr).NotTo(HaveOccurred())
@@ -1582,21 +1516,14 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 					Expect(errors.Is(err, task.ErrTaskAlreadyExists)).To(BeTrue())
 					Expect(writtenTask("Fix Build - dashboard")).To(Equal(existing))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 				},
 			)
 
 			It("does not retire the task it has just created", func() {
 				// The create now lands on disk through the API, so the retire scan
 				// reads the real file — the one it must recognise as itself.
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					raw, readErr := os.ReadFile(filepath.Join(tmpDir, relPath))
-					if readErr != nil {
-						return nil, errors.New("GET " + relPath + " returned 404: not found")
-					}
-					return raw, nil
-				}
-				fakeGit.ListFilesReturns([]string{"tasks/Fix Build - dashboard.md"}, nil)
+				fakeGit.Only = []string{"tasks/Fix Build - dashboard.md"}
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1608,18 +1535,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			It("still creates the new task when the supersede target is unreadable", func() {
 				targetPath := "tasks/Fix Build - dashboard - b1file.md"
-				fakeGit.ListFilesReturns([]string{targetPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == targetPath {
-						return nil, errors.New("git-rest 503")
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				fakeGit.Only = []string{targetPath}
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1631,18 +1552,12 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			It("still creates the new task when the supersede target is unparseable", func() {
 				targetPath := "tasks/Fix Build - dashboard - b1file.md"
-				fakeGit.ListFilesReturns([]string{targetPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == targetPath {
-						return []byte("---\nstatus: [unclosed\n---\nbody\n"), nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				fakeGit.Only = []string{targetPath}
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1654,7 +1569,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			It("does not retire a target that is already terminal", func() {
@@ -1662,13 +1577,10 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				terminalContent := []byte(
 					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody\n",
 				)
-				fakeGit.ListFilesReturns([]string{targetPath}, nil)
-				fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-					if relPath == targetPath {
-						return terminalContent, nil
-					}
-					return nil, errors.New("GET " + relPath + " returned 404: not found")
-				}
+				fakeGit.Only = []string{targetPath}
+				Expect(
+					fakeGit.Seed(map[string][]byte{targetPath: []byte(terminalContent)}),
+				).To(Succeed())
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1680,11 +1592,11 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			It("still creates the new task when listing candidates fails", func() {
-				fakeGit.ListFilesReturns(nil, errors.New("git-rest 503"))
+				fakeGit.ListErr = errors.New("git-rest 503")
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",
@@ -1696,7 +1608,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				_, _, err := executor.HandleCommand(ctx, nil, cmdObj)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeVault.CreateTaskCallCount()).To(Equal(1))
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 
 			It("still creates the new task when the retire write is rejected", func() {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 func TestCreateVaultScannerPassesVaultNameAndMetricsInterval(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCreateVaultScannerPassesVaultNameAndMetricsInterval(t *testing.T) {
 		gotMetricsInterval time.Duration
 	)
 	recording := func(
-		_ gitrestclient.GitClient,
+		_ vaultapi.Client,
 		_ string,
 		_ time.Duration,
 		_ <-chan struct{},

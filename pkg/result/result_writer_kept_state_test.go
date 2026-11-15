@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // A result the ownership guard reduces to a no-op produces no commit, so the vault
@@ -38,7 +39,7 @@ task_identifier: kept-state-uuid
 	var (
 		ctx           context.Context
 		tmpDir        string
-		fakeGit       *mocks.GitClient
+		fakeGit       *testvault.Client
 		fakePublisher *mocks.TaskPublisher
 		writer        result.ResultWriter
 		identifier    lib.TaskIdentifier
@@ -51,39 +52,7 @@ task_identifier: kept-state-uuid
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime := &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 10, 31, 10, 4, 53, 0, time.UTC)))
@@ -134,51 +103,15 @@ task_identifier: kept-state-uuid
 		Expect(string(published.Frontmatter.Assignee())).To(Equal(""))
 	})
 
-	It("decides the publish from the committed attempt, not an earlier failed one", func() {
-		attempt := 0
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			// Attempt 1 sees the parked record and rejects the stale fields; its
-			// push "fails". Attempt 2 sees a record the operator moved back to
-			// in_progress with the agent assigned, so nothing is rejected.
-			attempt++
-			if _, err := modify([]byte(parkedOverride)); err != nil {
-				return err
-			}
-			reopened := `---
-status: in_progress
-phase: human_review
-assignee: pr-reviewer-agent
-task_type: pr-override
-task_identifier: kept-state-uuid
----
-# Review
-`
-			updated, err := modify([]byte(reopened))
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
-		Expect(writer.WriteResult(ctx, lib.Task{
-			TaskIdentifier: identifier,
-			Frontmatter: lib.TaskFrontmatter{
-				"status":       "in_progress",
-				"phase":        "human_review",
-				"assignee":     "pr-reviewer-agent",
-				"task_type":    "pr-override",
-				"target_vault": "openclaw",
-			},
-			Content: lib.TaskContent("# Review\n"),
-		})).To(Succeed())
-
-		Expect(attempt).To(Equal(1))
-		Expect(fakePublisher.PublishChangedCallCount()).To(Equal(0))
-	})
+	// A spec here forced `AtomicReadModifyWriteAndCommitPush` to re-invoke the modify
+	// closure twice — once against the parked record, once against a reopened one —
+	// and asserted the publish came from the committed attempt. That mechanism is
+	// gone: the retry is now the caller-side loop's PATCH failure, and a PATCH that
+	// never happens cannot be "the earlier failed attempt". Re-stating it needs a
+	// VaultAPIClient whose ReadTask answers parked-then-reopened AND whose modify
+	// produces a change on the first attempt, which the guard's whole purpose is to
+	// prevent. The property that survives — a committed attempt that rejects no field
+	// publishes nothing — is asserted directly below.
 
 	It("publishes nothing when the guard rejects no field", func() {
 		Expect(writer.WriteResult(ctx, lib.Task{

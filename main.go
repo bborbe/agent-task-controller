@@ -32,7 +32,6 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/bborbe/agent-task-controller/pkg/factory"
-	"github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/publisher"
@@ -43,8 +42,6 @@ import (
 	pkgsync "github.com/bborbe/agent-task-controller/pkg/sync"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
-
-const vaultLocalPath = "/data/vault"
 
 const githubAPIBaseURL = "https://api.github.com"
 
@@ -81,7 +78,6 @@ type application struct {
 	TaskDir                  string            `required:"true"  arg:"task-dir"                    env:"TASK_DIR"                    usage:"task directory within vault (per-vault convention: openclaw=tasks, personal=24 Tasks)"`
 	DataDir                  string            `required:"true"  arg:"data-dir"                    env:"DATA_DIR"                    usage:"directory for BoltDB offset storage"`
 	NoSync                   bool              `required:"false" arg:"no-sync"                     env:"NO_SYNC"                     usage:"disable BoltDB fsync (for testing only)"`
-	GitRestURL               string            `required:"false" arg:"git-rest-url"                env:"GIT_REST_URL"                usage:"git-rest HTTP API base URL"                                                                                                                                                                                                                                                        default:"http://vault-obsidian-openclaw:9090"`
 	VaultAPIURL              string            `required:"false" arg:"vault-api-url"               env:"VAULT_API_URL"               usage:"vault-api base URL; the typed surface the executors address tasks through. REQUIRED for any command ported to it, which fails closed at construction rather than falling back to a path-addressed write"`
 	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                                                                                                                        display:"length" default:""`
 	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                                                                                                                          default:"dev"`
@@ -135,17 +131,9 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	glog.V(1).
 		Infof("agent-task-controller started version=%s commit=%s", a.BuildGitVersion, a.BuildGitCommit)
 
-	if a.GitRestURL == "" {
-		return errors.Errorf(ctx, "GIT_REST_URL is required")
-	}
-	restClient := gitrestclient.NewGitRestClient(
-		a.GitRestURL, a.GatewaySecret, "agent-task-controller", metrics.New(),
-	)
-	gitClient := gitrestclient.NewGitClient(restClient, vaultLocalPath)
-	if err := gitClient.EnsureCloned(ctx); err != nil {
-		return errors.Wrapf(ctx, err, "probe git-rest readiness")
-	}
-	glog.V(1).Infof("using git-rest HTTP API at %s", a.GitRestURL)
+	// The clone is gone: vault-api owns the working copy and commits every write,
+	// so there is no cold start to outlast and nothing to ensure before the router
+	// is built. Readiness reflects vault-api instead (see createHTTPServer).
 
 	// The typed surface. A command ported to it has no path-addressed fallback,
 	// so an unset URL fails here rather than silently writing through git-rest.
@@ -180,10 +168,10 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 
 	trigger := make(chan struct{}, 1)
 	vaultScanner := a.createVaultScanner(
-		gitClient,
+		vaultClient,
 		trigger,
 		autoInject,
-		scanner.NewGitRestVaultScanner,
+		scanner.NewVaultScanner,
 	)
 	taskPublisher := publisher.NewTaskPublisher(
 		eventObjectSender,
@@ -245,7 +233,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	)
 
 	resultWriter := result.NewResultWriter(
-		gitClient,
+		vaultClient,
 		a.TaskDir,
 		a.VaultName,
 		currentDateTime,
@@ -264,7 +252,6 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		a.TopicPrefix,
 		resultWriter,
 		vaultScanner,
-		gitClient,
 		vaultClient,
 		a.TaskDir,
 		a.VaultName,
@@ -278,7 +265,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	components := []run.Func{
 		syncLoop.Run,
 		commandConsumer,
-		a.createHTTPServer(syncLoop, restClient),
+		a.createHTTPServer(syncLoop, vaultClient),
 	}
 	if a.RedriveEnabled && a.RedriveInterval > 0 {
 		components = append(components, redriveSweep.Run)
@@ -286,11 +273,11 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	return service.Run(ctx, components...)
 }
 
-// vaultScannerConstructor is the signature shared by both scanner constructors.
-// It is a parameter of createVaultScanner so the wiring can be exercised without
+// vaultScannerConstructor is the scanner constructor's signature. It is a
+// parameter of createVaultScanner so the wiring can be exercised without
 // running Run.
 type vaultScannerConstructor func(
-	gitClient gitrestclient.GitClient,
+	client vaultapi.Client,
 	taskDir string,
 	pollInterval time.Duration,
 	trigger <-chan struct{},
@@ -303,13 +290,13 @@ type vaultScannerConstructor func(
 // createVaultScanner builds the process's single VaultScanner. The constructor is
 // injected so a test can record the arguments this wiring passes.
 func (a *application) createVaultScanner(
-	gitClient gitrestclient.GitClient,
+	client vaultapi.Client,
 	trigger chan struct{},
 	autoInject bool,
 	constructor vaultScannerConstructor,
 ) scanner.VaultScanner {
 	return constructor(
-		gitClient,
+		client,
 		a.TaskDir,
 		a.PollInterval,
 		trigger,
@@ -322,17 +309,21 @@ func (a *application) createVaultScanner(
 
 func (a *application) createHTTPServer(
 	syncLoop pkgsync.SyncLoop,
-	gitRestClient gitrestclient.GitRestClient,
+	vaultClient vaultapi.Client,
 ) run.Func {
 	return func(ctx context.Context) error {
 		router := mux.NewRouter()
 		router.Path("/healthz").Handler(libhttp.NewPrintHandler("OK"))
 		router.Path("/readiness").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			ready, err := gitRestClient.IsReady(req.Context())
-			if err != nil || !ready {
+			// The controller's dependency is vault-api now. A narrow listing is the
+			// cheapest probe the typed surface offers; a dedicated readiness route
+			// would be cheaper still and is worth adding when the probe cost shows.
+			if _, err := vaultClient.ListTasks(
+				req.Context(), vaultapi.Filter{Status: "in_progress"},
+			); err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = w.Write([]byte("git-rest not ready"))
+				_, _ = w.Write([]byte("vault-api not ready"))
 				return
 			}
 			_, _ = w.Write([]byte("OK"))

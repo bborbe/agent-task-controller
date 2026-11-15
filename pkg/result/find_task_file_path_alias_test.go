@@ -20,50 +20,15 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 const aliasUUID = "33333333-3333-4333-8333-333333333333"
 
 // newAliasResultGit returns a fake Git client backed by tmpDir, mirroring the
 // real-filesystem stub used by the identifier-index tests.
-func newAliasResultGit(tmpDir string) *mocks.GitClient {
-	fakeGit := &mocks.GitClient{}
-	fakeGit.PathReturns(tmpDir)
-	fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-		matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-		if err != nil {
-			return nil, err
-		}
-		var rel []string
-		for _, m := range matches {
-			r, relErr := filepath.Rel(tmpDir, m)
-			if relErr != nil {
-				return nil, relErr
-			}
-			rel = append(rel, r)
-		}
-		return rel, nil
-	}
-	fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-		return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-	}
-	fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-		_ context.Context,
-		absPath string,
-		modify func([]byte) ([]byte, error),
-		_ string,
-	) error {
-		current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-		if err != nil {
-			return err
-		}
-		updated, err := modify(current)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-	}
-	return fakeGit
+func newAliasResultGit(tmpDir string) *testvault.Client {
+	return &testvault.Client{Dir: tmpDir}
 }
 
 // aliasFrontmatterValue unmarshals the frontmatter of content and returns the
@@ -85,18 +50,22 @@ var _ = Describe("FindTaskFilePath task_identifier_previous alias (spec 021)", f
 	})
 
 	It("AC2: resolves a file by its recorded predecessor", func() {
-		fakeGC := &mocks.GitClient{}
-		fakeGC.ListFilesReturns([]string{"tasks/alias.md"}, nil)
-		fakeGC.ReadFileReturnsOnCall(
-			0,
+		tmpDir, err := os.MkdirTemp("", "result-alias-resolve-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(os.RemoveAll(tmpDir)).To(Succeed()) }()
+		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(tmpDir, "tasks", "alias.md"),
 			[]byte(
 				"---\ntask_identifier: "+aliasUUID+
 					"\ntask_identifier_previous: my-slug\ntarget_vault: personal\n---\nbody\n",
 			),
-			nil,
-		)
+			0600,
+		)).To(Succeed())
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "my-slug", nil)
+		matchedRelPath, _, err := result.FindTaskFilePath(
+			ctx, newAliasResultGit(tmpDir), "tasks", "my-slug", nil,
+		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/alias.md"))
 	})
@@ -152,26 +121,24 @@ var _ = Describe("FindTaskFilePath task_identifier_previous alias (spec 021)", f
 	})
 
 	It("AC7: an alias match plus a current-key match is a duplicate error", func() {
-		fakeGC := &mocks.GitClient{}
-		fakeGC.ListFilesReturns(
-			[]string{"tasks/first.md", "tasks/second.md"},
-			nil,
-		)
-		fakeGC.ReadFileReturnsOnCall(
-			0,
+		tmpDir, err := os.MkdirTemp("", "result-alias-duplicate-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(os.RemoveAll(tmpDir)).To(Succeed()) }()
+		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(tmpDir, "tasks", "first.md"),
 			[]byte("---\ntask_identifier: my-slug\n---\n"),
-			nil,
-		)
-		fakeGC.ReadFileReturnsOnCall(
-			1,
-			[]byte(
-				"---\ntask_identifier: "+aliasUUID+
-					"\ntask_identifier_previous: my-slug\n---\n",
-			),
-			nil,
-		)
+			0600,
+		)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(tmpDir, "tasks", "second.md"),
+			[]byte("---\ntask_identifier: "+aliasUUID+"\ntask_identifier_previous: my-slug\n---\n"),
+			0600,
+		)).To(Succeed())
 
-		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeGC, "tasks", "my-slug", nil)
+		matchedRelPath, fm, err := result.FindTaskFilePath(
+			ctx, newAliasResultGit(tmpDir), "tasks", "my-slug", nil,
+		)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier"))
 		Expect(err.Error()).To(ContainSubstring("tasks/first.md"))
@@ -227,25 +194,35 @@ var _ = Describe("FindTaskFilePath task_identifier_previous alias (spec 021)", f
 		})
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("duplicate task_identifier"))
-		Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+		// "Never writes" is asserted on the vault, not on a call count: the typed
+		// client has no write-call counter, and both files must still read exactly
+		// as they were seeded.
+		first, readErr := os.ReadFile(filepath.Join(tmpDir, "tasks", "first.md"))
+		Expect(readErr).NotTo(HaveOccurred())
+		Expect(string(first)).To(Equal("---\ntask_identifier: my-slug\nstatus: in_progress\n---\n"))
+		second, readErr := os.ReadFile(filepath.Join(tmpDir, "tasks", "second.md"))
+		Expect(readErr).NotTo(HaveOccurred())
+		Expect(string(second)).To(ContainSubstring("task_identifier_previous: my-slug"))
 	})
 
 	It("AC8: an alias match is not recorded in the identifier index", func() {
-		fakeGC := &mocks.GitClient{}
-		fakeGC.ListFilesReturns([]string{"tasks/alias.md"}, nil)
-		fakeGC.ReadFileReturnsOnCall(
-			0,
+		tmpDir, err := os.MkdirTemp("", "result-alias-index-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(os.RemoveAll(tmpDir)).To(Succeed()) }()
+		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(tmpDir, "tasks", "alias.md"),
 			[]byte(
 				"---\ntask_identifier: "+aliasUUID+
 					"\ntask_identifier_previous: my-slug\n---\n",
 			),
-			nil,
-		)
+			0600,
+		)).To(Succeed())
 		resolver := &mocks.TaskPathResolver{}
 		resolver.ResolveReturns("", false, nil)
 
 		matchedRelPath, _, err := result.FindTaskFilePath(
-			ctx, fakeGC, "tasks", "my-slug", resolver,
+			ctx, newAliasResultGit(tmpDir), "tasks", "my-slug", resolver,
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/alias.md"))

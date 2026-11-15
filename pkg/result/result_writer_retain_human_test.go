@@ -20,6 +20,7 @@ import (
 
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // These specs drive the WRITER, not the chokepoint function: the chokepoint's own
@@ -35,7 +36,7 @@ var _ = Describe("ResultWriter human-owner retention", func() {
 	var (
 		ctx      context.Context
 		tmpDir   string
-		fakeGit  *mocks.GitClient
+		fakeGit  *testvault.Client
 		taskPath string
 	)
 
@@ -81,39 +82,7 @@ var _ = Describe("ResultWriter human-owner retention", func() {
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 		taskPath = filepath.Join(tmpDir, taskDir, "task.md")
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, globErr := filepath.Glob(filepath.Join(tmpDir, glob))
-			if globErr != nil {
-				return nil, globErr
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			current, readErr := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if readErr != nil {
-				return readErr
-			}
-			updated, modErr := modify(current)
-			if modErr != nil {
-				return modErr
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 	})
 
 	AfterEach(func() {

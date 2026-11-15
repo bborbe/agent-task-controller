@@ -18,8 +18,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // sweepGitClient is a mutex-guarded gitclient.GitClient over a real temp dir. The
@@ -27,8 +27,6 @@ import (
 // read and written under mu. It embeds the interface for the methods these specs
 // never exercise.
 type sweepGitClient struct {
-	gitclient.GitClient
-
 	dir string
 
 	mu            sync.Mutex
@@ -36,7 +34,65 @@ type sweepGitClient struct {
 	readFileCalls int
 }
 
-var _ gitclient.GitClient = (*sweepGitClient)(nil)
+// The typed surface. The git-rest methods above stay so the file's older
+// assertions still compile; the scanner reads through these.
+//
+// The read counter is bumped here as well as in ReadFile: the specs use it to
+// prove a pass actually ran, and a pass is now a typed listing plus typed reads.
+func (c *sweepGitClient) ListTasks(
+	ctx context.Context,
+	filter vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	c.mu.Lock()
+	c.readFileCalls++
+	c.mu.Unlock()
+	return fileVault{c.dir}.ListTasks(ctx, filter)
+}
+
+func (c *sweepGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	c.mu.Lock()
+	c.readFileCalls++
+	c.mu.Unlock()
+	return fileVault{c.dir}.ReadTask(ctx, id)
+}
+
+func (c *sweepGitClient) CreateTask(
+	ctx context.Context,
+	task vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return fileVault{c.dir}.CreateTask(ctx, task, opts)
+}
+
+func (c *sweepGitClient) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	return fileVault{c.dir}.PatchTask(ctx, id, fields)
+}
+
+func (c *sweepGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.dir}.PatchTaskWithBody(ctx, id, fields, body)
+}
+
+func (c *sweepGitClient) PutBody(ctx context.Context, id string, body string) error {
+	return fileVault{c.dir}.PutBody(ctx, id, body)
+}
+
+func (c *sweepGitClient) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.dir}.ReaddressTask(ctx, id, next, previous)
+}
 
 func newSweepGitClient(dir string) *sweepGitClient {
 	return &sweepGitClient{dir: dir}
@@ -166,7 +222,7 @@ var _ = Describe("periodic capped-idle sweep", func() {
 	// whose metrics ticker — and therefore the sweep — fires every 25 ms.
 	startScanner := func(dir string, metricsInterval time.Duration) (*sweepGitClient, func()) {
 		git := newSweepGitClient(dir)
-		vs := NewGitRestVaultScanner(
+		vs := NewVaultScanner(
 			git,
 			"tasks",
 			0,
@@ -312,7 +368,7 @@ var _ = Describe("periodic capped-idle sweep", func() {
 			"trigger_count: 1",
 		))
 
-		vs, ok := NewGitRestVaultScanner(
+		vs, ok := NewVaultScanner(
 			newSweepGitClient(dir), "tasks", 0, make(chan struct{}),
 			metrics.New(), true, "test-vault", 0,
 		).(*vaultScanner)

@@ -13,6 +13,8 @@ package scanner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	lib "github.com/bborbe/agent"
 	. "github.com/onsi/ginkgo/v2"
@@ -55,18 +57,15 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 				readFile: func(_ context.Context, _ string) ([]byte, error) {
 					return []byte(newContent), nil
 				},
-				writeFile: func(_ context.Context, relPath string, _ []byte) error {
-					writes = append(writes, relPath)
-					return nil
-				},
 			},
 			autoInject: true,
 			index:      make(map[lib.TaskIdentifier][]string),
 		}
 
-		changed, deleted, writtenPaths, writeError := v.scanFiles(ctx)
+		changed, deleted, writtenPaths, writeError, listed := v.scanFiles(ctx)
 
 		Expect(writeError).To(BeFalse())
+		Expect(listed).To(BeTrue())
 		Expect(writes).To(BeEmpty(), "a rename must not write the file")
 		Expect(writtenPaths).To(BeEmpty())
 		Expect(deleted).To(ConsistOf(lib.TaskIdentifier(renameID)))
@@ -90,9 +89,19 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 			secondPath := "tasks/second.md"
 			duplicateContent := taskFile(renameID)
 
-			var writes []string
-			var lastWritten []byte
+			dir, err := os.MkdirTemp("", "scanner-spec017-dup-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
+			Expect(os.MkdirAll(filepath.Join(dir, "tasks"), 0750)).To(Succeed())
+			for _, p := range []string{firstPath, secondPath} {
+				Expect(
+					os.WriteFile(filepath.Join(dir, p), []byte(duplicateContent), 0600),
+				).To(Succeed())
+			}
+
+			var writeCount int
 			v := &vaultScanner{
+				client:  &countingVault{fileVault: fileVault{dir: dir}, writes: &writeCount},
 				metrics: metrics.New(),
 				taskDir: "tasks",
 				hashes:  make(map[string]fileEntry),
@@ -100,23 +109,19 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 					listFiles: func(_ context.Context, _ string) ([]string, error) {
 						return []string{firstPath, secondPath}, nil
 					},
-					readFile: func(_ context.Context, _ string) ([]byte, error) {
-						return []byte(duplicateContent), nil
-					},
-					writeFile: func(_ context.Context, relPath string, content []byte) error {
-						writes = append(writes, relPath)
-						lastWritten = append([]byte(nil), content...)
-						return nil
+					readFile: func(_ context.Context, p string) ([]byte, error) {
+						return os.ReadFile(filepath.Join(dir, p)) // #nosec G304 -- test-only path
 					},
 				},
 				autoInject: true,
 				index:      make(map[lib.TaskIdentifier][]string),
 			}
 
-			changed, deleted, writtenPaths, writeError := v.scanFiles(ctx)
+			changed, deleted, writtenPaths, writeError, listed := v.scanFiles(ctx)
 
 			Expect(writeError).To(BeFalse())
-			Expect(writes).To(Equal([]string{secondPath}), "exactly one file is re-minted")
+			Expect(listed).To(BeTrue())
+			Expect(writeCount).To(Equal(1), "exactly one file is re-minted")
 			Expect(writtenPaths).To(Equal([]string{secondPath}))
 			Expect(deleted).To(BeEmpty())
 			Expect(v.hashes[firstPath].taskIdentifier).To(Equal(lib.TaskIdentifier(renameID)))
@@ -124,8 +129,12 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 			Expect(isValidUUID(string(v.hashes[secondPath].taskIdentifier))).To(BeTrue())
 			Expect(changed).To(HaveLen(1))
 			Expect(changed[0].TaskIdentifier).To(Equal(lib.TaskIdentifier(renameID)))
-			Expect(string(lastWritten)).NotTo(ContainSubstring(renameID))
-			Expect(string(lastWritten)).To(ContainSubstring("task_identifier: "))
+			written, err := os.ReadFile(
+				filepath.Join(dir, secondPath),
+			) // #nosec G304 -- test-only path
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(written)).NotTo(ContainSubstring(renameID))
+			Expect(string(written)).To(ContainSubstring("task_identifier: "))
 			Expect(v.index[lib.TaskIdentifier(renameID)]).To(ConsistOf(firstPath))
 			Expect(v.index).To(HaveLen(2))
 		},

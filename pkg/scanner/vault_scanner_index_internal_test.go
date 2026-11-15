@@ -21,8 +21,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // indexGitClient is a gitclient.GitClient with real file I/O over a tmpdir and a read
@@ -32,9 +32,64 @@ type indexGitClient struct {
 	*convergenceGitClient
 	readFileCalls  int
 	writeFileCalls int
+
+	// typed surface over the same temp dir; the git-rest methods below stay so the
+	// file's older assertions still compile.
 }
 
-var _ gitclient.GitClient = (*indexGitClient)(nil)
+// The typed surface over the same temp dir. The read counter is bumped here too:
+// the specs use it to prove a lookup cost exactly one read, and a lookup is now a
+// typed listing or a typed read.
+func (c *indexGitClient) ListTasks(
+	ctx context.Context,
+	filter vaultapi.Filter,
+) ([]vaultapi.Task, error) {
+	c.readFileCalls++
+	return fileVault{c.path}.ListTasks(ctx, filter)
+}
+
+func (c *indexGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
+	c.readFileCalls++
+	return fileVault{c.path}.ReadTask(ctx, id)
+}
+
+func (c *indexGitClient) CreateTask(
+	ctx context.Context,
+	task vaultapi.Task,
+	opts vaultapi.CreateOptions,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.CreateTask(ctx, task, opts)
+}
+
+func (c *indexGitClient) PatchTask(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.PatchTask(ctx, id, fields)
+}
+
+func (c *indexGitClient) PatchTaskWithBody(
+	ctx context.Context,
+	id string,
+	fields map[string]any,
+	body string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.PatchTaskWithBody(ctx, id, fields, body)
+}
+
+func (c *indexGitClient) PutBody(ctx context.Context, id string, body string) error {
+	return fileVault{c.path}.PutBody(ctx, id, body)
+}
+
+func (c *indexGitClient) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*vaultapi.Task, error) {
+	return fileVault{c.path}.ReaddressTask(ctx, id, next, previous)
+}
 
 func (c *indexGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(c.path, glob))
@@ -114,7 +169,7 @@ var _ = Describe("vaultScanner identifier index", func() {
 		client = &indexGitClient{convergenceGitClient: &convergenceGitClient{path: dir}}
 		results = make(chan ScanResult, 1)
 		var ok bool
-		s, ok = NewGitRestVaultScanner(
+		s, ok = NewVaultScanner(
 			client, ".", time.Hour, nil, metrics.New(), true, "test-vault", 0,
 		).(*vaultScanner)
 		Expect(ok).To(BeTrue())
@@ -164,13 +219,18 @@ var _ = Describe("vaultScanner identifier index", func() {
 		Expect(path).To(Equal(""))
 	})
 
-	It("never indexes the empty identifier a halted repair stores", func() {
-		write("halted.md", "---\n{task_identifier: 501, status: in_progress}\n---\nbody\n")
+	It("never indexes an empty identifier", func() {
+		// The halted repair that used to produce an empty entry is gone: a repair is
+		// now one typed call that either stores a new identifier or fails, so the
+		// scanner can no longer reach a halt. The defensive half still holds, and it
+		// is what this spec keeps: an empty identifier is never indexed and never
+		// resolves, whatever put it in the bookkeeping.
 		write("alpha.md", taskFile(alphaID))
 		cycle()
 
-		Expect(s.hashes["halted.md"].taskIdentifier).To(Equal(lib.TaskIdentifier("")))
-		Expect(s.hashes["alpha.md"].taskIdentifier).To(Equal(lib.TaskIdentifier(alphaID)))
+		s.hashes["halted.md"] = fileEntry{taskIdentifier: lib.TaskIdentifier("")}
+		s.publishIndex()
+
 		Expect(s.index).NotTo(HaveKey(lib.TaskIdentifier("")))
 		Expect(s.index).To(HaveLen(1))
 
@@ -404,7 +464,7 @@ var _ = Describe("vaultScanner identifier index", func() {
 	// that replaces it.
 	Context("trigger-only mode (poll interval zero)", func() {
 		triggerOnly := func() *vaultScanner {
-			built, ok := NewGitRestVaultScanner(
+			built, ok := NewVaultScanner(
 				client, ".", 0, make(chan struct{}), metrics.New(), true, "test-vault", 0,
 			).(*vaultScanner)
 			Expect(ok).To(BeTrue())

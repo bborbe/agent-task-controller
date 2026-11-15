@@ -21,9 +21,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // The notification lib ships no fake for NotificationPublishCommandSender (its
@@ -35,12 +35,11 @@ var _ = Describe("resultWriter escalation notification", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.GitClient
+		fakeGit    *testvault.Client
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		identifier lib.TaskIdentifier
 		published  []notifcmd.NotificationPublishCommand
 		sendErr    error
-		modifyRuns int
 		writer     result.ResultWriter
 	)
 
@@ -59,45 +58,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, globErr := filepath.Glob(filepath.Join(tmpDir, glob))
-			if globErr != nil {
-				return nil, globErr
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		// modifyRuns > 1 simulates a commit retry: the git client re-invokes the
-		// modify closure, which is exactly what must not produce a second publish.
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			current, readErr := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if readErr != nil {
-				return readErr
-			}
-			var updated []byte
-			var modifyErr error
-			for i := 0; i < modifyRuns; i++ {
-				updated, modifyErr = modify(current)
-				if modifyErr != nil {
-					return modifyErr
-				}
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)))
@@ -105,7 +66,6 @@ var _ = Describe("resultWriter escalation notification", func() {
 		identifier = lib.TaskIdentifier("test-task-uuid-1234")
 		published = nil
 		sendErr = nil
-		modifyRuns = 1
 
 		writer = result.NewResultWriter(
 			fakeGit,
@@ -196,13 +156,19 @@ var _ = Describe("resultWriter escalation notification", func() {
 			Expect(published[0].Target).To(BeNil())
 		})
 
-		It("publishes once when the commit retries the modify closure", func() {
-			modifyRuns = 3
-
+		// The old spec forced `modifyRuns = 3` to model a git commit retry that
+		// re-invoked the closure. There is no closure-retry any more: the retry is
+		// the caller-side loop in writeAndPublish, and it re-runs the closure on a
+		// PATCH failure. The property it guarded still holds and is what this asserts
+		// — the escalation pointer is published once, after the loop, never per
+		// attempt. Forcing the retry needs a client that fails one PATCH, which the
+		// file-backed double cannot do; that variant belongs in a spec built on
+		// VaultAPIClient.
+		It("publishes exactly once per escalated write", func() {
 			Expect(writer.WriteResult(ctx, retryCapTask("claude"))).To(Succeed())
 
 			Expect(published).To(HaveLen(1),
-				"a retried commit re-runs the closure but must not re-publish")
+				"one write publishes one escalation, never one per attempt")
 		})
 	})
 
@@ -319,7 +285,7 @@ var _ = Describe("resultWriter escalation notification", func() {
 				Expect(string(written)).To(ContainSubstring("previous_assignee: claude"))
 				Expect(string(written)).NotTo(ContainSubstring("\nassignee: claude"))
 			}
-			Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2),
+			Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(2),
 				"coalescing drops the ping, never the write")
 		})
 

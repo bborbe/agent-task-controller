@@ -20,7 +20,6 @@ import (
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
 
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
@@ -44,7 +43,6 @@ import (
 // no error, no result event).
 // resolver is the identifier→path index; a nil resolver records nothing and is a test-only value.
 func NewCreateTaskExecutor(
-	gitClient gitclient.GitClient,
 	client vaultapi.Client,
 	taskDir string,
 	vaultName string,
@@ -146,7 +144,7 @@ func NewCreateTaskExecutor(
 					relPath,
 				)
 			}
-			recordCreatedTaskPath(ctx, gitClient, resolver, cmd.TaskIdentifier, relPath)
+			recordCreatedTaskPath(ctx, client, resolver, cmd.TaskIdentifier, relPath)
 			retireSupersededBuildFixTasks(ctx, client, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, client, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, client, currentDateTime, k, cmd, relPath)
@@ -235,33 +233,27 @@ func reuseExistingIdentifierTitle(
 // is the very failure mode the duplicate recording was added for.
 func identifierPresence(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
-	relPath string,
+	client vaultapi.Client,
+	knownPath string,
 	id lib.TaskIdentifier,
 ) (bool, error) {
-	content, err := gitClient.ReadFile(ctx, relPath)
+	task, err := client.ReadTask(ctx, string(id))
 	if err != nil {
-		if isNotFoundReadError(err) {
+		if errors.Is(err, vaultapi.ErrNotFound) {
 			return false, nil
 		}
 		return false, errors.Wrapf(
-			ctx, err, "read resolved file %s for %s", relPath, id,
+			ctx, err, "read task %s for the index entry at %s", id, knownPath,
 		)
 	}
-	frontmatterStr, err := result.ExtractFrontmatter(ctx, content)
-	if err != nil {
-		return false, errors.Wrapf(
-			ctx, err, "extract frontmatter from resolved file %s for %s", relPath, id,
-		)
+	// The task carrying id exists; the question is whether it still lives where the
+	// index says. The typed read reports no path, so the path is the one its title
+	// implies — the same composition the resolver uses.
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		return false, nil
 	}
-	fm, err := parseTaskFrontmatter(frontmatterStr)
-	if err != nil {
-		return false, errors.Wrapf(
-			ctx, err, "parse frontmatter of resolved file %s for %s", relPath, id,
-		)
-	}
-	actual, _ := fm.String("task_identifier")
-	return actual == string(id), nil
+	return filepath.Base(knownPath) == title+".md", nil
 }
 
 // createThroughAPI materialises the task and settles the three answers the old
@@ -399,7 +391,7 @@ func shortIdentifier(id lib.TaskIdentifier) string {
 // blocks every write for the pod's life.
 func recordCreatedTaskPath(
 	ctx context.Context,
-	gitClient gitclient.GitClient,
+	client vaultapi.Client,
 	resolver result.TaskPathResolver,
 	id lib.TaskIdentifier,
 	relPath string,
@@ -418,7 +410,7 @@ func recordCreatedTaskPath(
 	if filepath.Clean(knownPath) == filepath.Clean(relPath) {
 		return
 	}
-	carries, presenceErr := identifierPresence(ctx, gitClient, knownPath, id)
+	carries, presenceErr := identifierPresence(ctx, client, knownPath, id)
 	if presenceErr != nil {
 		glog.Warningf(
 			"create-task: cannot tell whether index entry %s still carries %s (%v); keeping it rather than replacing it with %s",
@@ -447,19 +439,6 @@ func recordCreatedTaskPath(
 		relPath,
 	)
 	resolver.Record(ctx, id, relPath)
-}
-
-// isNotFoundReadError reports whether a gitClient.ReadFile error means the file
-// does not exist (git-rest returns HTTP 404). git-rest's Get does not expose a
-// typed not-found sentinel, so this matches the "404" status embedded in the
-// wrapped error message produced by gitRestClient.Get
-// ("GET <path> returned 404: ..."). A nil error is NOT a not-found error and must
-// be handled by the caller before calling this helper.
-func isNotFoundReadError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "returned 404")
 }
 
 // validateCreateTaskFrontmatter rejects a create-command whose frontmatter is

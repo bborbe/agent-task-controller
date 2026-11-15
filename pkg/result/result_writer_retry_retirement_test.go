@@ -17,9 +17,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // retry_count is retired, so the frontmatter merge is incoming-wins for it: the
@@ -33,7 +33,7 @@ var _ = Describe("resultWriter retry_count retirement", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.GitClient
+		fakeGit    *testvault.Client
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		identifier lib.TaskIdentifier
 		writer     result.ResultWriter
@@ -62,39 +62,7 @@ var _ = Describe("resultWriter retry_count retirement", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, globErr := filepath.Glob(filepath.Join(tmpDir, glob))
-			if globErr != nil {
-				return nil, globErr
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			current, readErr := os.ReadFile(absPath) // #nosec G304 -- test-only path
-			if readErr != nil {
-				return readErr
-			}
-			updated, modifyErr := modify(current)
-			if modifyErr != nil {
-				return modifyErr
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test-only path
-		}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)))

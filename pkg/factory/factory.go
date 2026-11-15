@@ -16,7 +16,6 @@ import (
 	libtime "github.com/bborbe/time"
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
-	gitclient "github.com/bborbe/agent-task-controller/pkg/gitrestclient"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
@@ -48,7 +47,6 @@ func CreateCommandConsumer(
 	topicPrefix base.TopicPrefix,
 	resultWriter result.ResultWriter,
 	resolver result.TaskPathResolver,
-	gitClient gitclient.GitClient,
 	vaultClient vaultapi.Client,
 	taskDir string,
 	vaultName string,
@@ -75,7 +73,6 @@ func CreateCommandConsumer(
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
 		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m, humans),
 		command.NewCreateTaskExecutor(
-			gitClient,
 			vaultClient,
 			taskDir,
 			vaultName,

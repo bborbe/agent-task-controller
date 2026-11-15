@@ -96,12 +96,13 @@ type VaultAPIClient struct {
 		result1 *vaultapi.Task
 		result2 error
 	}
-	ReaddressTaskStub        func(context.Context, string, string) (*vaultapi.Task, error)
+	ReaddressTaskStub        func(context.Context, string, string, string) (*vaultapi.Task, error)
 	readdressTaskMutex       sync.RWMutex
 	readdressTaskArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
 		arg3 string
+		arg4 string
 	}
 	readdressTaskReturns struct {
 		result1 *vaultapi.Task
@@ -507,20 +508,21 @@ func (fake *VaultAPIClient) ReadTaskReturnsOnCall(i int, result1 *vaultapi.Task,
 	}{result1, result2}
 }
 
-func (fake *VaultAPIClient) ReaddressTask(arg1 context.Context, arg2 string, arg3 string) (*vaultapi.Task, error) {
+func (fake *VaultAPIClient) ReaddressTask(arg1 context.Context, arg2 string, arg3 string, arg4 string) (*vaultapi.Task, error) {
 	fake.readdressTaskMutex.Lock()
 	ret, specificReturn := fake.readdressTaskReturnsOnCall[len(fake.readdressTaskArgsForCall)]
 	fake.readdressTaskArgsForCall = append(fake.readdressTaskArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
 		arg3 string
-	}{arg1, arg2, arg3})
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
 	stub := fake.ReaddressTaskStub
 	fakeReturns := fake.readdressTaskReturns
-	fake.recordInvocation("ReaddressTask", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("ReaddressTask", []interface{}{arg1, arg2, arg3, arg4})
 	fake.readdressTaskMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3)
+		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -534,17 +536,17 @@ func (fake *VaultAPIClient) ReaddressTaskCallCount() int {
 	return len(fake.readdressTaskArgsForCall)
 }
 
-func (fake *VaultAPIClient) ReaddressTaskCalls(stub func(context.Context, string, string) (*vaultapi.Task, error)) {
+func (fake *VaultAPIClient) ReaddressTaskCalls(stub func(context.Context, string, string, string) (*vaultapi.Task, error)) {
 	fake.readdressTaskMutex.Lock()
 	defer fake.readdressTaskMutex.Unlock()
 	fake.ReaddressTaskStub = stub
 }
 
-func (fake *VaultAPIClient) ReaddressTaskArgsForCall(i int) (context.Context, string, string) {
+func (fake *VaultAPIClient) ReaddressTaskArgsForCall(i int) (context.Context, string, string, string) {
 	fake.readdressTaskMutex.RLock()
 	defer fake.readdressTaskMutex.RUnlock()
 	argsForCall := fake.readdressTaskArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *VaultAPIClient) ReaddressTaskReturns(result1 *vaultapi.Task, result2 error) {

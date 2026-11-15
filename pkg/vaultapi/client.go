@@ -221,7 +221,12 @@ type Client interface {
 	// ErrAlreadyExists when the target identifier is already taken — the refusal
 	// is mandatory, because silently merging two tasks into one address is the
 	// worst outcome available.
-	ReaddressTask(ctx context.Context, id string, next string) (*Task, error)
+	//
+	// previous is optional and recorded as the file's task_identifier_previous in
+	// the SAME write, so a result already in flight under the replaced address
+	// still resolves to the task. An empty previous records nothing, which is
+	// exactly the route's original behaviour.
+	ReaddressTask(ctx context.Context, id string, next string, previous string) (*Task, error)
 }
 
 type client struct {
@@ -414,8 +419,17 @@ func (c *client) CreateTask(
 }
 
 // ReaddressTask moves the task to a new identifier. The file does not move.
-func (c *client) ReaddressTask(ctx context.Context, id string, next string) (*Task, error) {
+// A non-empty previous is recorded as task_identifier_previous in the same patch.
+func (c *client) ReaddressTask(
+	ctx context.Context,
+	id string,
+	next string,
+	previous string,
+) (*Task, error) {
 	payload := map[string]string{"task_identifier": next}
+	if previous != "" {
+		payload["previous"] = previous
+	}
 	status, raw, err := c.do(ctx, http.MethodPost, taskPath(id, "/readdress"), nil, payload)
 	if err != nil {
 		return nil, err
