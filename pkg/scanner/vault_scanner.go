@@ -171,8 +171,8 @@ func taskRelPath(taskDir string, task vaultapi.Task) string {
 	return filepath.Join(taskDir, title+".md")
 }
 
-func (t *typedFileOps) list(_ context.Context, _ string) ([]string, error) {
-	tasks, err := t.client.ListTasks(context.Background(), vaultapi.Filter{})
+func (t *typedFileOps) list(ctx context.Context, _ string) ([]string, error) {
+	tasks, err := t.client.ListTasks(ctx, vaultapi.Filter{})
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (t *typedFileOps) list(_ context.Context, _ string) ([]string, error) {
 // read renders the task last listed at relPath as the markdown this package
 // parses. Rendering rather than re-fetching keeps the cycle internally
 // consistent: every helper in one pass sees the same snapshot.
-func (t *typedFileOps) read(_ context.Context, relPath string) ([]byte, error) {
+func (t *typedFileOps) read(ctx context.Context, relPath string) ([]byte, error) {
 	t.mutex.RLock()
 	task, ok := t.byPath[relPath]
 	t.mutex.RUnlock()
@@ -204,15 +204,15 @@ func (t *typedFileOps) read(_ context.Context, relPath string) ([]byte, error) {
 		// created after that listing, or one read by a pass that never listed. The
 		// path carries the task's title, which is an address the API resolves, so a
 		// miss falls back to one typed read rather than failing the escalation.
-		found, readErr := t.client.ReadTask(context.Background(), taskAddressFromPath(relPath))
+		found, readErr := t.client.ReadTask(ctx, taskAddressFromPath(relPath))
 		if readErr != nil {
 			return nil, errors.Wrapf(
-				context.Background(), readErr, "no task listed or readable at %s", relPath,
+				ctx, readErr, "no task listed or readable at %s", relPath,
 			)
 		}
 		task = *found
 	}
-	return renderTask(context.Background(), task)
+	return renderTask(ctx, task)
 }
 
 // renderTask writes a task back as the frontmatter block plus body this package

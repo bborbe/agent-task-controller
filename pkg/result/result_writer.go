@@ -366,6 +366,7 @@ func escalationCoalescingKey(taskName string) (string, bool) {
 func resolveFromIndex(
 	ctx context.Context,
 	client vaultapi.Client,
+	taskDir string,
 	id lib.TaskIdentifier,
 	resolver TaskPathResolver,
 ) (string, lib.TaskFrontmatter, bool, error) {
@@ -386,13 +387,15 @@ func resolveFromIndex(
 			Infof("FindTaskFilePath: index hit %s unreadable (%v), falling back to walk", relPath, readErr)
 		return "", nil, false, nil
 	}
-	// The typed read resolves by identifier, so a hit already carries id. The old
-	// check existed because the index maps id to a PATH that could be repurposed
-	// since the last cycle; there is no path to repurpose here — the identifier is
-	// the address — so the 2026-08-31 failure mode cannot arise on this branch.
+	// ⚠️ The path this returns becomes the WRITE ADDRESS (WriteResult derives the
+	// task address from it), so it must come from the task just read — not from the
+	// resolver's cached entry. The index is rebuilt once per cycle; a task renamed
+	// since then still resolves here by identifier, and returning its OLD title
+	// would address a different task (or none) — the 2026-08-31 wrong-task write.
 	existingFrontmatter := lib.TaskFrontmatter(task.Frontmatter)
-	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, relPath)
-	return relPath, existingFrontmatter, true, nil
+	livePath := taskRelPathFor(taskDir, *task)
+	glog.V(2).Infof("FindTaskFilePath: index hit for task %s at %s", id, livePath)
+	return livePath, existingFrontmatter, true, nil
 }
 
 // taskRelPathFor composes the vault-relative path a task's title implies. It is a
@@ -424,7 +427,9 @@ func FindTaskFilePath(
 	id lib.TaskIdentifier,
 	resolver TaskPathResolver,
 ) (string, lib.TaskFrontmatter, error) {
-	indexPath, indexFrontmatter, hit, resolveErr := resolveFromIndex(ctx, client, id, resolver)
+	indexPath, indexFrontmatter, hit, resolveErr := resolveFromIndex(
+		ctx, client, taskDir, id, resolver,
+	)
 	if resolveErr != nil {
 		return "", nil, resolveErr
 	}

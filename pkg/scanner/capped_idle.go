@@ -159,14 +159,19 @@ func (v *vaultScanner) escalateCappedPaths(ctx context.Context, paths []string) 
 // semantics (which fields it clears, when it skips) in exactly one place, and
 // sends only the keys it actually changed.
 //
-// The typed PATCH replaces named keys and serialises per task, so the read at
-// write time is the API's, not this cycle's: a concurrent agent result that
-// clears the assignee in between makes the diff empty or narrow, which is the
-// same idempotence the atomic read-modify-write provided.
+// ⚠️ The read MUST be a fresh typed read, not `v.ops.readFile`: that seam serves
+// the bytes of the last listing, so a body write landing between listing and patch
+// would be silently overwritten when the patch replaces the body. Reading here
+// makes the read at write time the API's, which is what the atomic
+// read-modify-write provided before the port.
 func (v *vaultScanner) escalateCappedTask(ctx context.Context, relPath string) (bool, error) {
-	current, readErr := v.ops.readFile(ctx, relPath)
+	task, readErr := v.client.ReadTask(ctx, taskAddressFromPath(relPath))
 	if readErr != nil {
 		return false, errors.Wrapf(ctx, readErr, "read capped task")
+	}
+	current, renderErr := renderTask(ctx, *task)
+	if renderErr != nil {
+		return false, errors.Wrapf(ctx, renderErr, "render capped task")
 	}
 	next, changed, terr := escalateCappedContent(ctx, current, libtime.DateTime(time.Now()))
 	if terr != nil {
