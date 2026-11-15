@@ -91,7 +91,6 @@ func (c *indexGitClient) ReaddressTask(
 	return fileVault{c.path}.ReaddressTask(ctx, id, next, previous)
 }
 
-
 func (c *indexGitClient) ListFiles(_ context.Context, glob string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(c.path, glob))
 	if err != nil {

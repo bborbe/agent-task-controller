@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package mocks
+package testvault
 
-// FileVaultClient is a file-backed vaultapi.Client for tests that need a real
+// Client is a file-backed vaultapi.Client for tests that need a real
 // vault rather than canned answers: they seed markdown in a temp dir and assert on
 // what was read and written. It lives here rather than in a _test.go file because
-// more than one package's tests need it and test files are not importable.
+// more than one package's tests need it and test files are not importable, and
+// it lives in its own package because `make precommit` regenerates mocks/ and
+// would delete a hand-written file there.
 
 import (
 	"context"
@@ -21,8 +23,8 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
-// FileVaultClient serves vaultapi.Client from a directory of markdown files.
-type FileVaultClient struct {
+// Client serves vaultapi.Client from a directory of markdown files.
+type Client struct {
 	Dir string
 
 	// Call counters, so a spec can prove an operation was not reached — the
@@ -45,7 +47,7 @@ type FileVaultClient struct {
 }
 
 // Seed writes a path→content map into Dir so a typed read finds it.
-func (f *FileVaultClient) Seed(files map[string][]byte) error {
+func (f *Client) Seed(files map[string][]byte) error {
 	for relPath, content := range files {
 		path := filepath.Join(f.Dir, relPath)
 		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
@@ -59,15 +61,15 @@ func (f *FileVaultClient) Seed(files map[string][]byte) error {
 }
 
 // ListTasksCallCount reports how many listings were issued.
-func (f *FileVaultClient) ListTasksCallCount() int { return f.listCalls }
+func (f *Client) ListTasksCallCount() int { return f.listCalls }
 
 // ReadTaskCallCount reports how many single-task reads were issued.
-func (f *FileVaultClient) ReadTaskCallCount() int { return f.readCalls }
+func (f *Client) ReadTaskCallCount() int { return f.readCalls }
 
 // PatchTaskWithBodyCallCount reports how many typed writes were issued.
-func (f *FileVaultClient) PatchTaskWithBodyCallCount() int { return f.patchCalls }
+func (f *Client) PatchTaskWithBodyCallCount() int { return f.patchCalls }
 
-func (f *FileVaultClient) tasks() ([]vaultapi.Task, error) {
+func (f *Client) tasks() ([]vaultapi.Task, error) {
 	var tasks []vaultapi.Task
 	allowed := make(map[string]struct{}, len(f.Only))
 	for _, relPath := range f.Only {
@@ -99,7 +101,7 @@ func (f *FileVaultClient) tasks() ([]vaultapi.Task, error) {
 	return tasks, err
 }
 
-func (f *FileVaultClient) taskAt(path string) (vaultapi.Task, error) {
+func (f *Client) taskAt(path string) (vaultapi.Task, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- test-only path
 	if err != nil {
 		return vaultapi.Task{}, err
@@ -137,7 +139,7 @@ func splitFileVaultContent(raw []byte) (map[string]any, string, error) {
 	return fields, strings.TrimPrefix(rest[idx+len("\n---"):], "\n"), nil
 }
 
-func (f *FileVaultClient) pathFor(id string) (string, bool, error) {
+func (f *Client) pathFor(id string) (string, bool, error) {
 	var found string
 	err := filepath.Walk(f.Dir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -163,7 +165,7 @@ func (f *FileVaultClient) pathFor(id string) (string, bool, error) {
 }
 
 // ListTasks returns every task under Dir.
-func (f *FileVaultClient) ListTasks(
+func (f *Client) ListTasks(
 	_ context.Context,
 	_ vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
@@ -175,7 +177,7 @@ func (f *FileVaultClient) ListTasks(
 }
 
 // ReadTask returns the task addressed by identifier or title.
-func (f *FileVaultClient) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
+func (f *Client) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
 	f.readCalls++
 	if f.ReadErrOn != nil {
 		if err, ok := f.ReadErrOn[id]; ok {
@@ -196,7 +198,7 @@ func (f *FileVaultClient) ReadTask(_ context.Context, id string) (*vaultapi.Task
 	return &task, nil
 }
 
-func (f *FileVaultClient) write(path string, fields map[string]any, body string) error {
+func (f *Client) write(path string, fields map[string]any, body string) error {
 	if fields == nil {
 		fields = map[string]any{}
 	}
@@ -207,7 +209,7 @@ func (f *FileVaultClient) write(path string, fields map[string]any, body string)
 	return os.WriteFile(path, []byte("---\n"+string(rendered)+"---\n"+body), 0600) // #nosec G306
 }
 
-func (f *FileVaultClient) patch(
+func (f *Client) patch(
 	id string,
 	fields map[string]any,
 	body *string,
@@ -237,7 +239,7 @@ func (f *FileVaultClient) patch(
 }
 
 // PatchTask replaces the named frontmatter fields.
-func (f *FileVaultClient) PatchTask(
+func (f *Client) PatchTask(
 	_ context.Context,
 	id string,
 	fields map[string]any,
@@ -246,7 +248,7 @@ func (f *FileVaultClient) PatchTask(
 }
 
 // PatchTaskWithBody replaces the named fields and the body in one write.
-func (f *FileVaultClient) PatchTaskWithBody(
+func (f *Client) PatchTaskWithBody(
 	_ context.Context,
 	id string,
 	fields map[string]any,
@@ -260,13 +262,13 @@ func (f *FileVaultClient) PatchTaskWithBody(
 }
 
 // PutBody replaces the body.
-func (f *FileVaultClient) PutBody(_ context.Context, id string, body string) error {
+func (f *Client) PutBody(_ context.Context, id string, body string) error {
 	_, err := f.patch(id, map[string]any{}, &body)
 	return err
 }
 
 // CreateTask writes a new task file named after the title.
-func (f *FileVaultClient) CreateTask(
+func (f *Client) CreateTask(
 	_ context.Context,
 	task vaultapi.Task,
 	_ vaultapi.CreateOptions,
@@ -282,7 +284,7 @@ func (f *FileVaultClient) CreateTask(
 }
 
 // ReaddressTask moves the task to a new identifier, recording the previous one.
-func (f *FileVaultClient) ReaddressTask(
+func (f *Client) ReaddressTask(
 	_ context.Context,
 	id string,
 	next string,
@@ -295,4 +297,4 @@ func (f *FileVaultClient) ReaddressTask(
 	return f.patch(id, fields, nil)
 }
 
-var _ vaultapi.Client = new(FileVaultClient)
+var _ vaultapi.Client = new(Client)

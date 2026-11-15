@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
@@ -35,7 +36,7 @@ var _ = Describe("ResultWriter human-owner retention", func() {
 	var (
 		ctx      context.Context
 		tmpDir   string
-		fakeGit  *mocks.FileVaultClient
+		fakeGit  *testvault.Client
 		taskPath string
 	)
 
@@ -81,7 +82,7 @@ var _ = Describe("ResultWriter human-owner retention", func() {
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 		taskPath = filepath.Join(tmpDir, taskDir, "task.md")
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 	})
 
 	AfterEach(func() {

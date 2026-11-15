@@ -20,9 +20,9 @@ import (
 	"github.com/bborbe/validation"
 	"github.com/golang/glog"
 
-	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	result "github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 // NewCreateTaskExecutor creates a cdb.CommandObjectExecutorTx that materializes
@@ -440,7 +440,6 @@ func recordCreatedTaskPath(
 	)
 	resolver.Record(ctx, id, relPath)
 }
-
 
 // validateCreateTaskFrontmatter rejects a create-command whose frontmatter is
 // unusable downstream.

@@ -16,7 +16,7 @@ import (
 	libtime "github.com/bborbe/time"
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
-		"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"

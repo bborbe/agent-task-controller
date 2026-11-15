@@ -17,7 +17,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
@@ -33,7 +33,7 @@ var _ = Describe("resultWriter retry_count retirement", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.FileVaultClient
+		fakeGit    *testvault.Client
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		identifier lib.TaskIdentifier
 		writer     result.ResultWriter
@@ -62,7 +62,7 @@ var _ = Describe("resultWriter retry_count retirement", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)))

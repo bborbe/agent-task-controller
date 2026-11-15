@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
@@ -35,7 +36,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		ctx       context.Context
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.FileVaultClient
+		fakeGit   *testvault.Client
 		fakeVault *mocks.VaultAPIClient
 		executor  cdb.CommandObjectExecutorTx
 		schemaID  cdb.SchemaID
@@ -54,7 +55,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		// The scanner and the create executor both address tasks by identifier, so
 		// one file-backed client serves both. Specs that used to stub ListFiles and
 		// ReadFile now seed the temp dir instead.
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		clock = &libtimemocks.CurrentDateTimeGetter{}
 		clock.NowReturns(libtime.DateTime(time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)))
@@ -1577,7 +1578,9 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					"---\ntask_identifier: fixbuild-b1\nbuild_id: B\nassignee: claude\nstatus: aborted\nphase: done\n---\nbody\n",
 				)
 				fakeGit.Only = []string{targetPath}
-				Expect(fakeGit.Seed(map[string][]byte{targetPath: []byte(terminalContent)})).To(Succeed())
+				Expect(
+					fakeGit.Seed(map[string][]byte{targetPath: []byte(terminalContent)}),
+				).To(Succeed())
 
 				cmdObj := buildFixCmd(lib.TaskIdentifier("fixbuild-b2"), lib.TaskFrontmatter{
 					"assignee":            "claude",

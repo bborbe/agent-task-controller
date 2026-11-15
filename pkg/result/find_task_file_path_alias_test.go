@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
 
@@ -26,8 +27,8 @@ const aliasUUID = "33333333-3333-4333-8333-333333333333"
 
 // newAliasResultGit returns a fake Git client backed by tmpDir, mirroring the
 // real-filesystem stub used by the identifier-index tests.
-func newAliasResultGit(tmpDir string) *mocks.FileVaultClient {
-	return &mocks.FileVaultClient{Dir: tmpDir}
+func newAliasResultGit(tmpDir string) *testvault.Client {
+	return &testvault.Client{Dir: tmpDir}
 }
 
 // aliasFrontmatterValue unmarshals the frontmatter of content and returns the

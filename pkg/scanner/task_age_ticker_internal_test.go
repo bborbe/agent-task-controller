@@ -31,13 +31,11 @@ import (
 // read and written under mu. It embeds the interface for the methods these specs
 // never exercise.
 type taskAgeTickerGitClient struct {
-
 	mu             sync.Mutex
 	files          map[string]string
 	pullCalls      int
 	writeFileCalls int
 }
-
 
 // The typed surface. This double keeps its tasks in memory, so the listing is
 // built from that map rather than from disk.

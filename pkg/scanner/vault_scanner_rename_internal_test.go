@@ -65,7 +65,7 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 		changed, deleted, writtenPaths, writeError, listed := v.scanFiles(ctx)
 
 		Expect(writeError).To(BeFalse())
-			Expect(listed).To(BeTrue())
+		Expect(listed).To(BeTrue())
 		Expect(writes).To(BeEmpty(), "a rename must not write the file")
 		Expect(writtenPaths).To(BeEmpty())
 		Expect(deleted).To(ConsistOf(lib.TaskIdentifier(renameID)))
@@ -94,7 +94,9 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 			defer func() { Expect(os.RemoveAll(dir)).To(Succeed()) }()
 			Expect(os.MkdirAll(filepath.Join(dir, "tasks"), 0750)).To(Succeed())
 			for _, p := range []string{firstPath, secondPath} {
-				Expect(os.WriteFile(filepath.Join(dir, p), []byte(duplicateContent), 0600)).To(Succeed())
+				Expect(
+					os.WriteFile(filepath.Join(dir, p), []byte(duplicateContent), 0600),
+				).To(Succeed())
 			}
 
 			var writeCount int
@@ -127,7 +129,9 @@ var _ = Describe("rename preserves task_identifier (spec 017)", func() {
 			Expect(isValidUUID(string(v.hashes[secondPath].taskIdentifier))).To(BeTrue())
 			Expect(changed).To(HaveLen(1))
 			Expect(changed[0].TaskIdentifier).To(Equal(lib.TaskIdentifier(renameID)))
-			written, err := os.ReadFile(filepath.Join(dir, secondPath)) // #nosec G304 -- test-only path
+			written, err := os.ReadFile(
+				filepath.Join(dir, secondPath),
+			) // #nosec G304 -- test-only path
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(written)).NotTo(ContainSubstring(renameID))
 			Expect(string(written)).To(ContainSubstring("task_identifier: "))

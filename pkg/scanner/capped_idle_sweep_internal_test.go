@@ -27,14 +27,12 @@ import (
 // read and written under mu. It embeds the interface for the methods these specs
 // never exercise.
 type sweepGitClient struct {
-
 	dir string
 
 	mu            sync.Mutex
 	pullCalls     int
 	readFileCalls int
 }
-
 
 // The typed surface. The git-rest methods above stay so the file's older
 // assertions still compile; the scanner reads through these.

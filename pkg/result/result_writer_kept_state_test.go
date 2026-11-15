@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
@@ -38,7 +39,7 @@ task_identifier: kept-state-uuid
 	var (
 		ctx           context.Context
 		tmpDir        string
-		fakeGit       *mocks.FileVaultClient
+		fakeGit       *testvault.Client
 		fakePublisher *mocks.TaskPublisher
 		writer        result.ResultWriter
 		identifier    lib.TaskIdentifier
@@ -51,7 +52,7 @@ task_identifier: kept-state-uuid
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime := &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 10, 31, 10, 4, 53, 0, time.UTC)))

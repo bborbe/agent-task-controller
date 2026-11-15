@@ -44,7 +44,6 @@ var _ = Describe("Frontmatter sequence integration", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-
 		incrementExec = command.NewIncrementFrontmatterExecutor(
 			newFSTaskClient(tmpDir, taskDir),
 			"openclaw",

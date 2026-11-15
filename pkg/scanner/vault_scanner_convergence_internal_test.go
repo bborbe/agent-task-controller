@@ -38,7 +38,6 @@ func (c *convergenceGitClient) countWrite() {
 	}
 }
 
-
 // The typed surface, over the same temp dir. The git-rest methods stay so the
 // file's older assertions still compile.
 func (c *convergenceGitClient) ListTasks(
@@ -163,10 +162,10 @@ func newConvergenceHarness(dir string, autoInject bool) *convergenceHarness {
 	}
 	h.git = &convergenceGitClient{path: dir, writes: &h.writeCount}
 	h.scanner = &vaultScanner{
-		client: h.git,
-		taskDir:   ".",
-		hashes:    make(map[string]fileEntry),
-		metrics:   metrics.New(),
+		client:  h.git,
+		taskDir: ".",
+		hashes:  make(map[string]fileEntry),
+		metrics: metrics.New(),
 		ops: fileOps{
 			listFiles: func(_ context.Context, glob string) ([]string, error) {
 				matches, err := filepath.Glob(filepath.Join(dir, glob))

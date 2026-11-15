@@ -43,7 +43,6 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
-
 const githubAPIBaseURL = "https://api.github.com"
 
 // metricsInterval is the fixed cadence of the task-age and open-task-census

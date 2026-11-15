@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
@@ -32,7 +33,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		ctx       context.Context
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.FileVaultClient
+		fakeGit   *testvault.Client
 		fakeVault *mocks.VaultAPIClient
 		executor  cdb.CommandObjectExecutorTx
 		schemaID  cdb.SchemaID
@@ -47,7 +48,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewIncrementFrontmatterExecutor(

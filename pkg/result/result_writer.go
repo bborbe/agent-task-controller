@@ -25,8 +25,8 @@ import (
 	"github.com/golang/glog"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 //counterfeiter:generate -o ../../mocks/result_writer.go --fake-name ResultWriter . ResultWriter
@@ -666,7 +666,13 @@ func (r *resultWriter) writeAndPublish(
 		break
 	}
 	if lastErr != nil {
-		return errors.Wrapf(ctx, lastErr, "patch task %s after %d attempts", taskAddress, resultWriteAttempts)
+		return errors.Wrapf(
+			ctx,
+			lastErr,
+			"patch task %s after %d attempts",
+			taskAddress,
+			resultWriteAttempts,
+		)
 	}
 	if escalated != nil {
 		escalated.taskName = taskNameFromRelPath(matchedRelPath)

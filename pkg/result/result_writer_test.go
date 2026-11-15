@@ -20,10 +20,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
-	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 var errTest = errors.New("test error")
@@ -49,7 +50,7 @@ var _ = Describe("ResultWriter", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.FileVaultClient
+		fakeGit    *testvault.Client
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		writer     result.ResultWriter
 		taskFile   lib.Task
@@ -65,7 +66,7 @@ var _ = Describe("ResultWriter", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
@@ -1900,7 +1901,9 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				fakeVault.PatchTaskWithBodyReturns(nil, errTest)
 
 				failingTime := &libtimemocks.CurrentDateTimeGetter{}
-				failingTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
+				failingTime.NowReturns(
+					libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)),
+				)
 				failing := result.NewResultWriter(
 					fakeVault, taskDir, "openclaw", failingTime, metrics.New(),
 					libtime.NewWaiterDuration(), nil, nil, nil,

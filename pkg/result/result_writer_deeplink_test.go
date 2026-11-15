@@ -17,7 +17,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent-task-controller/mocks"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
 )
@@ -44,7 +44,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 	var (
 		ctx      context.Context
 		tmpDir   string
-		fakeGit  *mocks.FileVaultClient
+		fakeGit  *testvault.Client
 		fakeTime *libtimemocks.CurrentDateTimeGetter
 	)
 
@@ -54,7 +54,7 @@ var _ = Describe("resultWriter escalation deeplink encoding", func() {
 		tmpDir, err = os.MkdirTemp("", "result-writer-deeplink-*")
 		Expect(err).NotTo(HaveOccurred())
 
-		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
+		fakeGit = &testvault.Client{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)))

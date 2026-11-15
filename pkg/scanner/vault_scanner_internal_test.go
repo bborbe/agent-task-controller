@@ -687,7 +687,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 			var writeCount int
 			v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+				client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 				metrics: metrics.New(),
 				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
@@ -739,7 +739,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 			// assertion is independent of every preceding row.
 			writeCount := 0
 			v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+				client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 				metrics: metrics.New(),
 				hashes:  make(map[string]fileEntry),
 				ops: fileOps{
@@ -786,7 +786,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		var writeCount int
 		v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+			client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -839,7 +839,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 		var writeCount int
 		nonNilTasks := 0
 		v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+			client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -883,7 +883,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		var writeCount int
 		v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+			client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -929,7 +929,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		var writeCount int
 		v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+			client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{
@@ -1014,7 +1014,7 @@ var _ = Describe("task_identifier backfill repair (spec 008)", func() {
 
 		writeCount := 0
 		v := &vaultScanner{
-				client: &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
+			client:  &countingVault{fileVault: fileVault{dir: tmpDir}, writes: &writeCount},
 			metrics: metrics.New(),
 			hashes:  make(map[string]fileEntry),
 			ops: fileOps{

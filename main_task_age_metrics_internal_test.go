@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/scanner"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
 func TestCreateVaultScannerPassesVaultNameAndMetricsInterval(t *testing.T) {
