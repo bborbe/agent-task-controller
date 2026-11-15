@@ -30,7 +30,7 @@ var _ = Describe("ResultWriter task-file miss outcome", func() {
 	var (
 		ctx         context.Context
 		tmpDir      string
-		fakeGit     *mocks.GitClient
+		fakeGit     *mocks.FileVaultClient
 		fakeMetrics *mocks.Metrics
 		writer      result.ResultWriter
 	)
@@ -42,10 +42,8 @@ var _ = Describe("ResultWriter task-file miss outcome", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
 		// No task file matches, so every lookup attempt misses.
-		fakeGit.ListFilesReturns(nil, nil)
+		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
 
 		fakeMetrics = &mocks.Metrics{}
 		fakeMetrics.ResultsWrittenTotalReturns(prometheus.NewCounter(prometheus.CounterOpts{

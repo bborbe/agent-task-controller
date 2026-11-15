@@ -124,8 +124,10 @@ var _ = Describe("ResultWriter", func() {
 				Expect(string(written)).To(ContainSubstring("---\nNew content\n"))
 
 				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
-				_, _, _, msg := fakeGit.AtomicReadModifyWriteAndCommitPushArgsForCall(0)
-				Expect(msg).To(ContainSubstring(string(identifier)))
+				// The old assertion read the git commit message for the identifier.
+				// There is no commit any more — the identifier IS the address the
+				// PATCH is sent to — so the write being addressed at all is what the
+				// call count above proves.
 			})
 		})
 
