@@ -22,6 +22,7 @@ import (
 	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
 )
 
@@ -1809,9 +1810,15 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 				"preserves a partial frontmatter update that landed between read and modify",
 				func() {
 					// Initial on-disk state: task in_progress, healthcheck-style probe.
+					// The interleaved partial update the old stub simulated is seeded
+					// instead: a concurrent executor already bumped trigger_count and
+					// added spawn_notification. A typed PATCH names only the keys it
+					// changes, so these must survive the completion write — which is the
+					// race fix this spec proves, now guaranteed by construction rather
+					// than by a re-read.
 					writeTaskFile(
 						"probe-task.md",
-						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 1\n---\nProbe body\n",
+						"---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 2\nspawn_notification: true\n---\nProbe body\n",
 					)
 
 					// Override the BeforeEach stub for this test: simulate a partial
@@ -1822,30 +1829,6 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					// modify with the freshly-re-read bytes. This is exactly what
 					// git-rest does on a CAS retry: it re-reads from disk on each
 					// attempt, so modify sees the interleaved write.
-					fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-						ctx context.Context,
-						absPath string,
-						modify func([]byte) ([]byte, error),
-						message string,
-					) error {
-						// Simulate the interleaved partial update: another writer
-						// (the executor) added spawn_notification: true and bumped
-						// trigger_count to 2 between our initial read and the modify
-						// call.
-						interleaved := "---\ntask_identifier: test-task-uuid-1234\nstatus: in_progress\nphase: planning\nassignee: claude\ntrigger_count: 2\nspawn_notification: true\n---\nProbe body\n"
-						if err := os.WriteFile(absPath, []byte(interleaved), 0600); err != nil { // #nosec G306 -- test helper
-							return err
-						}
-						current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-						if err != nil {
-							return err
-						}
-						updated, err := modify(current)
-						if err != nil {
-							return err
-						}
-						return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-					}
 
 					// Agent publishes terminal completion: status: completed, phase: done.
 					taskFile = lib.Task{
@@ -1899,32 +1882,41 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 		})
 
 		Context("atomic write and push error", func() {
-			It("returns error when AtomicWriteAndCommitPush fails", func() {
-				writeTaskFile(
-					"my-task.md",
-					"---\ntask_identifier: test-task-uuid-1234\nstatus: open\n---\nOld content\n",
-				)
-				fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-					ctx context.Context,
-					absPath string,
-					modify func([]byte) ([]byte, error),
-					message string,
-				) error {
-					return errTest
+			It("returns an error when the typed write fails", func() {
+				// The typed PATCH IS the write, and the file-backed double cannot fail
+				// one, so this spec builds a VaultAPIClient that refuses every patch.
+				seeded := vaultapi.Task{
+					ID:    "test-task-uuid-1234",
+					Title: "my-task",
+					Frontmatter: map[string]any{
+						"task_identifier": "test-task-uuid-1234",
+						"status":          "open",
+					},
+					Body: "Old content\n",
 				}
+				fakeVault := &mocks.VaultAPIClient{}
+				fakeVault.ListTasksReturns([]vaultapi.Task{seeded}, nil)
+				fakeVault.ReadTaskReturns(&seeded, nil)
+				fakeVault.PatchTaskWithBodyReturns(nil, errTest)
 
-				taskFile = lib.Task{
+				failingTime := &libtimemocks.CurrentDateTimeGetter{}
+				failingTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
+				failing := result.NewResultWriter(
+					fakeVault, taskDir, "openclaw", failingTime, metrics.New(),
+					libtime.NewWaiterDuration(), nil, nil, nil,
+				)
+
+				err := failing.WriteResult(ctx, lib.Task{
 					TaskIdentifier: identifier,
 					Frontmatter: lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "done",
 					},
 					Content: lib.TaskContent("Result\n"),
-				}
-
-				err := writer.WriteResult(ctx, taskFile)
+				})
 				Expect(err).To(HaveOccurred())
-				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(1))
+				// The caller-side loop spends its whole retry budget before giving up.
+				Expect(fakeVault.PatchTaskWithBodyCallCount()).To(Equal(3))
 			})
 		})
 
