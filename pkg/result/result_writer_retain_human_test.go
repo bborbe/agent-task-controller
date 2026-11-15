@@ -19,8 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/bborbe/agent-task-controller/mocks"
-	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // These specs drive the WRITER, not the chokepoint function: the chokepoint's own

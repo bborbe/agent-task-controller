@@ -236,15 +236,6 @@ var convergenceKeyLineRe = regexp.MustCompile(
 // specs where the expected count is zero.
 var haltLogAnywhereRe = regexp.MustCompile(`task_identifier repair did not converge`)
 
-// haltLogFor builds the ERROR-level, path-specific halt log matcher. glog prefixes
-// error lines with E, so anchoring on ^E also proves the severity.
-func haltLogFor(relPath string) *regexp.Regexp {
-	return regexp.MustCompile(
-		`^E.*task_identifier repair did not converge, halting repair for: ` +
-			regexp.QuoteMeta(relPath) + `$`,
-	)
-}
-
 // convergenceFixtureA — escaped-underscore key spelling. Spec 011 resolves keys
 // by parsing the frontmatter region with yaml.v3, so the double-quoted escape
 // resolves to the parsed key task_identifier, is removed by the repair, and the
@@ -257,13 +248,6 @@ const convergenceFixtureA = "---\n\"task\\u005fidentifier\": 501\nstatus: in_pro
 // unparseable: DeduplicateFrontmatter fails with "could not find expected ':'".
 // Non-convergence via the fail-closed parse path.
 const convergenceFixtureB = "---\n{task_identifier: 501, status: in_progress}\n---\nbody\n"
-
-var convergenceAC2Fixtures = []struct {
-	relPath string
-	content string
-}{
-	{"ac2-b-flow-map.md", convergenceFixtureB},
-}
 
 // convergenceBlockStyleFixtures re-declare the spec-008 ac2Fixtures rows 10-12
 // frontmatter strings literally. They are NOT imported from that table, so the

@@ -17,9 +17,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/agent-task-controller/mocks"
-	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // A result the ownership guard reduces to a no-op produces no commit, so the vault

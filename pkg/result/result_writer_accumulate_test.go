@@ -16,9 +16,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 // The two cumulative counters (metrics_agent_turns, metrics_interaction_count) are

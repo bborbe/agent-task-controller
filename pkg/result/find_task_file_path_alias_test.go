@@ -19,8 +19,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
-	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/result"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 const aliasUUID = "33333333-3333-4333-8333-333333333333"

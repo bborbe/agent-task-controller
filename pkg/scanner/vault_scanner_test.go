@@ -43,16 +43,9 @@ func extractFrontmatterStr(fileContent string) string {
 type testGitClient struct {
 	path string
 	// The three failure knobs a spec can set to make one typed operation fail.
-	// pullErr and commitPushErr are retained only so the older specs compile; the
-	// scanner performs neither a pull nor a commit.
-	pullErr       error
-	commitPushErr error
-	listErr       error
-	patchErr      error
-	readdressErr  error
-	// beforeRMW is retained for the same reason: there is no read-modify-write any
-	// more, because the typed PATCH is the atomic unit.
-	beforeRMW func(absPath string)
+	listErr      error
+	patchErr     error
+	readdressErr error
 }
 
 // vault returns a stateless file-backed client rooted at the same directory, so
@@ -120,9 +113,7 @@ func (t *testGitClient) ReaddressTask(
 // written against. It keeps its name and path field so those tests read the same,
 // and satisfies vaultapi.Client through testVaultClient.
 type fileOpsTestGitClient struct {
-	path          string
-	pullErr       error
-	commitPushErr error
+	path string
 }
 
 func (t *fileOpsTestGitClient) vault() *testVaultClient { return &testVaultClient{path: t.path} }
@@ -174,19 +165,6 @@ func (t *fileOpsTestGitClient) ReaddressTask(
 	previous string,
 ) (*vaultapi.Task, error) {
 	return t.vault().ReaddressTask(ctx, id, next, previous)
-}
-
-// failingReadFileOpsGitClient shadows the listing so a test can make the scan's
-// read pass fail while the rest of the double keeps working.
-type failingReadFileOpsGitClient struct {
-	*fileOpsTestGitClient
-}
-
-func (f *failingReadFileOpsGitClient) ListTasks(
-	_ context.Context,
-	_ vaultapi.Filter,
-) ([]vaultapi.Task, error) {
-	return nil, os.ErrNotExist
 }
 
 func mustInitGitRepo(dir string) {

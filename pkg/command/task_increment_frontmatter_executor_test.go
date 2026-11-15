@@ -22,10 +22,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bborbe/agent-task-controller/mocks"
-	"github.com/bborbe/agent-task-controller/pkg/testvault"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/routing"
+	"github.com/bborbe/agent-task-controller/pkg/testvault"
 )
 
 var _ = Describe("NewIncrementFrontmatterExecutor", func() {
