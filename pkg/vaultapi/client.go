@@ -185,9 +185,9 @@ type Filter struct {
 
 // Client is the controller's persistence model, addressed by identifier.
 //
-// It replaces gitrestclient.GitClient, and the methods that are absent are the
-// point: there is no EnsureCloned, Pull, CommitAndPush or Path, because vault-api
-// commits server-side and holds the working copy. A caller that wants to know
+// The methods that are absent are the point: there is no clone, pull, commit or
+// path accessor, because vault-api commits server-side and holds the working
+// copy. A caller that wants to know
 // where a file is has the wrong model; a caller that wants to know what a task
 // says asks for the task.
 type Client interface {
