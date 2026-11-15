@@ -139,10 +139,10 @@ type vaultScanner struct {
 // file whose name differs from its title therefore gets an approximate path here,
 // which is harmless precisely because nothing writes to it.
 //
-// The last listing is kept so readFile can answer a path it was just given
-// without a second round trip, and so the bytes it returns are a faithful
-// rendering of the task the API described rather than a re-read that may have
-// moved underneath the cycle.
+// The last listing is kept only as a path→identifier directory: it resolves the
+// path a caller hands readFile to the identifier the content read is addressed
+// by. It is not a content cache — the list route carries no frontmatter or body
+// (see read), so a task taken from it renders empty.
 type typedFileOps struct {
 	client  vaultapi.Client
 	taskDir string
@@ -192,27 +192,38 @@ func (t *typedFileOps) list(ctx context.Context, _ string) ([]string, error) {
 	return paths, nil
 }
 
-// read renders the task last listed at relPath as the markdown this package
-// parses. Rendering rather than re-fetching keeps the cycle internally
-// consistent: every helper in one pass sees the same snapshot.
+// read fetches the task at relPath and renders it as the markdown this package
+// parses.
+//
+// ⚠️ **The content comes from a per-task read, never from the listing.** The
+// list route returns a flat projection — `id`, `title`, `path`, `status`,
+// `phase`, `task_type`, `stage`, `assignee`, `goals`, `cluster`, `flag`,
+// `vault`, `updated_at` — and carries neither `frontmatter` nor `body`; only
+// `GET /api/v1/tasks/{id}` returns those two. Verified against dev vault-api.
+// Rendering from the listing therefore produced `---\n{}\n---\n` for every file
+// in the vault, so every task hashed identically: `processFile` short-circuited
+// on the unchanged hash and no cycle ever reached a counter reset or an
+// escalation. The listing is a directory to enumerate and address, not a
+// snapshot to render — the earlier "keeps the cycle internally consistent"
+// rationale assumed content the route never carried.
 func (t *typedFileOps) read(ctx context.Context, relPath string) ([]byte, error) {
 	t.mutex.RLock()
-	task, ok := t.byPath[relPath]
+	id := ""
+	if listed, ok := t.byPath[relPath]; ok {
+		id = listed.ID
+	}
 	t.mutex.RUnlock()
-	if !ok {
+	if id == "" {
 		// The sweep reads a path the last listing may not have covered — a record
 		// created after that listing, or one read by a pass that never listed. The
-		// path carries the task's title, which is an address the API resolves, so a
-		// miss falls back to one typed read rather than failing the escalation.
-		found, readErr := t.client.ReadTask(ctx, taskAddressFromPath(relPath))
-		if readErr != nil {
-			return nil, errors.Wrapf(
-				ctx, readErr, "no task listed or readable at %s", relPath,
-			)
-		}
-		task = *found
+		// path carries the task's title, which is an address the API resolves.
+		id = taskAddressFromPath(relPath)
 	}
-	return renderTask(ctx, task)
+	task, err := t.client.ReadTask(ctx, id)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "no task readable at %s", relPath)
+	}
+	return renderTask(ctx, *task)
 }
 
 // renderTask writes a task back as the frontmatter block plus body this package

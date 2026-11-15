@@ -558,7 +558,11 @@ var _ = Describe("vaultScanner identifier index", func() {
 			built := triggerOnly()
 			built.buildIndex(ctx)
 
-			Expect(client.readFileCalls).To(Equal(before + 1))
+			// One listing plus one content read for the single file. The read is
+			// not redundant: the list route carries no frontmatter or body, so a
+			// task rendered straight from the listing is empty and every file
+			// hashes the same. The criterion here is the absence of writes.
+			Expect(client.readFileCalls).To(Equal(before + 2))
 			Expect(client.writeFileCalls).To(Equal(0))
 			Consistently(results).ShouldNot(Receive())
 		})
