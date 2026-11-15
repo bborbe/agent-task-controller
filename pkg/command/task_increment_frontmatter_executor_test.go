@@ -32,7 +32,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		ctx       context.Context
 		tmpDir    string
 		taskDir   string
-		fakeGit   *mocks.GitClient
+		fakeGit   *mocks.FileVaultClient
 		fakeVault *mocks.VaultAPIClient
 		executor  cdb.CommandObjectExecutorTx
 		schemaID  cdb.SchemaID
@@ -47,40 +47,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test helper
-		}
-		// Wire AtomicReadModifyWriteAndCommitPush to actually call the modify func and write the file
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
 
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewIncrementFrontmatterExecutor(
@@ -367,7 +334,7 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 					}),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+				Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 			})
 		})
 
@@ -394,8 +361,8 @@ var _ = Describe("NewIncrementFrontmatterExecutor", func() {
 					_, _, err := executor.HandleCommand(ctx, nil, cmd)
 					Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
 					// guard fires before the task-file lookup and before any write
-					Expect(fakeGit.ListFilesCallCount()).To(Equal(0))
-					Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(0))
+					Expect(fakeGit.ListTasksCallCount()).To(Equal(0))
+					Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(0))
 					Expect(
 						testutil.ToFloat64(
 							metrics.FrontmatterCommandsTotal.WithLabelValues(
