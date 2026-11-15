@@ -38,7 +38,7 @@ task_identifier: kept-state-uuid
 	var (
 		ctx           context.Context
 		tmpDir        string
-		fakeGit       *mocks.GitClient
+		fakeGit       *mocks.FileVaultClient
 		fakePublisher *mocks.TaskPublisher
 		writer        result.ResultWriter
 		identifier    lib.TaskIdentifier
@@ -51,39 +51,7 @@ task_identifier: kept-state-uuid
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.MkdirAll(filepath.Join(tmpDir, "tasks"), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			_ context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			_ string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
 
 		fakeTime := &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 10, 31, 10, 4, 53, 0, time.UTC)))

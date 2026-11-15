@@ -24,7 +24,22 @@ import (
 // FileVaultClient serves vaultapi.Client from a directory of markdown files.
 type FileVaultClient struct {
 	Dir string
+
+	// Call counters, so a spec can prove an operation was not reached — the
+	// property the old GitClient double's *CallCount assertions carried.
+	listCalls  int
+	readCalls  int
+	patchCalls int
 }
+
+// ListTasksCallCount reports how many listings were issued.
+func (f *FileVaultClient) ListTasksCallCount() int { return f.listCalls }
+
+// ReadTaskCallCount reports how many single-task reads were issued.
+func (f *FileVaultClient) ReadTaskCallCount() int { return f.readCalls }
+
+// PatchTaskWithBodyCallCount reports how many typed writes were issued.
+func (f *FileVaultClient) PatchTaskWithBodyCallCount() int { return f.patchCalls }
 
 func (f *FileVaultClient) tasks() ([]vaultapi.Task, error) {
 	var tasks []vaultapi.Task
@@ -113,11 +128,13 @@ func (f *FileVaultClient) ListTasks(
 	_ context.Context,
 	_ vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
+	f.listCalls++
 	return f.tasks()
 }
 
 // ReadTask returns the task addressed by identifier or title.
 func (f *FileVaultClient) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
+	f.readCalls++
 	path, found, err := f.pathFor(id)
 	if err != nil {
 		return nil, err
@@ -188,6 +205,7 @@ func (f *FileVaultClient) PatchTaskWithBody(
 	fields map[string]any,
 	body string,
 ) (*vaultapi.Task, error) {
+	f.patchCalls++
 	return f.patch(id, fields, &body)
 }
 

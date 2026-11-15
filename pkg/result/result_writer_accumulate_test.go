@@ -33,7 +33,7 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 		ctx        context.Context
 		tmpDir     string
 		taskDir    string
-		fakeGit    *mocks.GitClient
+		fakeGit    *mocks.FileVaultClient
 		fakeTime   *libtimemocks.CurrentDateTimeGetter
 		writer     result.ResultWriter
 		taskFile   lib.Task
@@ -49,39 +49,7 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 		taskDir = "tasks"
 		Expect(os.MkdirAll(filepath.Join(tmpDir, taskDir), 0750)).To(Succeed())
 
-		fakeGit = &mocks.GitClient{}
-		fakeGit.PathReturns(tmpDir)
-		fakeGit.ListFilesStub = func(_ context.Context, glob string) ([]string, error) {
-			matches, err := filepath.Glob(filepath.Join(tmpDir, glob))
-			if err != nil {
-				return nil, err
-			}
-			var rel []string
-			for _, m := range matches {
-				r, _ := filepath.Rel(tmpDir, m)
-				rel = append(rel, r)
-			}
-			return rel, nil
-		}
-		fakeGit.ReadFileStub = func(_ context.Context, relPath string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(tmpDir, relPath)) // #nosec G304 -- test-only path
-		}
-		fakeGit.AtomicReadModifyWriteAndCommitPushStub = func(
-			ctx context.Context,
-			absPath string,
-			modify func([]byte) ([]byte, error),
-			message string,
-		) error {
-			current, err := os.ReadFile(absPath) // #nosec G304 -- test helper
-			if err != nil {
-				return err
-			}
-			updated, err := modify(current)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(absPath, updated, 0600) // #nosec G306 -- test helper
-		}
+		fakeGit = &mocks.FileVaultClient{Dir: tmpDir}
 
 		fakeTime = &libtimemocks.CurrentDateTimeGetter{}
 		fakeTime.NowReturns(libtime.DateTime(time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)))
@@ -268,7 +236,7 @@ var _ = Describe("ResultWriter accumulated counters", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(afterSecond)).To(ContainSubstring("metrics_agent_turns: 7"))
 			Expect(string(afterSecond)).NotTo(ContainSubstring("metrics_agent_turns: 4"))
-			Expect(fakeGit.AtomicReadModifyWriteAndCommitPushCallCount()).To(Equal(2))
+			Expect(fakeGit.PatchTaskWithBodyCallCount()).To(Equal(2))
 		})
 
 		It(
