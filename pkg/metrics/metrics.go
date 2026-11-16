@@ -445,6 +445,15 @@ func init() {
 		CommandExpiredTotal.WithLabelValues(operation).Add(0)
 	}
 
+	// The readback verifier labels by the same closed operation set, so every
+	// series exists at 0 before the first mismatch. An alert query then reads 0
+	// rather than "no data" on a freshly started pod — which matters more here
+	// than for a drop counter, because "no data" and "nothing mismatched" are the
+	// two readings this series exists to tell apart.
+	for _, operation := range availableCommandOperations {
+		ReadbackMismatchTotal.WithLabelValues(operation).Add(0)
+	}
+
 	// A gauge has no label combinations to pre-initialise, but setting it to 0
 	// publishes the series before the first scan completes, so an alert query
 	// reads 0 rather than "no data" on a freshly started pod.

@@ -44,8 +44,8 @@ const DefaultReadbackInterval = 5 * time.Second
 //
 // BeforeHash is the point of the type. The question the readback asks is not
 // "does the record hold what I wrote" — a later write may legitimately have
-// replaced it — but "did the record MOVE at all". A hash of the pre-write
-// frontmatter answers that question, and it is what makes the check robust to
+// replaced it — but "did the record MOVE at all". A fingerprint of the pre-write
+// record answers that question, and it is what makes the check robust to
 // supersede: the healthcheck probe's whole lifecycle (reopen → in_progress →
 // done) can complete inside one commit window, so the intermediate state this
 // command wrote is often never committed, while the record plainly moved.
@@ -54,12 +54,13 @@ type ReadbackExpectation struct {
 	TaskIdentifier string
 	// Operation is the command operation, used as the metric label.
 	Operation string
-	// BeforeHash is the canonical hash of the frontmatter before the write.
-	// Empty means the record did not exist (or was terminal) before the write, so
-	// ANY readable, non-terminal record counts as landed.
+	// BeforeHash is the recordHash fingerprint of the WHOLE record (frontmatter
+	// and body) as it stood before the write. Empty means the record did not
+	// exist (or was terminal) before the write, so ANY readable record counts as
+	// landed.
 	BeforeHash string
-	// Deadline is when the expectation is evaluated. An expectation whose record
-	// has moved before the deadline is dropped early.
+	// Deadline is when the expectation is evaluated. Nothing is dropped earlier:
+	// a record that lands before the deadline simply passes when it is read.
 	Deadline time.Time
 }
 
@@ -141,24 +142,27 @@ func (v *writeVerifier) Expect(ctx context.Context, expectation ReadbackExpectat
 }
 
 // Run verifies due expectations on a fixed tick until ctx is cancelled.
+//
+// It returns nil on shutdown, not ctx.Err(): this repo runs every component
+// through service.Run, which treats a component error as fatal — a verifier
+// reporting context.Canceled would make an ordinary shutdown look like a crash.
 func (v *writeVerifier) Run(ctx context.Context) error {
 	ticker := time.NewTicker(v.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case <-ticker.C:
 			v.verifyDue(ctx)
 		}
 	}
 }
 
-// verifyDue evaluates every expectation whose deadline has passed and drops the
-// ones that resolved early. It never blocks the caller: a read error other than
-// not-found is logged and the expectation is dropped rather than retried, because
-// a verifier that retries forever on a broken dependency hides the very gap it
-// measures.
+// verifyDue evaluates every expectation whose deadline has passed. It never
+// blocks the caller: a read error other than not-found is logged and the
+// expectation is dropped rather than retried, because a verifier that retries
+// forever on a broken dependency hides the very gap it measures.
 func (v *writeVerifier) verifyDue(ctx context.Context) {
 	now := v.now()
 	v.mu.Lock()

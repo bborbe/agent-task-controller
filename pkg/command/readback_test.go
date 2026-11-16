@@ -53,8 +53,8 @@ var _ = Describe("WriteVerifier", func() {
 		)
 	})
 
-	hashOf := func(fm map[string]any) string {
-		h, err := command.RecordHashForTest(fm, "")
+	hashOf := func(fm map[string]any, body string) string {
+		h, err := command.RecordHashForTest(fm, body)
 		Expect(err).NotTo(HaveOccurred())
 		return h
 	}
@@ -74,6 +74,7 @@ var _ = Describe("WriteVerifier", func() {
 				Operation:      "update-frontmatter",
 				BeforeHash: hashOf(
 					map[string]any{"phase": "planning", "status": "in_progress"},
+					"",
 				),
 			})
 			command.VerifyDueForTest(verifier, ctx)
@@ -96,6 +97,7 @@ var _ = Describe("WriteVerifier", func() {
 				Operation:      "update-frontmatter",
 				BeforeHash: hashOf(
 					map[string]any{"phase": "planning", "status": "in_progress"},
+					"",
 				),
 			})
 			command.VerifyDueForTest(verifier, ctx)
@@ -153,7 +155,7 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-e",
 				Operation:      "update-frontmatter",
-				BeforeHash:     hashOf(map[string]any{"phase": "planning"}),
+				BeforeHash:     hashOf(map[string]any{"phase": "planning"}, ""),
 				Deadline:       time.Now().Add(time.Hour),
 			})
 			command.VerifyDueForTest(verifier, ctx)
@@ -238,7 +240,84 @@ var _ = Describe("WriteVerifier", func() {
 			Expect(fakeMet.ReadbackMismatchTotalCallCount()).To(Equal(0))
 		})
 	})
+
+	// A body-only write moves no frontmatter key, so a frontmatter-only
+	// fingerprint would read it as "the record did not move". The body is half
+	// the record and the comparison has to see it.
+	Context("when only the body moved", func() {
+		It("counts nothing", func() {
+			fakeVault.ReadTaskReturns(&vaultapi.Task{
+				ID:          "task-h",
+				Title:       "task-h",
+				Frontmatter: map[string]any{"phase": "planning"},
+				Body:        "## Failure\n\nnew section\n",
+			}, nil)
+
+			verifier.Expect(ctx, command.ReadbackExpectation{
+				TaskIdentifier: "task-h",
+				Operation:      "update-frontmatter",
+				BeforeHash: hashOf(
+					map[string]any{"phase": "planning"},
+					"reply 'ok'\n",
+				),
+			})
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+		})
+	})
+
+	// The create path passes no before-hash, so its expectation means "this
+	// record must become readable". Wired through the real executor, a create
+	// whose record never appears is a mismatch.
+	Context("wired through the create-task executor", func() {
+		It("counts a mismatch when the created record never appears", func() {
+			fakeVault.ReadTaskReturns(nil, vaultapi.ErrNotFound)
+			fakeVault.CreateTaskReturns(&vaultapi.Task{
+				ID:    "task-i",
+				Title: "task-i",
+			}, nil)
+
+			executor := command.NewCreateTaskExecutor(
+				fakeVault,
+				"tasks",
+				"openclaw",
+				libtime.NewCurrentDateTime(),
+				0,
+				nil,
+				verifier,
+			)
+			cmd := buildReadbackCreateCmd(ctx, task.CreateCommand{
+				TaskIdentifier: lib.TaskIdentifier("task-i"),
+				Title:          "task-i",
+				TargetVault:    "openclaw",
+				Frontmatter:    lib.TaskFrontmatter{"assignee": "claude", "status": "next"},
+			})
+			_, _, err := executor.HandleCommand(ctx, nil, cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 1))
+			Expect(fakeMet.ReadbackMismatchTotalArgsForCall(0)).To(Equal("create-task"))
+		})
+	})
 })
+
+// buildReadbackCreateCmd builds the create command object the executor consumes.
+func buildReadbackCreateCmd(ctx context.Context, cmd task.CreateCommand) cdb.CommandObject {
+	event, err := base.ParseEvent(ctx, cmd)
+	Expect(err).NotTo(HaveOccurred())
+	return cdb.CommandObject{
+		Command: base.Command{
+			RequestID: base.NewRequestID(),
+			Operation: task.CreateCommandOperation,
+			Initiator: "test",
+			Data:      event,
+		},
+		SchemaID: cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"},
+	}
+}
 
 // buildReadbackUpdateCmd builds the command object the executor consumes. It is
 // local to this file because the sibling specs each define their own closure and
