@@ -63,7 +63,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 		fakeVault = newFSTaskClient(tmpDir, taskDir)
 		executor = command.NewCreateTaskExecutor(
 			fakeVault, taskDir, "openclaw", clock, testK, nil,
-		nil,
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})
@@ -735,7 +735,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver.ResolveReturns("", false, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -752,7 +752,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver.ResolveReturns("tasks/other.md", true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -787,7 +787,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver.ResolveReturns(filepath.Join(taskDir, "Recorded Task.md"), true, nil)
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -802,7 +802,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				fakeResolver.ResolveReturns("", false, errors.New("duplicate"))
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -818,7 +818,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					"---\ntask_identifier: "+createdID+"\nstatus: in_progress\n---\nbody\n")
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -842,7 +842,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					fakeResolver.ResolveReturns("", false, nil)
 					recordingExecutor := command.NewCreateTaskExecutor(
 						fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-					nil,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("ellipsis-id"),
@@ -875,7 +875,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 				}
 				recordingExecutor := command.NewCreateTaskExecutor(
 					fakeVault, taskDir, "openclaw", clock, testK, fakeResolver,
-				nil,
+					nil,
 				)
 
 				_, _, err := recordingExecutor.HandleCommand(ctx, nil, createCmd())
@@ -898,7 +898,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						clock,
 						testK,
 						nil,
-					nil,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -927,7 +927,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						clock,
 						testK,
 						nil,
-					nil,
+						nil,
 					)
 					cmdObj := buildCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -954,7 +954,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						clock,
 						testK,
 						nil,
-					nil,
+						nil,
 					)
 					cmdObj := buildRawCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -983,7 +983,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 						clock,
 						testK,
 						nil,
-					nil,
+						nil,
 					)
 					cmdObj := buildRawCmdObj(task.CreateCommand{
 						TaskIdentifier: lib.TaskIdentifier("task-1"),
@@ -1115,7 +1115,7 @@ var _ = Describe("NewCreateTaskExecutor", func() {
 					clock,
 					smallK,
 					nil,
-				nil,
+					nil,
 				)
 
 				newTitle := "Weekly Sched - 2026W30"

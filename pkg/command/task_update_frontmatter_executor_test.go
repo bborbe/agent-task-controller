@@ -56,7 +56,7 @@ var _ = Describe("NewUpdateFrontmatterExecutor", func() {
 			libtime.NewCurrentDateTime(),
 			metrics.New(),
 			nil,
-		nil,
+			nil,
 		)
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
 	})

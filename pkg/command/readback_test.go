@@ -53,7 +53,11 @@ var _ = Describe("WriteVerifier", func() {
 		)
 	})
 
-	// The defect this verifier exists for: a command reports success, the store
+	hashOf := func(fm map[string]any) string {
+		h, err := command.FrontmatterHashForTest(fm)
+		Expect(err).NotTo(HaveOccurred())
+		return h
+	}
 	// accepts the write, and the record never moves. The store here acknowledges
 	// every write and returns the same content forever — which is exactly what a
 	// dropped write looks like from the caller's side.
@@ -68,7 +72,7 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-a",
 				Operation:      "update-frontmatter",
-				BeforeHash:     `{"phase":"planning","status":"in_progress"}`,
+				BeforeHash:     hashOf(map[string]any{"phase": "planning", "status": "in_progress"}),
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
@@ -88,7 +92,7 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-b",
 				Operation:      "update-frontmatter",
-				BeforeHash:     `{"phase":"planning","status":"in_progress"}`,
+				BeforeHash:     hashOf(map[string]any{"phase": "planning", "status": "in_progress"}),
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
@@ -145,7 +149,7 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-e",
 				Operation:      "update-frontmatter",
-				BeforeHash:     `{"phase":"planning"}`,
+				BeforeHash:     hashOf(map[string]any{"phase": "planning"}),
 				Deadline:       time.Now().Add(time.Hour),
 			})
 			command.VerifyDueForTest(verifier, ctx)

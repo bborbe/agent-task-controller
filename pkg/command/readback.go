@@ -6,6 +6,8 @@ package command
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"sync"
 	"time"
@@ -173,6 +175,9 @@ func (v *writeVerifier) verifyDue(ctx context.Context) {
 	v.mu.Unlock()
 
 	for _, expectation := range due {
+		if ctx.Err() != nil {
+			return
+		}
 		v.verify(ctx, expectation)
 	}
 }
@@ -183,7 +188,7 @@ func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectat
 	if err != nil {
 		if errors.Is(err, vaultapi.ErrNotFound) {
 			// A record that is still absent after the deadline never landed.
-			v.mismatch(ctx, expectation, "record is not readable")
+			v.mismatch(expectation, "record is not readable")
 			return
 		}
 		glog.Warningf(
@@ -195,7 +200,7 @@ func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectat
 		return
 	}
 	if task == nil {
-		v.mismatch(ctx, expectation, "record read returned no task")
+		v.mismatch(expectation, "record read returned no task")
 		return
 	}
 	if expectation.BeforeHash == "" {
@@ -212,16 +217,12 @@ func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectat
 		return
 	}
 	if afterHash == expectation.BeforeHash {
-		v.mismatch(ctx, expectation, "frontmatter is unchanged since the write")
+		v.mismatch(expectation, "frontmatter is unchanged since the write")
 	}
 }
 
 // mismatch counts and reports one command that reported success without landing.
-func (v *writeVerifier) mismatch(
-	ctx context.Context,
-	expectation ReadbackExpectation,
-	reason string,
-) {
+func (v *writeVerifier) mismatch(expectation ReadbackExpectation, reason string) {
 	v.metrics.ReadbackMismatchTotal(expectation.Operation).Inc()
 	glog.Errorf(
 		"readback: %s reported success for task %s but the record did not move by the deadline (%s)",
@@ -239,16 +240,20 @@ func (v *writeVerifier) now() time.Time {
 	return time.Time(v.clock.Now())
 }
 
-// frontmatterHash returns a stable hash of the frontmatter.
+// frontmatterHash returns a stable fingerprint of the frontmatter.
 //
 // encoding/json sorts map keys, so the encoding is canonical for a given set of
-// fields and values — two reads of unchanged frontmatter hash identically, which
-// is what makes "did the record move" answerable without knowing which fields a
-// given command wrote.
+// fields and values — two reads of unchanged frontmatter fingerprint
+// identically, which is what makes "did the record move" answerable without
+// knowing which fields a given command wrote. The digest is stored rather than
+// the encoded content: the verifier holds one entry per in-flight write, and
+// retaining whole frontmatter maps for that is pointless when only equality is
+// ever asked.
 func frontmatterHash(frontmatter map[string]any) (string, error) {
 	encoded, err := json.Marshal(frontmatter)
 	if err != nil {
 		return "", err
 	}
-	return string(encoded), nil
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
 }
