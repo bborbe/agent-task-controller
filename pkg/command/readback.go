@@ -240,6 +240,45 @@ func (v *writeVerifier) now() time.Time {
 	return time.Time(v.clock.Now())
 }
 
+// recordReadbackExpectation records the post-write verification for a command
+// that actually wrote.
+//
+// It exists so a write executor does not have to carry the hashing, the nil
+// verifier check and the error branch inline — the shape is identical in every
+// executor, and repeating it pushed the update-frontmatter constructor over the
+// function-length limit. Callers must only invoke it when a write was ISSUED:
+// the expectation means "this command's effect must become visible", and a
+// no-op command's effect is that nothing changes.
+//
+// The hash covers the whole record (frontmatter AND body), so a body-only write
+// moves the fingerprint and is not mistaken for a dropped write.
+func recordReadbackExpectation(
+	ctx context.Context,
+	verifier WriteVerifier,
+	operation string,
+	taskIdentifier string,
+	task *vaultapi.Task,
+) {
+	if verifier == nil || task == nil {
+		return
+	}
+	beforeHash, err := recordHash(task.Frontmatter, task.Body)
+	if err != nil {
+		glog.Warningf(
+			"%s: cannot hash record for task %s: %v",
+			operation,
+			taskIdentifier,
+			err,
+		)
+		return
+	}
+	verifier.Expect(ctx, ReadbackExpectation{
+		TaskIdentifier: taskIdentifier,
+		Operation:      operation,
+		BeforeHash:     beforeHash,
+	})
+}
+
 // recordHash returns a stable fingerprint of a whole record — frontmatter AND
 // body.
 //

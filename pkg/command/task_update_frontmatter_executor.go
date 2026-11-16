@@ -210,36 +210,19 @@ func NewUpdateFrontmatterExecutor(
 				)
 			}
 			m.FrontmatterCommandsTotal("update-frontmatter", "success").Inc()
-			// ⚠️ An expectation is recorded ONLY when a write was issued.
-			// `applyUpdate` is deliberately idempotent: re-publishing the same
-			// values sends no PATCH, and a body that already carries the section
-			// sends no PUT. Those commands are successful no-ops, and the record is
-			// SUPPOSED not to move — recording an expectation for one would count a
-			// healthy path as a dropped write and make the metric cry wolf.
-			//
-			// For a write that DID happen, the success counted above means "the
-			// patch was ACCEPTED", not "the record moved": git-rest buffers writes
-			// and commits them on a cadence, so the record is not readable until the
-			// next flush. The hash is taken from the read at the top of this command
-			// and covers frontmatter AND body, so the verification asks "did the
-			// record move at all" rather than "does it still hold exactly what I
-			// wrote" — a later write legitimately supersedes this one, and the
-			// probe's whole lifecycle can complete inside a single commit window.
-			if verifier != nil && wrote {
-				beforeHash, hashErr := recordHash(task.Frontmatter, task.Body)
-				if hashErr != nil {
-					glog.Warningf(
-						"update-frontmatter: cannot hash record for task %s: %v",
-						cmd.TaskIdentifier,
-						hashErr,
-					)
-				} else {
-					verifier.Expect(ctx, ReadbackExpectation{
-						TaskIdentifier: string(cmd.TaskIdentifier),
-						Operation:      string(UpdateFrontmatterCommandOperation),
-						BeforeHash:     beforeHash,
-					})
-				}
+			// ⚠️ Only a command that actually WROTE gets a readback expectation.
+			// `applyUpdate` is idempotent — re-publishing the values already on the
+			// record sends no PATCH, and a body that already carries the section
+			// sends no PUT — and the record is SUPPOSED not to move for those, so
+			// counting them would cry wolf on the healthiest path there is.
+			if wrote {
+				recordReadbackExpectation(
+					ctx,
+					verifier,
+					string(UpdateFrontmatterCommandOperation),
+					string(cmd.TaskIdentifier),
+					task,
+				)
 			}
 			return nil, nil, nil
 		},
