@@ -207,7 +207,7 @@ func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectat
 		// The write created the record; any readable record is the landing.
 		return
 	}
-	afterHash, hashErr := frontmatterHash(task.Frontmatter)
+	afterHash, hashErr := recordHash(task.Frontmatter, task.Body)
 	if hashErr != nil {
 		glog.Warningf(
 			"readback: cannot hash frontmatter for task %s: %v",
@@ -240,17 +240,25 @@ func (v *writeVerifier) now() time.Time {
 	return time.Time(v.clock.Now())
 }
 
-// frontmatterHash returns a stable fingerprint of the frontmatter.
+// recordHash returns a stable fingerprint of a whole record — frontmatter AND
+// body.
+//
+// The body is included because `update-frontmatter` can write the body alone:
+// `PutBody` changes no frontmatter key, so a frontmatter-only comparison would
+// read a successful body write as "the record did not move" and count it. The
+// question is whether the RECORD moved, and a record is both halves.
 //
 // encoding/json sorts map keys, so the encoding is canonical for a given set of
-// fields and values — two reads of unchanged frontmatter fingerprint
-// identically, which is what makes "did the record move" answerable without
-// knowing which fields a given command wrote. The digest is stored rather than
-// the encoded content: the verifier holds one entry per in-flight write, and
-// retaining whole frontmatter maps for that is pointless when only equality is
-// ever asked.
-func frontmatterHash(frontmatter map[string]any) (string, error) {
-	encoded, err := json.Marshal(frontmatter)
+// fields and values — two reads of unchanged content fingerprint identically,
+// which is what makes "did the record move" answerable without knowing which
+// fields a given command wrote. The digest is stored rather than the encoded
+// content: the verifier holds one entry per in-flight write, and retaining whole
+// records for that is pointless when only equality is ever asked.
+func recordHash(frontmatter map[string]any, body string) (string, error) {
+	encoded, err := json.Marshal(struct {
+		Frontmatter map[string]any `json:"frontmatter"`
+		Body        string         `json:"body"`
+	}{Frontmatter: frontmatter, Body: body})
 	if err != nil {
 		return "", err
 	}

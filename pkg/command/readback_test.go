@@ -54,7 +54,7 @@ var _ = Describe("WriteVerifier", func() {
 	})
 
 	hashOf := func(fm map[string]any) string {
-		h, err := command.FrontmatterHashForTest(fm)
+		h, err := command.RecordHashForTest(fm, "")
 		Expect(err).NotTo(HaveOccurred())
 		return h
 	}
@@ -72,7 +72,9 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-a",
 				Operation:      "update-frontmatter",
-				BeforeHash:     hashOf(map[string]any{"phase": "planning", "status": "in_progress"}),
+				BeforeHash: hashOf(
+					map[string]any{"phase": "planning", "status": "in_progress"},
+				),
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
@@ -92,7 +94,9 @@ var _ = Describe("WriteVerifier", func() {
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-b",
 				Operation:      "update-frontmatter",
-				BeforeHash:     hashOf(map[string]any{"phase": "planning", "status": "in_progress"}),
+				BeforeHash: hashOf(
+					map[string]any{"phase": "planning", "status": "in_progress"},
+				),
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
@@ -191,6 +195,47 @@ var _ = Describe("WriteVerifier", func() {
 			command.VerifyDueForTest(verifier, ctx)
 
 			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 1))
+		})
+	})
+
+	// The healthy path the metric must stay silent on. `update-frontmatter` is
+	// idempotent: re-publishing values the record already carries sends no PATCH,
+	// so the record is SUPPOSED not to move. Recording an expectation for such a
+	// command would count a no-op as a dropped write.
+	Context("wired through the update-frontmatter executor with nothing to write", func() {
+		It("records no expectation and counts nothing", func() {
+			unchanged := &vaultapi.Task{
+				ID:    "task-g",
+				Title: "task-g",
+				Frontmatter: map[string]any{
+					"phase":        "planning",
+					"status":       "in_progress",
+					"target_vault": "openclaw",
+				},
+			}
+			fakeVault.ReadTaskReturns(unchanged, nil)
+
+			executor := command.NewUpdateFrontmatterExecutor(
+				fakeVault,
+				"openclaw",
+				libtime.NewCurrentDateTime(),
+				metrics.New(),
+				nil,
+				verifier,
+			)
+			cmd := buildReadbackUpdateCmd(ctx, task.UpdateFrontmatterCommand{
+				TaskIdentifier: lib.TaskIdentifier("task-g"),
+				TargetVault:    "openclaw",
+				Updates:        lib.TaskFrontmatter{"phase": "planning"},
+			})
+			_, _, err := executor.HandleCommand(ctx, nil, cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fakeVault.PatchTaskCallCount()).To(Equal(0))
+
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+			Expect(fakeMet.ReadbackMismatchTotalCallCount()).To(Equal(0))
 		})
 	})
 })

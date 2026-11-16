@@ -13,7 +13,7 @@ var (
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
 	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
-	FrontmatterHashForTest           = frontmatterHash
+	RecordHashForTest                = recordHash
 )
 
 // VerifyDueForTest runs one verification pass, so a test can assert the readback
