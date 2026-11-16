@@ -145,6 +145,7 @@ func NewUpdateFrontmatterExecutor(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 	humans result.HumanAssignees,
+	verifier WriteVerifier,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -208,6 +209,30 @@ func NewUpdateFrontmatterExecutor(
 				)
 			}
 			m.FrontmatterCommandsTotal("update-frontmatter", "success").Inc()
+			// The success counted just above means "the patch was ACCEPTED", not
+			// "the record moved": git-rest buffers writes and commits them on a
+			// cadence, so the frontmatter is not readable until the next flush. The
+			// hash is taken from the read at the top of this command, so the
+			// verification asks "did the record move at all" rather than "does it
+			// still hold exactly what I wrote" — a later write legitimately
+			// supersedes this one, and the probe's whole lifecycle can complete
+			// inside a single commit window.
+			if verifier != nil {
+				beforeHash, hashErr := frontmatterHash(task.Frontmatter)
+				if hashErr != nil {
+					glog.Warningf(
+						"update-frontmatter: cannot hash frontmatter for task %s: %v",
+						cmd.TaskIdentifier,
+						hashErr,
+					)
+				} else {
+					verifier.Expect(ctx, ReadbackExpectation{
+						TaskIdentifier: string(cmd.TaskIdentifier),
+						Operation:      string(UpdateFrontmatterCommandOperation),
+						BeforeHash:     beforeHash,
+					})
+				}
+			}
 			return nil, nil, nil
 		},
 	)

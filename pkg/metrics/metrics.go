@@ -23,6 +23,12 @@ type Metrics interface {
 	GitPushTotal(outcome string) prometheus.Counter
 	ConflictResolutionsTotal() prometheus.Counter
 	FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter
+	// ReadbackMismatchTotal counts commands that reported success while their
+	// record had not moved by the verification deadline. It is incremented by the
+	// post-write readback comparison itself — never by a test hook and never by a
+	// gauge set by hand — so a non-zero reading means a real acknowledgement
+	// preceded a write that had not reached the store.
+	ReadbackMismatchTotal(operation string) prometheus.Counter
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
 	CommandExpiredTotal(operation string) prometheus.Counter
@@ -74,6 +80,10 @@ func (m *defaultMetrics) ConflictResolutionsTotal() prometheus.Counter {
 
 func (m *defaultMetrics) FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter {
 	return FrontmatterCommandsTotal.WithLabelValues(operation, outcome)
+}
+
+func (m *defaultMetrics) ReadbackMismatchTotal(operation string) prometheus.Counter {
+	return ReadbackMismatchTotal.WithLabelValues(operation)
 }
 
 func (m *defaultMetrics) GitRestCallsTotal(operation, status string) prometheus.Counter {
@@ -177,6 +187,23 @@ var FrontmatterCommandsTotal = promauto.NewCounterVec(
 		Help: "Total number of atomic frontmatter commands processed, by operation and outcome.",
 	},
 	[]string{"operation", "outcome"},
+)
+
+// ReadbackMismatchTotal counts commands whose post-write readback found the
+// record unchanged past its verification deadline.
+//
+// It exists because a command's success result is emitted when the write is
+// accepted, and git-rest batches writes into a ~30 s commit window, so an
+// acknowledgement precedes the record's arrival in the store. A non-zero reading
+// means a command reported success and the record had still not moved by the
+// deadline — the gap no other series exposes. It is incremented at the readback
+// comparison, so the detector and the fix share one site.
+var ReadbackMismatchTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_readback_mismatch_total",
+		Help: "Total number of commands whose record had not moved by the readback verification deadline, by operation.",
+	},
+	[]string{"operation"},
 )
 
 // GitRestCallsTotal counts git-rest HTTP API calls by operation and outcome.
