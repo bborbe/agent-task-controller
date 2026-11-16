@@ -335,9 +335,12 @@ var UpdateGoStuckPlanningTasks = promauto.NewGauge(
 // status, with age and failure markers deliberately not read, because every row it
 // measures is permanently non-advancing and those clauses would carry no signal.
 //
-// It is a level, not an edge: the scan cycle recomputes it and Set()s the result, so
+// It is a level, not an edge: the metrics pass recomputes it and Set()s the result, so
 // the series falls back to 0 once every probe record is terminal. That is what makes
-// it alertable — the value is only positive while a probe is actually parked.
+// it alertable — the value is only positive while a probe is actually parked. The
+// writer is the metrics ticker and not the scan cycle because the scan cycle is dead
+// on a trigger-only controller (POLL_INTERVAL=0s, which every controller runs), so a
+// gauge set there would keep its init value forever.
 var HealthcheckParkedProbes = promauto.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "agent_controller_healthcheck_parked_probes",
