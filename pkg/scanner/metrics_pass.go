@@ -38,8 +38,8 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 	return fmMap, true
 }
 
-// recomputeVaultMetrics publishes the task-age series and the open-task census
-// from ONE listing and ONE read per task file.
+// recomputeVaultMetrics publishes the task-age series, the open-task census and the
+// parked-probe gauge from ONE listing and ONE read per task file.
 //
 // The two instruments previously ran as independent passes, each listing the task
 // directory and fetching every file over the vault API. On the openclaw vault's
@@ -77,6 +77,7 @@ func (v *vaultScanner) recomputeVaultMetrics(
 	ageCounts := make(map[metrics.TaskAgeBucket]int, len(metrics.AvailableTaskAgeBuckets))
 	oldest := time.Duration(0)
 	censusCounts := make(map[openTaskPair]int, len(v.openTaskPairs))
+	parkedProbes := 0
 	var cappedCandidates []string
 
 	for _, relPath := range paths {
@@ -92,6 +93,12 @@ func (v *vaultScanner) recomputeVaultMetrics(
 		fmMap, parsed := parseFrontmatterMap(ctx, content)
 		if !parsed {
 			continue
+		}
+
+		// Classified from the map this pass has already built, so the parked-probe
+		// gauge costs no second read and no listing of its own.
+		if isParkedProbe(fmMap) {
+			parkedProbes++
 		}
 
 		switch age, state := taskAgeFromMap(fmMap, now); state {
@@ -122,5 +129,8 @@ func (v *vaultScanner) recomputeVaultMetrics(
 
 	v.publishTaskAgeCounts(ageCounts, oldest, v.vaultName)
 	v.publishCensusCounts(censusCounts)
+	// Set last, and only on a completed pass: the early returns above must leave the
+	// previous value in place rather than publish 0 for a listing that never ran.
+	v.metrics.HealthcheckParkedProbes().Set(float64(parkedProbes))
 	return cappedCandidates, len(paths), true
 }

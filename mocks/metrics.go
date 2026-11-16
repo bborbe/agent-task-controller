@@ -65,6 +65,16 @@ type Metrics struct {
 	gitRestCallsTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	HealthcheckParkedProbesStub        func() prometheus.Gauge
+	healthcheckParkedProbesMutex       sync.RWMutex
+	healthcheckParkedProbesArgsForCall []struct {
+	}
+	healthcheckParkedProbesReturns struct {
+		result1 prometheus.Gauge
+	}
+	healthcheckParkedProbesReturnsOnCall map[int]struct {
+		result1 prometheus.Gauge
+	}
 	KafkaConsumePausedTotalStub        func() prometheus.Counter
 	kafkaConsumePausedTotalMutex       sync.RWMutex
 	kafkaConsumePausedTotalArgsForCall []struct {
@@ -484,6 +494,59 @@ func (fake *Metrics) GitRestCallsTotalReturnsOnCall(i int, result1 prometheus.Co
 	}
 	fake.gitRestCallsTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) HealthcheckParkedProbes() prometheus.Gauge {
+	fake.healthcheckParkedProbesMutex.Lock()
+	ret, specificReturn := fake.healthcheckParkedProbesReturnsOnCall[len(fake.healthcheckParkedProbesArgsForCall)]
+	fake.healthcheckParkedProbesArgsForCall = append(fake.healthcheckParkedProbesArgsForCall, struct {
+	}{})
+	stub := fake.HealthcheckParkedProbesStub
+	fakeReturns := fake.healthcheckParkedProbesReturns
+	fake.recordInvocation("HealthcheckParkedProbes", []interface{}{})
+	fake.healthcheckParkedProbesMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) HealthcheckParkedProbesCallCount() int {
+	fake.healthcheckParkedProbesMutex.RLock()
+	defer fake.healthcheckParkedProbesMutex.RUnlock()
+	return len(fake.healthcheckParkedProbesArgsForCall)
+}
+
+func (fake *Metrics) HealthcheckParkedProbesCalls(stub func() prometheus.Gauge) {
+	fake.healthcheckParkedProbesMutex.Lock()
+	defer fake.healthcheckParkedProbesMutex.Unlock()
+	fake.HealthcheckParkedProbesStub = stub
+}
+
+func (fake *Metrics) HealthcheckParkedProbesReturns(result1 prometheus.Gauge) {
+	fake.healthcheckParkedProbesMutex.Lock()
+	defer fake.healthcheckParkedProbesMutex.Unlock()
+	fake.HealthcheckParkedProbesStub = nil
+	fake.healthcheckParkedProbesReturns = struct {
+		result1 prometheus.Gauge
+	}{result1}
+}
+
+func (fake *Metrics) HealthcheckParkedProbesReturnsOnCall(i int, result1 prometheus.Gauge) {
+	fake.healthcheckParkedProbesMutex.Lock()
+	defer fake.healthcheckParkedProbesMutex.Unlock()
+	fake.HealthcheckParkedProbesStub = nil
+	if fake.healthcheckParkedProbesReturnsOnCall == nil {
+		fake.healthcheckParkedProbesReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Gauge
+		})
+	}
+	fake.healthcheckParkedProbesReturnsOnCall[i] = struct {
+		result1 prometheus.Gauge
 	}{result1}
 }
 

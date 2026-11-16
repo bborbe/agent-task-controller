@@ -32,6 +32,7 @@ var _ = Describe("Metrics", func() {
 		Expect(names).To(HaveKey("agent_controller_git_rest_calls_total"))
 		Expect(names).To(HaveKey("agent_controller_vault_scanner_skipped_files_total"))
 		Expect(names).To(HaveKey("agent_controller_update_go_stuck_planning_tasks"))
+		Expect(names).To(HaveKey("agent_controller_healthcheck_parked_probes"))
 	})
 
 	It("publishes the stuck-planning gauge at 0 before the first scan", func() {
@@ -44,6 +45,24 @@ var _ = Describe("Metrics", func() {
 		var found bool
 		for _, mf := range mfs {
 			if mf.GetName() != "agent_controller_update_go_stuck_planning_tasks" {
+				continue
+			}
+			found = true
+			Expect(mf.GetMetric()).To(HaveLen(1))
+			Expect(mf.GetMetric()[0].GetGauge().GetValue()).To(BeNumerically("==", 0))
+		}
+		Expect(found).To(BeTrue())
+	})
+
+	It("publishes the parked-probe gauge at 0 before the first scan", func() {
+		// Same reason as the stuck-planning gauge above: an unpublished series reads as
+		// "no data", which is indistinguishable from "no probe is parked".
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		Expect(err).NotTo(HaveOccurred())
+
+		var found bool
+		for _, mf := range mfs {
+			if mf.GetName() != "agent_controller_healthcheck_parked_probes" {
 				continue
 			}
 			found = true
