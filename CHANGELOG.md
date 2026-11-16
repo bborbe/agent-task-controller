@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.31.2
 
 - fix: **read task content per identifier instead of from the listing.** `GET /api/v1/tasks` returns a flat projection — `id`, `title`, `path`, `status`, `phase`, `task_type`, `stage`, `assignee`, `goals`, `cluster`, `flag`, `vault`, `updated_at` — and carries neither `frontmatter` nor `body`; only `GET /api/v1/tasks/{id}` does. `typedFileOps.read` rendered every file from the cached listing, so every task in the vault rendered as an empty frontmatter block and an empty body. Every file then hashed identically, `processFile` short-circuited on the unchanged hash, and no cycle ever reached a counter reset or an escalation — **the scan pass was inert on a real vault**, so `v0.31.1` shipped a controller that read and wrote nothing. The file-backed test double masked it by returning content from `ListTasks`. `read` now resolves the path to an identifier through the listing and fetches the content with one typed read, which is what the git-rest client did before the port. Found by driving the migration's behavioural criteria against dev `vault-api-personal`: a task at `trigger_count: 1` stayed at `1` across a scan pass. After the fix it reaches `0`, an escalation recorded on attempt 1 survives a retry whose re-read sees an empty assignee, and a duplicate identifier still lands on the existing path.
 
