@@ -405,6 +405,11 @@ func (v *vaultScanner) scanFiles(
 	}
 	v.metrics.UpdateGoStuckPlanningTasks().
 		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
+	// Rides the same listing as the stuck-planning gauge above: both walk the paths
+	// this cycle already enumerated, so the parked-probe count costs one prefix check
+	// per path rather than a pass of its own.
+	v.metrics.HealthcheckParkedProbes().
+		Set(float64(v.countParkedProbes(ctx, paths)))
 	v.publishIndex()
 	return changed, deleted, written, writeError, true
 }
