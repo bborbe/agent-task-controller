@@ -28,6 +28,7 @@ type Metrics interface {
 	CommandExpiredTotal(operation string) prometheus.Counter
 	SkippedFilesTotal(reason SkipReason) prometheus.Counter
 	UpdateGoStuckPlanningTasks() prometheus.Gauge
+	HealthcheckParkedProbes() prometheus.Gauge
 	TaskOldestAgeSeconds(vault string) prometheus.Gauge
 	TaskAgeBucketTasks(vault string, bucket TaskAgeBucket) prometheus.Gauge
 	// OpenTasks returns the open-task census vector, labelled by vault, phase and
@@ -94,6 +95,10 @@ func (m *defaultMetrics) SkippedFilesTotal(reason SkipReason) prometheus.Counter
 
 func (m *defaultMetrics) UpdateGoStuckPlanningTasks() prometheus.Gauge {
 	return UpdateGoStuckPlanningTasks
+}
+
+func (m *defaultMetrics) HealthcheckParkedProbes() prometheus.Gauge {
+	return HealthcheckParkedProbes
 }
 
 func (m *defaultMetrics) TaskOldestAgeSeconds(vault string) prometheus.Gauge {
@@ -318,6 +323,31 @@ var UpdateGoStuckPlanningTasks = promauto.NewGauge(
 	},
 )
 
+// HealthcheckParkedProbes is the number of healthcheck probe records that are
+// parked: neither their phase nor their status is terminal, and no job is running
+// them.
+//
+// It is the sibling of UpdateGoStuckPlanningTasks, not a widening of it, and the two
+// watch disjoint populations. That gauge measures a run that started and stalled —
+// `task_type: github-update-go` at `phase: planning` with a job older than 24 h and a
+// `## Failure` body. This one measures a record that can never be re-triggered once
+// it parks: `task_type: healthcheck` at ANY non-terminal phase and ANY non-terminal
+// status, with age and failure markers deliberately not read, because every row it
+// measures is permanently non-advancing and those clauses would carry no signal.
+//
+// It is a level, not an edge: the metrics pass recomputes it and Set()s the result, so
+// the series falls back to 0 once every probe record is terminal. That is what makes
+// it alertable — the value is only positive while a probe is actually parked. The
+// writer is the metrics ticker and not the scan cycle because the scan cycle is dead
+// on a trigger-only controller (POLL_INTERVAL=0s, which every controller runs), so a
+// gauge set there would keep its init value forever.
+var HealthcheckParkedProbes = promauto.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "agent_controller_healthcheck_parked_probes",
+		Help: "Number of healthcheck probe records parked non-terminal (phase and status both non-terminal, no current_job). Sibling of agent_controller_update_go_stuck_planning_tasks, which instead watches task_type github-update-go at phase planning with a job older than 24h.",
+	},
+)
+
 // TaskOldestAgeSeconds is the age in seconds of the oldest dated non-terminal
 // task record, labelled by vault.
 //
@@ -422,4 +452,5 @@ func init() {
 	// publishes the series before the first scan completes, so an alert query
 	// reads 0 rather than "no data" on a freshly started pod.
 	UpdateGoStuckPlanningTasks.Set(0)
+	HealthcheckParkedProbes.Set(0)
 }

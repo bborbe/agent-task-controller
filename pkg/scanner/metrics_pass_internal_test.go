@@ -143,6 +143,22 @@ func metricsPassSnapshot() map[string]float64 {
 	return snapshot
 }
 
+// parkedProbeGaugeValue reads the parked-probe gauge straight off its collector, so
+// the spec does not depend on which other specs have registered or reset a series.
+func parkedProbeGaugeValue() float64 {
+	ch := make(chan prometheus.Metric, 1)
+	go func() {
+		metrics.HealthcheckParkedProbes.Collect(ch)
+		close(ch)
+	}()
+	for metric := range ch {
+		written := &dto.Metric{}
+		Expect(metric.Write(written)).To(Succeed())
+		return written.GetGauge().GetValue()
+	}
+	return -1
+}
+
 var _ = Describe("recomputeVaultMetrics", func() {
 	var ctx context.Context
 
@@ -182,6 +198,41 @@ var _ = Describe("recomputeVaultMetrics", func() {
 		Expect(got).To(Equal(want))
 		Expect(gotOldest).To(BeNumerically("~", wantOldest, 2))
 		Expect(gotOldest).To(BeNumerically(">", 0))
+	})
+
+	It("sets the parked-probe gauge from the same pass", func() {
+		// This pass is the gauge's writer, not the scan cycle: every controller on dev
+		// and prod runs POLL_INTERVAL=0s, where scanFiles is dead, so a gauge set there
+		// would keep its init value forever and a parked probe would stay invisible.
+		// The four records are the acceptance criterion's matrix — parked, running,
+		// terminal, and one whose frontmatter will not parse.
+		v := metricsPassScanner(map[string]string{
+			"tasks/probe-parked.md": "---\ntask_type: healthcheck\nphase: human_review\n" +
+				"status: hold\ncurrent_job: \"\"\n---\n\nreply 'ok'\n",
+			"tasks/probe-running.md": "---\ntask_type: healthcheck\nphase: planning\n" +
+				"status: in_progress\ncurrent_job: \"job-1\"\n---\n\nreply 'ok'\n",
+			"tasks/probe-terminal.md": "---\ntask_type: healthcheck\nphase: done\n" +
+				"status: completed\ncurrent_job: \"\"\n---\n\nreply 'ok'\n",
+			"tasks/broken.md": "---\nstatus: [unclosed\n---\n",
+		}, nil, nil)
+
+		_, _, ok := v.recomputeVaultMetrics(ctx)
+		Expect(ok).To(BeTrue())
+		Expect(parkedProbeGaugeValue()).To(BeNumerically("==", 1))
+	})
+
+	It("leaves the parked-probe gauge untouched when the listing fails", func() {
+		// A failed listing writes nothing, exactly as the age and census series behave:
+		// publishing 0 for a pass that never ran would blank a real signal.
+		v := metricsPassScanner(map[string]string{}, nil, nil)
+		v.ops.listFiles = func(_ context.Context, _ string) ([]string, error) {
+			return nil, os.ErrNotExist
+		}
+		metrics.HealthcheckParkedProbes.Set(7)
+
+		_, _, ok := v.recomputeVaultMetrics(ctx)
+		Expect(ok).To(BeFalse())
+		Expect(parkedProbeGaugeValue()).To(BeNumerically("==", 7))
 	})
 
 	It("reads each task file once where the two passes read it twice", func() {
