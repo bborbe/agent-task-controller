@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.32.1
 
 - fix: **pin the on-disk phase against a stale `planning` echo in the result write-back.** `MergeFrontmatter` was incoming-wins for `phase` (it was in no ownership list), so a result payload still carrying `phase: planning` — a spawn-time echo from a deliverer older than `bborbe/agent` v0.136.0 — overwrote an on-disk `execution` or `human_review` through the planning-retry gate's fall-through (`Handle` skips with `(false, nil)` and `WriteResult` runs). The executor re-drives a task from `planning`, so the write re-armed a task that had moved on and a second run was spawned with no second claim. `MergeFrontmatter` now keeps the on-disk phase when the incoming phase is `planning` and the on-disk phase is any other phase, and reports the discarded echo as a guard decision; every other phase move stays agent-owned, an empty incoming phase never erases an on-disk phase, and a declared backward move (`assignee_reassigned_by`) still applies. `docs/controller-design.md` § Frontmatter Merge and § Planning-retry gate updated.
 
