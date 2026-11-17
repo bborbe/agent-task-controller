@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.33.1
 
 - fix: **compute `agent_controller_update_go_stuck_planning_tasks` in the metrics pass, so it stops reading 0 on every controller.** The gauge was `Set` from `scanFiles`, which never runs on a trigger-only controller — all four dev controllers and all four prod controllers run `pollInterval: "0s"` — so the series kept its init value for the pod's whole life and the update-go stuck-record signal the fleet relies on was dead everywhere. It now rides `recomputeVaultMetrics`, the same 5-minute ticker the age, census and parked-probe series already ride, and is classified from the frontmatter map and content that pass has already produced, so it costs no extra read and no listing of its own. `isStuckPlanningTask` takes the parsed map; the filename-prefix pre-filter and the file-reading wrapper went with it, since this pass reads every file anyway. The name and `Help` text are unchanged, so existing dashboards and alerts keep matching. A failed listing writes nothing, leaving the previous value in place rather than publishing 0. Specs: the clause matrix on the predicate, the gauge set from the pass, and the failed-listing case.
 
