@@ -1434,6 +1434,16 @@ func MergeFrontmatter(
 		}
 	}
 
+	// Stale-planning pin: the result payload is built from the agent's spawn-time
+	// snapshot, so a `phase` it carries may be an echo of how the task looked
+	// before the run. The executor re-drives a task from `planning`, so a stale
+	// `phase: planning` echo must never drag a task that has moved past it back
+	// (docs/controller-design.md invariant). The on-disk phase is kept and the
+	// discarded echo reported. Every other phase move stays agent-owned, and a
+	// declared backward move (the sentry deep→fix handoff re-arms execution →
+	// planning and says so) is applied.
+	decisions = applyPhaseMonotonic(existing, incoming, merged, decisions)
+
 	// Operator-pinned fields (cluster): the on-disk value always wins and an
 	// incoming value can never introduce the key when it is absent on disk.
 	decisions = applyOperatorPinnedFields(existing, incoming, merged, decisions)
@@ -1445,6 +1455,56 @@ func MergeFrontmatter(
 	decisions = applyOperatorOwnedFields(existing, incoming, merged, decisions)
 	decisions = applyAccumulatedCounters(existing, incoming, merged, decisions)
 	return merged, decisions
+}
+
+// applyPhaseMonotonic pins the on-disk phase against a stale `planning` echo.
+// The result payload is built from the agent's spawn-time snapshot, so a `phase`
+// it carries may describe the task before the run. The executor re-drives a task
+// from `planning`, so a payload still carrying `phase: planning` must never drag
+// a task that has moved past planning back into a fresh planning run
+// (docs/controller-design.md: "a stale payload phase must never re-drive a task
+// that has moved on"). When the incoming phase is `planning` and the on-disk
+// phase is any other phase, the on-disk phase is kept and the discarded echo is
+// reported as a decision. An absent or empty incoming phase never erases an
+// on-disk phase. Every other phase move stays agent-owned — the field-ownership
+// contract lets an agent advance the phase and move it among non-planning phases
+// — and a payload carrying the reassignment declaration applies its phase
+// verbatim (a deliberate backward move, e.g. the sentry deep→fix handoff).
+func applyPhaseMonotonic(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	incomingValue, inIncoming := incoming["phase"]
+	if !inIncoming {
+		return decisions // base merge already kept the on-disk phase
+	}
+	if _, declared := incoming[reassignmentDeclarationKey]; declared {
+		return decisions // deliberate backward move
+	}
+	existingPhase := existing.Phase()
+	if existingPhase == nil {
+		return decisions // nothing on disk to protect
+	}
+	incomingPhase := incoming.Phase()
+	if incomingPhase == nil {
+		// An empty phase in the payload must not erase the on-disk phase.
+		merged["phase"] = existing["phase"]
+		return append(decisions, GuardDecision{
+			Field:    "phase",
+			Kept:     existing["phase"],
+			Rejected: incomingValue,
+		})
+	}
+	if *incomingPhase != domain.TaskPhasePlanning ||
+		*existingPhase == domain.TaskPhasePlanning {
+		return decisions // not a stale planning echo: agent owns the phase
+	}
+	merged["phase"] = existing["phase"]
+	return append(decisions, GuardDecision{
+		Field:    "phase",
+		Kept:     existing["phase"],
+		Rejected: incomingValue,
+	})
 }
 
 // applyOperatorPinnedFields applies the operator-pinned rule to the merged
