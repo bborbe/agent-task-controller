@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **the post-write readback now reads the committed ref instead of the working tree, so it can see a write that never landed.** The verifier compared the record's fingerprint against a plain `ReadTask`, and `ReadTask` serves the working tree — where a write is visible from the moment vault-api accepts it, up to a full git-rest commit window before any commit carries it. A comparison against that view reports success for a write that never committed, which is the exact failure the counter exists to expose (measured 2026-11-11: a success acknowledgement seven hours before the record landed). `WriteVerifier` now calls `ReadTaskAt`, backed by vault-api's ref-qualified read, and the ref is configurable through `READBACK_REF` (default `origin/main` — the branch a consumer reads, not the local HEAD, so a commit whose push failed does not count as landed). The new spec stubs the two views apart and asserts a mismatch when only the working tree has the write; on the previous build the same spec counts 0.
+
 ## v0.33.2
 
 - fix: read each listed task's frontmatter through ReadTask in the FindTaskFilePath walk, so a result whose task_identifier misses the identifier index resolves again instead of being dropped

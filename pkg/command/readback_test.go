@@ -51,8 +51,20 @@ var _ = Describe("WriteVerifier", func() {
 			libtime.NewCurrentDateTime(),
 			time.Nanosecond,
 			time.Nanosecond,
+			"origin/main",
 		)
 	})
+
+	// stubRead answers both views with the same content.
+	//
+	// The write executors read the working tree before writing (ReadTask) and the
+	// verifier reads the committed ref afterwards (ReadTaskAt). A spec is about
+	// the verifier's comparison, so both halves must agree unless the spec is
+	// specifically about them disagreeing.
+	stubRead := func(task *vaultapi.Task, err error) {
+		fakeVault.ReadTaskReturns(task, err)
+		fakeVault.ReadTaskAtReturns(task, err)
+	}
 
 	hashOf := func(fm map[string]any, body string) string {
 		h, err := command.RecordHashForTest(fm, body)
@@ -64,7 +76,7 @@ var _ = Describe("WriteVerifier", func() {
 	// dropped write looks like from the caller's side.
 	Context("when the record does not move", func() {
 		It("counts a mismatch", func() {
-			fakeVault.ReadTaskReturns(&vaultapi.Task{
+			stubRead(&vaultapi.Task{
 				ID:          "task-a",
 				Title:       "task-a",
 				Frontmatter: map[string]any{"phase": "planning", "status": "in_progress"},
@@ -85,9 +97,38 @@ var _ = Describe("WriteVerifier", func() {
 		})
 	})
 
+	// The defect this verifier exists for: the working tree already shows the
+	// write while no commit carries it yet. A readback that trusts the working
+	// tree reports success here; the committed read is the only one that can see
+	// the gap, which is why the verifier asks for the ref.
+	Context("when only the working tree carries the write", func() {
+		It("counts a mismatch", func() {
+			fakeVault.ReadTaskReturns(&vaultapi.Task{
+				ID:          "task-c",
+				Title:       "task-c",
+				Frontmatter: map[string]any{"phase": "done"},
+			}, nil)
+			fakeVault.ReadTaskAtReturns(&vaultapi.Task{
+				ID:          "task-c",
+				Title:       "task-c",
+				Frontmatter: map[string]any{"phase": "planning"},
+			}, nil)
+
+			verifier.Expect(ctx, command.ReadbackExpectation{
+				TaskIdentifier: "task-c",
+				Operation:      "update-frontmatter",
+				BeforeHash:     hashOf(map[string]any{"phase": "planning"}, ""),
+			})
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 1))
+			Expect(fakeVault.ReadTaskAtCallCount()).To(Equal(1))
+		})
+	})
+
 	Context("when the record moved", func() {
 		It("counts nothing", func() {
-			fakeVault.ReadTaskReturns(&vaultapi.Task{
+			stubRead(&vaultapi.Task{
 				ID:          "task-b",
 				Title:       "task-b",
 				Frontmatter: map[string]any{"phase": "done", "status": "completed"},
@@ -111,7 +152,7 @@ var _ = Describe("WriteVerifier", func() {
 	// readable at all, not whether it changed.
 	Context("when a created record is still unreadable", func() {
 		It("counts a mismatch", func() {
-			fakeVault.ReadTaskReturns(nil, vaultapi.ErrNotFound)
+			stubRead(nil, vaultapi.ErrNotFound)
 
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-c",
@@ -126,7 +167,7 @@ var _ = Describe("WriteVerifier", func() {
 
 	Context("when a created record is readable", func() {
 		It("counts nothing", func() {
-			fakeVault.ReadTaskReturns(&vaultapi.Task{
+			stubRead(&vaultapi.Task{
 				ID:          "task-d",
 				Title:       "task-d",
 				Frontmatter: map[string]any{"status": "in_progress"},
@@ -147,7 +188,7 @@ var _ = Describe("WriteVerifier", func() {
 	// evaluated. This is what stops the detector firing on every ordinary write.
 	Context("when the deadline has not passed", func() {
 		It("leaves the expectation pending", func() {
-			fakeVault.ReadTaskReturns(&vaultapi.Task{
+			stubRead(&vaultapi.Task{
 				ID:          "task-e",
 				Title:       "task-e",
 				Frontmatter: map[string]any{"phase": "planning"},
@@ -162,7 +203,7 @@ var _ = Describe("WriteVerifier", func() {
 			command.VerifyDueForTest(verifier, ctx)
 
 			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
-			Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			Expect(fakeVault.ReadTaskAtCallCount()).To(Equal(0))
 		})
 	})
 
@@ -176,7 +217,7 @@ var _ = Describe("WriteVerifier", func() {
 				Title:       "task-f",
 				Frontmatter: map[string]any{"phase": "planning", "status": "in_progress"},
 			}
-			fakeVault.ReadTaskReturns(unchanged, nil)
+			stubRead(unchanged, nil)
 			fakeVault.PatchTaskReturns(unchanged, nil)
 
 			executor := command.NewUpdateFrontmatterExecutor(
@@ -216,7 +257,7 @@ var _ = Describe("WriteVerifier", func() {
 					"target_vault": "openclaw",
 				},
 			}
-			fakeVault.ReadTaskReturns(unchanged, nil)
+			stubRead(unchanged, nil)
 
 			executor := command.NewUpdateFrontmatterExecutor(
 				fakeVault,
@@ -247,7 +288,7 @@ var _ = Describe("WriteVerifier", func() {
 	// the record and the comparison has to see it.
 	Context("when only the body moved", func() {
 		It("counts nothing", func() {
-			fakeVault.ReadTaskReturns(&vaultapi.Task{
+			stubRead(&vaultapi.Task{
 				ID:          "task-h",
 				Title:       "task-h",
 				Frontmatter: map[string]any{"phase": "planning"},
@@ -273,7 +314,7 @@ var _ = Describe("WriteVerifier", func() {
 	// whose record never appears is a mismatch.
 	Context("wired through the create-task executor", func() {
 		It("counts a mismatch when the created record never appears", func() {
-			fakeVault.ReadTaskReturns(nil, vaultapi.ErrNotFound)
+			stubRead(nil, vaultapi.ErrNotFound)
 			fakeVault.CreateTaskReturns(&vaultapi.Task{
 				ID:    "task-i",
 				Title: "task-i",
@@ -326,7 +367,7 @@ var _ = Describe("WriteVerifier", func() {
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
-			Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			Expect(fakeVault.ReadTaskAtCallCount()).To(Equal(0))
 			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
 		})
 
@@ -336,7 +377,7 @@ var _ = Describe("WriteVerifier", func() {
 			})
 			command.VerifyDueForTest(verifier, ctx)
 
-			Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			Expect(fakeVault.ReadTaskAtCallCount()).To(Equal(0))
 			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
 		})
 	})
@@ -346,7 +387,7 @@ var _ = Describe("WriteVerifier", func() {
 	// fire the detector on every write while vault-api is briefly unavailable.
 	Context("when the readback read fails", func() {
 		It("counts nothing", func() {
-			fakeVault.ReadTaskReturns(nil, errors.New("vault-api unreachable"))
+			stubRead(nil, errors.New("vault-api unreachable"))
 
 			verifier.Expect(ctx, command.ReadbackExpectation{
 				TaskIdentifier: "task-l",

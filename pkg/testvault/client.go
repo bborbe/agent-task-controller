@@ -198,6 +198,15 @@ func (f *Client) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) 
 	return &task, nil
 }
 
+// ReadTaskAt returns the task addressed by identifier or title.
+//
+// The in-memory vault has no commits, so the committed view and the working tree
+// are the same state here; a spec that needs them to differ stubs the client
+// instead of using this one.
+func (f *Client) ReadTaskAt(ctx context.Context, id string, _ string) (*vaultapi.Task, error) {
+	return f.ReadTask(ctx, id)
+}
+
 func (f *Client) write(path string, fields map[string]any, body string) error {
 	if fields == nil {
 		fields = map[string]any{}

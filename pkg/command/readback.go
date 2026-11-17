@@ -38,6 +38,14 @@ const DefaultReadbackDeadline = 90 * time.Second
 // hide the actual landing time.
 const DefaultReadbackInterval = 5 * time.Second
 
+// DefaultReadbackRef is the git ref the readback reads.
+//
+// It is the branch a consumer sees, not the local HEAD: git-rest commits and then
+// pushes, so a commit that failed to push is in HEAD while no consumer can read
+// it. Reading origin/main asks the question the task asks — did the record reach
+// the history others read.
+const DefaultReadbackRef = "origin/main"
+
 // ReadbackExpectation is one write awaiting verification: the record it
 // addressed, the operation that reported success, and the content as it stood
 // BEFORE the write.
@@ -87,14 +95,15 @@ type WriteVerifier interface {
 // NewWriteVerifier returns a WriteVerifier backed by the typed vault API.
 //
 // A nil clock uses the wall clock; a zero interval or deadline takes the
-// package default. Both are injectable so a test can drive the loop without
-// sleeping.
+// package default, and so does an empty ref. All four are injectable so a test
+// can drive the loop without sleeping.
 func NewWriteVerifier(
 	client vaultapi.Client,
 	m metrics.Metrics,
 	clock libtime.CurrentDateTimeGetter,
 	interval time.Duration,
 	deadline time.Duration,
+	ref string,
 ) WriteVerifier {
 	if interval <= 0 {
 		interval = DefaultReadbackInterval
@@ -102,12 +111,16 @@ func NewWriteVerifier(
 	if deadline <= 0 {
 		deadline = DefaultReadbackDeadline
 	}
+	if ref == "" {
+		ref = DefaultReadbackRef
+	}
 	return &writeVerifier{
 		client:   client,
 		metrics:  m,
 		clock:    clock,
 		interval: interval,
 		deadline: deadline,
+		ref:      ref,
 	}
 }
 
@@ -117,6 +130,7 @@ type writeVerifier struct {
 	clock    libtime.CurrentDateTimeGetter
 	interval time.Duration
 	deadline time.Duration
+	ref      string
 
 	mu      sync.Mutex
 	pending []ReadbackExpectation
@@ -186,9 +200,14 @@ func (v *writeVerifier) verifyDue(ctx context.Context) {
 	}
 }
 
-// verify reads the record once and decides whether it moved.
+// verify reads the record at the configured ref and decides whether it moved.
+//
+// The read is ref-qualified on purpose. The working-tree read answers with the
+// write path's own echo: a write is visible there the moment vault-api accepts
+// it, so a comparison against it reports success for a write that never
+// committed — which is the one failure this verifier exists to catch.
 func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectation) {
-	task, err := v.client.ReadTask(ctx, expectation.TaskIdentifier)
+	task, err := v.client.ReadTaskAt(ctx, expectation.TaskIdentifier, v.ref)
 	if err != nil {
 		if errors.Is(err, vaultapi.ErrNotFound) {
 			// A record that is still absent after the deadline never landed.

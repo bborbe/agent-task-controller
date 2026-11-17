@@ -49,6 +49,14 @@ func (c *sweepGitClient) ListTasks(
 	return fileVault{c.dir}.ListTasks(ctx, filter)
 }
 
+func (c *sweepGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return c.ReadTask(ctx, id)
+}
+
 func (c *sweepGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
 	c.mu.Lock()
 	c.readFileCalls++

@@ -89,6 +89,12 @@ func (f fileVault) ListTasks(_ context.Context, _ vaultapi.Filter) ([]vaultapi.T
 	return f.tasks()
 }
 
+// ReadTaskAt answers from the same files: this double has no history, so the
+// committed view and the working tree are one state.
+func (f fileVault) ReadTaskAt(ctx context.Context, id string, _ string) (*vaultapi.Task, error) {
+	return f.ReadTask(ctx, id)
+}
+
 func (f fileVault) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
 	path, found, err := f.pathFor(id)
 	if err != nil {

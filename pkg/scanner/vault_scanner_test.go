@@ -67,6 +67,14 @@ func (t *testGitClient) ListTasks(
 	return t.vault().ListTasks(ctx, filter)
 }
 
+func (t *testGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return t.ReadTask(ctx, id)
+}
+
 func (t *testGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
 	return t.vault().ReadTask(ctx, id)
 }
@@ -123,6 +131,14 @@ func (t *fileOpsTestGitClient) ListTasks(
 	filter vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
 	return t.vault().ListTasks(ctx, filter)
+}
+
+func (t *fileOpsTestGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return t.ReadTask(ctx, id)
 }
 
 func (t *fileOpsTestGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {

@@ -47,6 +47,14 @@ func (c *convergenceGitClient) ListTasks(
 	return fileVault{c.path}.ListTasks(ctx, filter)
 }
 
+func (c *convergenceGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return c.ReadTask(ctx, id)
+}
+
 func (c *convergenceGitClient) ReadTask(
 	ctx context.Context,
 	id string,

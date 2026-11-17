@@ -62,6 +62,14 @@ func (c *taskAgeTickerGitClient) ListTasks(
 	return tasks, nil
 }
 
+func (c *taskAgeTickerGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return c.ReadTask(ctx, id)
+}
+
 func (c *taskAgeTickerGitClient) ReadTask(
 	_ context.Context,
 	id string,

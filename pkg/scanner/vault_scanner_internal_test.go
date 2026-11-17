@@ -45,6 +45,14 @@ func (t *resetTestGitClient) ListTasks(
 	return nil, nil
 }
 
+func (t *resetTestGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return t.ReadTask(ctx, id)
+}
+
 func (t *resetTestGitClient) ReadTask(_ context.Context, _ string) (*vaultapi.Task, error) {
 	return nil, vaultapi.ErrNotFound
 }
