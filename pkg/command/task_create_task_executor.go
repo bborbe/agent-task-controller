@@ -49,6 +49,7 @@ func NewCreateTaskExecutor(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	k int,
 	resolver result.TaskPathResolver,
+	verifier WriteVerifier,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		task.CreateCommandOperation,
@@ -148,6 +149,16 @@ func NewCreateTaskExecutor(
 			retireSupersededBuildFixTasks(ctx, client, currentDateTime, cmd, relPath)
 			supersedePriorRecurringTask(ctx, client, currentDateTime, k, cmd, relPath)
 			supersedePriorUpdateGoTasks(ctx, client, currentDateTime, k, cmd, relPath)
+			// The success this function is about to report means "the create was
+			// ACCEPTED", not "the record is in the store": git-rest commits on a
+			// cadence, so the file is not readable until the next flush. An empty
+			// BeforeHash records that the expectation is "any readable record".
+			if verifier != nil {
+				verifier.Expect(ctx, ReadbackExpectation{
+					TaskIdentifier: string(cmd.TaskIdentifier),
+					Operation:      string(task.CreateCommandOperation),
+				})
+			}
 			return nil, nil, nil
 		},
 	)

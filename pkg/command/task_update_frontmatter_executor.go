@@ -145,6 +145,7 @@ func NewUpdateFrontmatterExecutor(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	m metrics.Metrics,
 	humans result.HumanAssignees,
+	verifier WriteVerifier,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		UpdateFrontmatterCommandOperation,
@@ -198,7 +199,8 @@ func NewUpdateFrontmatterExecutor(
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(ctx, err, "read task for update")
 			}
-			if err := applyUpdate(ctx, client, task, cmd, vaultName, currentDateTime, humans); err != nil {
+			wrote, err := applyUpdate(ctx, client, task, cmd, vaultName, currentDateTime, humans)
+			if err != nil {
 				m.FrontmatterCommandsTotal("update-frontmatter", "error").Inc()
 				return nil, nil, errors.Wrapf(
 					ctx,
@@ -208,12 +210,36 @@ func NewUpdateFrontmatterExecutor(
 				)
 			}
 			m.FrontmatterCommandsTotal("update-frontmatter", "success").Inc()
+			// ⚠️ Only a command that actually WROTE gets a readback expectation.
+			// `applyUpdate` is idempotent — re-publishing the values already on the
+			// record sends no PATCH, and a body that already carries the section
+			// sends no PUT — and the record is SUPPOSED not to move for those, so
+			// counting them would cry wolf on the healthiest path there is.
+			if wrote {
+				recordReadbackExpectation(
+					ctx,
+					verifier,
+					string(UpdateFrontmatterCommandOperation),
+					string(cmd.TaskIdentifier),
+					task,
+				)
+			}
 			return nil, nil, nil
 		},
 	)
 }
 
-// applyUpdate writes the command's two halves. ⚠️ **They are two calls, not one
+// applyUpdate writes the command's two halves and reports whether it wrote
+// anything at all.
+//
+// The bool is not decoration: an idempotent re-publish sends no PATCH (the patch
+// is a diff against the current frontmatter) and a body that already carries the
+// section sends no PUT, so this call can succeed without touching the record. The
+// caller must not record a readback expectation for such a command — the record
+// is supposed to stay put, and counting it would report a dropped write on the
+// healthiest path there is.
+//
+// ⚠️ **They are two calls, not one
 // atomic write**, and the difference is real: the old shape read the file,
 // merged frontmatter and body together, and committed once, so a failure left
 // nothing behind. The typed surface has no such primitive — PATCH replaces named
@@ -237,15 +263,19 @@ func applyUpdate(
 	vaultName string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	humans result.HumanAssignees,
-) error {
+) (bool, error) {
 	fields, escalation := buildUpdatePatch(cmd.Updates, task.Frontmatter, vaultName, humans)
 	if cmd.Body == nil && escalation == nil {
 		if len(fields) > 0 {
 			if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
-				return errors.Wrapf(ctx, err, "patch frontmatter")
+				return false, errors.Wrapf(ctx, err, "patch frontmatter")
 			}
+			return true, nil
 		}
-		return nil
+		// Nothing to patch and no body to merge: an idempotent re-publish of the
+		// values already on the record. Reporting "no write" is what keeps the
+		// readback from counting it.
+		return false, nil
 	}
 	// Re-read before the PUT: PUT replaces the WHOLE body, so merging the section
 	// onto the body captured at the top of the command would silently drop any
@@ -256,7 +286,7 @@ func applyUpdate(
 	// to the stale snapshot — the retry re-runs the whole command.
 	fresh, err := client.ReadTask(ctx, string(cmd.TaskIdentifier))
 	if err != nil {
-		return errors.Wrapf(ctx, err, "re-read task for body merge")
+		return false, errors.Wrapf(ctx, err, "re-read task for body merge")
 	}
 	body := fresh.Body
 	if cmd.Body != nil {
@@ -279,17 +309,20 @@ func applyUpdate(
 	// Skipped when nothing changed: a capped task re-enters this branch on every
 	// once-a-minute reconcile tick, and the heading guard only suppresses the
 	// append — an unconditional PUT would rewrite the whole body forever.
+	wrote := false
 	if body != fresh.Body {
 		if err := client.PutBody(ctx, fresh.ID, body); err != nil {
-			return errors.Wrapf(ctx, err, "put body")
+			return false, errors.Wrapf(ctx, err, "put body")
 		}
+		wrote = true
 	}
 	if len(fields) > 0 {
 		if _, err := client.PatchTask(ctx, task.ID, fields); err != nil {
-			return errors.Wrapf(ctx, err, "patch frontmatter")
+			return false, errors.Wrapf(ctx, err, "patch frontmatter")
 		}
+		wrote = true
 	}
-	return nil
+	return wrote, nil
 }
 
 // buildUpdatePatch returns the fields to PATCH and, when this write takes the task
