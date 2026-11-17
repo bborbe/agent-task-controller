@@ -1,8 +1,9 @@
 ---
-status: draft
-spec: ["016-bug-task-identifier-path-index"]
-summary: 'Read each listed task frontmatter through ReadTask in FindTaskFilePath so a result whose identifier misses the index resolves again'
+status: approved
+spec: [016-bug-task-identifier-path-index]
+summary: Read each listed task frontmatter through ReadTask in FindTaskFilePath so a result whose identifier misses the index resolves again
 created: "2026-11-17T01:10:00Z"
+queued: "2026-11-17T01:33:27Z"
 ---
 
 # Read each listed task's frontmatter in the FindTaskFilePath walk
