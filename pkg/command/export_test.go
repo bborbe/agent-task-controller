@@ -4,6 +4,8 @@
 
 package command
 
+import "context"
+
 // Test-only re-exports for the external command_test package.
 var (
 	BuildIncrementPatch              = buildIncrementPatch
@@ -11,4 +13,15 @@ var (
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
 	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
+	RecordHashForTest                = recordHash
 )
+
+// VerifyDueForTest runs one verification pass, so a test can assert the readback
+// outcome without waiting on the ticker.
+func VerifyDueForTest(v WriteVerifier, ctx context.Context) {
+	wv, ok := v.(*writeVerifier)
+	if !ok {
+		panic("VerifyDueForTest requires a *writeVerifier")
+	}
+	wv.verifyDue(ctx)
+}

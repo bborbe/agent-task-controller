@@ -55,6 +55,7 @@ func CreateCommandConsumer(
 	prCommenter prcomment.PRCommenter,
 	m metrics.Metrics,
 	humans result.HumanAssignees,
+	verifier command.WriteVerifier,
 ) run.Func {
 	retryGate := command.NewPlanningRetryGate(
 		vaultClient,
@@ -71,7 +72,14 @@ func CreateCommandConsumer(
 		// identifier and PATCHes the fields it changes, instead of reading a
 		// vault-relative path, mutating the YAML and re-serialising the file.
 		command.NewIncrementFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m),
-		command.NewUpdateFrontmatterExecutor(vaultClient, vaultName, currentDateTime, m, humans),
+		command.NewUpdateFrontmatterExecutor(
+			vaultClient,
+			vaultName,
+			currentDateTime,
+			m,
+			humans,
+			verifier,
+		),
 		command.NewCreateTaskExecutor(
 			vaultClient,
 			taskDir,
@@ -79,6 +87,7 @@ func CreateCommandConsumer(
 			currentDateTime,
 			k,
 			resolver,
+			verifier,
 		),
 		command.NewCompleteTaskExecutor(vaultClient, vaultName, currentDateTime, m),
 	}
