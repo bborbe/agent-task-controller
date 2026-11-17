@@ -443,10 +443,31 @@ func FindTaskFilePath(
 	var matchedRelPath string
 	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
-	for _, task := range tasks {
+	for _, listed := range tasks {
+		// The listing is a flat projection and carries no frontmatter, so each
+		// listed task's frontmatter has to be read per task. An empty title has no
+		// address to read, exactly as typedFileOps.list skips it.
+		relPath := taskRelPathFor(taskDir, listed)
+		if relPath == "" {
+			continue
+		}
+		task, readErr := client.ReadTask(ctx, taskAddressFromRelPath(relPath))
+		if readErr != nil {
+			// The vault moved between the listing and the read: the task is no
+			// longer there, so it is not a match.
+			if errors.Is(readErr, vaultapi.ErrNotFound) {
+				continue
+			}
+			return "", nil, errors.Wrapf(ctx, readErr, "read task %s", relPath)
+		}
+		// The read task's title is the address a caller can write to, so compose
+		// the match path from it; an empty title has no address and cannot match.
+		relPath = taskRelPathFor(taskDir, *task)
+		if relPath == "" {
+			continue
+		}
 		current, _ := task.Frontmatter["task_identifier"].(string)
 		previous, _ := task.Frontmatter["task_identifier_previous"].(string)
-		relPath := taskRelPathFor(taskDir, task)
 		matched, viaPrevious := taskIdentifierMatch(current, previous, id)
 		if !matched {
 			continue

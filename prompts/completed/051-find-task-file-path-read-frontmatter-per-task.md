@@ -1,9 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [016-bug-task-identifier-path-index]
-summary: Read each listed task frontmatter through ReadTask in FindTaskFilePath so a result whose identifier misses the index resolves again
+summary: Made the FindTaskFilePath walk read each listed task's frontmatter via ReadTask so index-missed identifiers resolve again, with regression specs, docs, and changelog.
+execution_id: agent-task-controller-walk-fix-exec-051-find-task-file-path-read-frontmatter-per-task
+dark-factory-version: v0.198.17
 created: "2026-11-17T01:10:00Z"
 queued: "2026-11-17T01:33:27Z"
+started: "2026-11-17T02:26:30Z"
+completed: "2026-11-17T02:32:22Z"
 ---
 
 # Read each listed task's frontmatter in the FindTaskFilePath walk
