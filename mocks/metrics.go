@@ -106,6 +106,17 @@ type Metrics struct {
 	planningRetryTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	ReadbackMismatchTotalStub        func(string) prometheus.Counter
+	readbackMismatchTotalMutex       sync.RWMutex
+	readbackMismatchTotalArgsForCall []struct {
+		arg1 string
+	}
+	readbackMismatchTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	readbackMismatchTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
 	ResultsWrittenTotalStub        func(string) prometheus.Counter
 	resultsWrittenTotalMutex       sync.RWMutex
 	resultsWrittenTotalArgsForCall []struct {
@@ -702,6 +713,67 @@ func (fake *Metrics) PlanningRetryTotalReturnsOnCall(i int, result1 prometheus.C
 		})
 	}
 	fake.planningRetryTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) ReadbackMismatchTotal(arg1 string) prometheus.Counter {
+	fake.readbackMismatchTotalMutex.Lock()
+	ret, specificReturn := fake.readbackMismatchTotalReturnsOnCall[len(fake.readbackMismatchTotalArgsForCall)]
+	fake.readbackMismatchTotalArgsForCall = append(fake.readbackMismatchTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.ReadbackMismatchTotalStub
+	fakeReturns := fake.readbackMismatchTotalReturns
+	fake.recordInvocation("ReadbackMismatchTotal", []interface{}{arg1})
+	fake.readbackMismatchTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) ReadbackMismatchTotalCallCount() int {
+	fake.readbackMismatchTotalMutex.RLock()
+	defer fake.readbackMismatchTotalMutex.RUnlock()
+	return len(fake.readbackMismatchTotalArgsForCall)
+}
+
+func (fake *Metrics) ReadbackMismatchTotalCalls(stub func(string) prometheus.Counter) {
+	fake.readbackMismatchTotalMutex.Lock()
+	defer fake.readbackMismatchTotalMutex.Unlock()
+	fake.ReadbackMismatchTotalStub = stub
+}
+
+func (fake *Metrics) ReadbackMismatchTotalArgsForCall(i int) string {
+	fake.readbackMismatchTotalMutex.RLock()
+	defer fake.readbackMismatchTotalMutex.RUnlock()
+	argsForCall := fake.readbackMismatchTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) ReadbackMismatchTotalReturns(result1 prometheus.Counter) {
+	fake.readbackMismatchTotalMutex.Lock()
+	defer fake.readbackMismatchTotalMutex.Unlock()
+	fake.ReadbackMismatchTotalStub = nil
+	fake.readbackMismatchTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) ReadbackMismatchTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.readbackMismatchTotalMutex.Lock()
+	defer fake.readbackMismatchTotalMutex.Unlock()
+	fake.ReadbackMismatchTotalStub = nil
+	if fake.readbackMismatchTotalReturnsOnCall == nil {
+		fake.readbackMismatchTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.readbackMismatchTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
 	}{result1}
 }

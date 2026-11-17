@@ -51,7 +51,9 @@ var _ = Describe("isParkedProbe", func() {
 
 	It("does not count a record whose task_type is not healthcheck", func() {
 		Expect(isParkedProbe(record("llm", "planning", "in_progress", ""))).To(BeFalse())
-		Expect(isParkedProbe(record("github-update-go", "planning", "in_progress", ""))).To(BeFalse())
+		Expect(
+			isParkedProbe(record("github-update-go", "planning", "in_progress", "")),
+		).To(BeFalse())
 	})
 
 	It("does not count a record carrying no phase or no status", func() {

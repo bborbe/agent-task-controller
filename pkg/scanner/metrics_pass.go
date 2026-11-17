@@ -38,8 +38,28 @@ func parseFrontmatterMap(ctx context.Context, content []byte) (map[string]interf
 	return fmMap, true
 }
 
-// recomputeVaultMetrics publishes the task-age series, the open-task census and the
-// parked-probe gauge from ONE listing and ONE read per task file.
+// gaugeIncrements returns one task file's contribution to the parked-probe gauge and
+// to the update-go stuck-planning gauge: 1 for the gauge whose predicate the record
+// satisfies, 0 for the other. The two predicates are disjoint by task_type
+// (`healthcheck` vs `github-update-go`), and both read the frontmatter map and content
+// this pass has already produced, so neither costs a read or a listing of its own.
+func gaugeIncrements(
+	fmMap map[string]interface{},
+	content []byte,
+	now time.Time,
+) (parkedProbe int, stuckPlanning int) {
+	if isParkedProbe(fmMap) {
+		parkedProbe = 1
+	}
+	if isStuckPlanningTask(fmMap, content, now) {
+		stuckPlanning = 1
+	}
+	return parkedProbe, stuckPlanning
+}
+
+// recomputeVaultMetrics publishes the task-age series, the open-task census, the
+// parked-probe gauge and the update-go stuck-planning gauge from ONE listing and ONE
+// read per task file.
 //
 // The two instruments previously ran as independent passes, each listing the task
 // directory and fetching every file over the vault API. On the openclaw vault's
@@ -78,6 +98,7 @@ func (v *vaultScanner) recomputeVaultMetrics(
 	oldest := time.Duration(0)
 	censusCounts := make(map[openTaskPair]int, len(v.openTaskPairs))
 	parkedProbes := 0
+	stuckPlanning := 0
 	var cappedCandidates []string
 
 	for _, relPath := range paths {
@@ -95,11 +116,15 @@ func (v *vaultScanner) recomputeVaultMetrics(
 			continue
 		}
 
-		// Classified from the map this pass has already built, so the parked-probe
-		// gauge costs no second read and no listing of its own.
-		if isParkedProbe(fmMap) {
-			parkedProbes++
-		}
+		// The two stuck-record gauges are classified from the map and content this
+		// pass has already built, so neither costs a second read and no listing of
+		// its own. The update-go one used to be Set from scanFiles, which never runs
+		// on a trigger-only controller — every dev and prod controller runs
+		// POLL_INTERVAL=0s — so the series sat at its init value and the
+		// stuck-record signal was dead everywhere.
+		parkedInc, stuckInc := gaugeIncrements(fmMap, content, now)
+		parkedProbes += parkedInc
+		stuckPlanning += stuckInc
 
 		switch age, state := taskAgeFromMap(fmMap, now); state {
 		case taskAgeTerminal, taskAgeSkipped:
@@ -132,5 +157,6 @@ func (v *vaultScanner) recomputeVaultMetrics(
 	// Set last, and only on a completed pass: the early returns above must leave the
 	// previous value in place rather than publish 0 for a listing that never ran.
 	v.metrics.HealthcheckParkedProbes().Set(float64(parkedProbes))
+	v.metrics.UpdateGoStuckPlanningTasks().Set(float64(stuckPlanning))
 	return cappedCandidates, len(paths), true
 }

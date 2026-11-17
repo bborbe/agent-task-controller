@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/factory"
 	"github.com/bborbe/agent-task-controller/pkg/metrics"
 	"github.com/bborbe/agent-task-controller/pkg/prcomment"
@@ -244,6 +245,18 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		humanAssignees,
 		result.WithKeptStatePublisher(taskPublisher),
 	)
+	// The readback verifier is built once and shared: both write executors record
+	// expectations into it, and its Run loop is one more component. It is the only
+	// place that answers "did the record move after the command reported success",
+	// and its counter is what makes a non-landing write observable at all — the
+	// command's own success result cannot express it.
+	writeVerifier := command.NewWriteVerifier(
+		vaultClient,
+		metrics.New(),
+		currentDateTime,
+		0, // default interval
+		0, // default deadline
+	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
 		syncProducer,
@@ -260,11 +273,13 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		prCommenter,
 		metrics.New(),
 		humanAssignees,
+		writeVerifier,
 	)
 
 	components := []run.Func{
 		syncLoop.Run,
 		commandConsumer,
+		writeVerifier.Run,
 		a.createHTTPServer(syncLoop, vaultClient),
 	}
 	if a.RedriveEnabled && a.RedriveInterval > 0 {

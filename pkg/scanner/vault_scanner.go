@@ -403,8 +403,10 @@ func (v *vaultScanner) scanFiles(
 	if escalated > 0 {
 		glog.Infof("escalateCappedIdle: escalated %d capped task(s)", escalated)
 	}
-	v.metrics.UpdateGoStuckPlanningTasks().
-		Set(float64(v.countStuckPlanningTasks(ctx, paths, time.Now())))
+	// The update-go stuck gauge is deliberately NOT published here. Every controller
+	// runs POLL_INTERVAL=0s, where this function never runs, so a Set from the scan
+	// cycle keeps its init value for the pod's whole life. It is set by
+	// recomputeVaultMetrics instead, on the metrics ticker.
 	v.publishIndex()
 	return changed, deleted, written, writeError, true
 }

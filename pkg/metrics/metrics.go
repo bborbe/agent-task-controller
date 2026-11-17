@@ -23,6 +23,12 @@ type Metrics interface {
 	GitPushTotal(outcome string) prometheus.Counter
 	ConflictResolutionsTotal() prometheus.Counter
 	FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter
+	// ReadbackMismatchTotal counts commands that reported success while their
+	// record had not moved by the verification deadline. It is incremented by the
+	// post-write readback comparison itself — never by a test hook and never by a
+	// gauge set by hand — so a non-zero reading means a real acknowledgement
+	// preceded a write that had not reached the store.
+	ReadbackMismatchTotal(operation string) prometheus.Counter
 	GitRestCallsTotal(operation, status string) prometheus.Counter
 	KafkaConsumePausedTotal() prometheus.Counter
 	CommandExpiredTotal(operation string) prometheus.Counter
@@ -75,6 +81,10 @@ func (m *defaultMetrics) ConflictResolutionsTotal() prometheus.Counter {
 
 func (m *defaultMetrics) FrontmatterCommandsTotal(operation, outcome string) prometheus.Counter {
 	return FrontmatterCommandsTotal.WithLabelValues(operation, outcome)
+}
+
+func (m *defaultMetrics) ReadbackMismatchTotal(operation string) prometheus.Counter {
+	return ReadbackMismatchTotal.WithLabelValues(operation)
 }
 
 func (m *defaultMetrics) GitRestCallsTotal(operation, status string) prometheus.Counter {
@@ -182,6 +192,23 @@ var FrontmatterCommandsTotal = promauto.NewCounterVec(
 		Help: "Total number of atomic frontmatter commands processed, by operation and outcome.",
 	},
 	[]string{"operation", "outcome"},
+)
+
+// ReadbackMismatchTotal counts commands whose post-write readback found the
+// record unchanged past its verification deadline.
+//
+// It exists because a command's success result is emitted when the write is
+// accepted, and git-rest batches writes into a ~30 s commit window, so an
+// acknowledgement precedes the record's arrival in the store. A non-zero reading
+// means a command reported success and the record had still not moved by the
+// deadline — the gap no other series exposes. It is incremented at the readback
+// comparison, so the detector and the fix share one site.
+var ReadbackMismatchTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_readback_mismatch_total",
+		Help: "Total number of commands whose record had not moved by the readback verification deadline, by operation.",
+	},
+	[]string{"operation"},
 )
 
 // GitRestCallsTotal counts git-rest HTTP API calls by operation and outcome.
@@ -307,11 +334,16 @@ var SkippedFilesTotal = promauto.NewCounterVec(
 // phase: planning whose last job started more than 24 hours ago and whose body
 // carries a `## Failure` entry.
 //
-// It is a level, not an edge: the scanner recomputes it once per scan cycle and
-// Set()s the result, so the series falls back to 0 as soon as the queue drains.
-// That is what makes it alertable — `agent_controller_update_go_stuck_planning_tasks >= 10`
-// is true only while at least ten tasks are actually stuck, unlike a counter which
-// would stay positive forever after the backlog was cleared.
+// It is a level, not an edge: the metrics pass recomputes it and Set()s the result,
+// so the series falls back to 0 as soon as the queue drains. That is what makes it
+// alertable — `agent_controller_update_go_stuck_planning_tasks >= 10` is true only
+// while at least ten tasks are actually stuck, unlike a counter which would stay
+// positive forever after the backlog was cleared.
+//
+// The writer is the metrics ticker and not the scan cycle because the scan cycle is
+// dead on a trigger-only controller (POLL_INTERVAL=0s, which every controller runs),
+// so a gauge set there kept its init value forever and the series read 0 on every
+// controller.
 //
 // The 24 h age comes from the task's `job_started_at` frontmatter field; a task
 // with no recorded job start is not counted, because "stuck" is defined by a run
@@ -446,6 +478,15 @@ func init() {
 
 	for _, operation := range availableCommandOperations {
 		CommandExpiredTotal.WithLabelValues(operation).Add(0)
+	}
+
+	// The readback verifier labels by the same closed operation set, so every
+	// series exists at 0 before the first mismatch. An alert query then reads 0
+	// rather than "no data" on a freshly started pod — which matters more here
+	// than for a drop counter, because "no data" and "nothing mismatched" are the
+	// two readings this series exists to tell apart.
+	for _, operation := range availableCommandOperations {
+		ReadbackMismatchTotal.WithLabelValues(operation).Add(0)
 	}
 
 	// A gauge has no label combinations to pre-initialise, but setting it to 0
