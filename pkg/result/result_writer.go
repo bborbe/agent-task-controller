@@ -1478,7 +1478,7 @@ func applyPhaseMonotonic(
 	if !inIncoming {
 		return decisions // base merge already kept the on-disk phase
 	}
-	if _, declared := incoming[reassignmentDeclarationKey]; declared {
+	if declaresReassignment(incoming) {
 		return decisions // deliberate backward move
 	}
 	existingPhase := existing.Phase()

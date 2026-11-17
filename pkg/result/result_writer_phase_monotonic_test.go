@@ -211,4 +211,24 @@ var _ = Describe("MergeFrontmatter phase monotonicity", func() {
 		Expect(merged["phase"]).To(Equal("planning"))
 		Expect(decisions).To(BeEmpty())
 	})
+
+	// A declaration is only honoured when it is a non-empty string (the same
+	// `declaresReassignment` predicate the assignee guard uses). An empty or
+	// non-string declaration is treated as absent, so the stale planning echo must
+	// still be pinned — otherwise the phase escape hatch and the assignee guard
+	// disagree and the re-arm this fix closes would survive.
+	It("still pins a stale planning echo when the reassignment declaration is empty", func() {
+		existing := lib.TaskFrontmatter{"status": "in_progress", "phase": "execution"}
+		incoming := lib.TaskFrontmatter{
+			"status":                 "in_progress",
+			"phase":                  "planning",
+			"assignee_reassigned_by": "",
+		}
+
+		merged, decisions := result.MergeFrontmatter(existing, incoming)
+
+		Expect(merged["phase"]).To(Equal("execution"))
+		Expect(decisions).To(HaveLen(1))
+		Expect(decisions[0].Field).To(Equal("phase"))
+	})
 })
