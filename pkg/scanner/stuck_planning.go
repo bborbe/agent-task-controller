@@ -5,13 +5,8 @@
 package scanner
 
 import (
-	"context"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/golang/glog"
-	"gopkg.in/yaml.v3"
 )
 
 // stuckPlanningTaskType is the task_type whose backlog this gauge watches. Only the
@@ -23,69 +18,17 @@ const stuckPlanningTaskType = "github-update-go"
 // before it counts as stuck. Pinned by the SC6 acceptance criterion (> 24 h).
 const stuckPlanningMaxAge = 24 * time.Hour
 
-// stuckPlanningNamePrefix pre-filters the vault listing to the update-go task files
-// before any of them is read. The vault holds ~12k task files and the scanner runs
-// every few minutes, so reading all of them to find ~300 update rows would cost more
-// than the metric is worth. The prefix is the emitter's own filename shape
-// (`Update Go <owner>-<repo> <sha>.md`, see /github-update-go-repo-trigger § 6);
-// every candidate is then confirmed against its frontmatter, so a file that merely
-// looks like an update task cannot be counted.
-const stuckPlanningNamePrefix = "Update Go "
-
-// countStuckPlanningTasks returns how many github-update-go tasks are stuck: still at
-// phase planning, with a job that started more than stuckPlanningMaxAge ago, and a
-// `## Failure` entry in the body.
+// isStuckPlanningTask reports whether one task record meets every clause of the stuck
+// definition: a `github-update-go` task still at phase planning, its job started more
+// than stuckPlanningMaxAge ago, and a `## Failure` entry in the body.
 //
-// It reads only the files whose name matches stuckPlanningNamePrefix and never mutates
-// anything — the scan cycle owns all writes. A file that cannot be read or parsed is
-// skipped silently: this is a gauge, and one unreadable file must not blank it.
-func (v *vaultScanner) countStuckPlanningTasks(
-	ctx context.Context,
-	paths []string,
-	now time.Time,
-) int {
-	stuck := 0
-	for _, relPath := range paths {
-		select {
-		case <-ctx.Done():
-			return stuck
-		default:
-		}
-		if !strings.HasPrefix(filepath.Base(relPath), stuckPlanningNamePrefix) {
-			continue
-		}
-		if v.isStuckPlanningTask(ctx, relPath, now) {
-			stuck++
-		}
-	}
-	return stuck
-}
-
-// isStuckPlanningTask reports whether one task file meets every clause of the stuck
-// definition. Each clause is checked against the parsed frontmatter rather than the
-// filename, so a file that matches the name prefix but not the contract is not counted.
-func (v *vaultScanner) isStuckPlanningTask(
-	ctx context.Context,
-	relPath string,
-	now time.Time,
-) bool {
-	content, err := v.ops.readFile(ctx, relPath)
-	if err != nil {
-		glog.V(4).Infof("stuck-planning gauge: read %s: %v", relPath, err)
-		return false
-	}
-	fmYAML, err := extractFrontmatter(ctx, content)
-	if err != nil {
-		return false
-	}
-	dedupedYAML, _, err := DeduplicateFrontmatter(ctx, fmYAML)
-	if err != nil {
-		return false
-	}
-	var fmMap map[string]interface{}
-	if err := yaml.Unmarshal([]byte(dedupedYAML), &fmMap); err != nil {
-		return false
-	}
+// It takes the frontmatter map and the content that recomputeVaultMetrics has already
+// produced, so it costs no read and no listing of its own. Every clause is checked
+// against the parsed frontmatter rather than the filename: a file that merely looks
+// like an update task cannot be counted. The name-prefix pre-filter the scan-cycle
+// version needed to avoid reading ~12k files is unnecessary here, because this pass
+// reads every file anyway.
+func isStuckPlanningTask(fmMap map[string]interface{}, content []byte, now time.Time) bool {
 	if stringField(fmMap, "task_type") != stuckPlanningTaskType {
 		return false
 	}

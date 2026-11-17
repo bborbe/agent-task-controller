@@ -334,11 +334,16 @@ var SkippedFilesTotal = promauto.NewCounterVec(
 // phase: planning whose last job started more than 24 hours ago and whose body
 // carries a `## Failure` entry.
 //
-// It is a level, not an edge: the scanner recomputes it once per scan cycle and
-// Set()s the result, so the series falls back to 0 as soon as the queue drains.
-// That is what makes it alertable — `agent_controller_update_go_stuck_planning_tasks >= 10`
-// is true only while at least ten tasks are actually stuck, unlike a counter which
-// would stay positive forever after the backlog was cleared.
+// It is a level, not an edge: the metrics pass recomputes it and Set()s the result,
+// so the series falls back to 0 as soon as the queue drains. That is what makes it
+// alertable — `agent_controller_update_go_stuck_planning_tasks >= 10` is true only
+// while at least ten tasks are actually stuck, unlike a counter which would stay
+// positive forever after the backlog was cleared.
+//
+// The writer is the metrics ticker and not the scan cycle because the scan cycle is
+// dead on a trigger-only controller (POLL_INTERVAL=0s, which every controller runs),
+// so a gauge set there kept its init value forever and the series read 0 on every
+// controller.
 //
 // The 24 h age comes from the task's `job_started_at` frontmatter field; a task
 // with no recorded job start is not counted, because "stuck" is defined by a run
