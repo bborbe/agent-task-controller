@@ -159,6 +159,23 @@ func parkedProbeGaugeValue() float64 {
 	return -1
 }
 
+// updateGoStuckGaugeValue reads the update-go stuck-planning gauge straight off its
+// collector, so the spec does not depend on which other specs have registered or reset
+// a series.
+func updateGoStuckGaugeValue() float64 {
+	ch := make(chan prometheus.Metric, 1)
+	go func() {
+		metrics.UpdateGoStuckPlanningTasks.Collect(ch)
+		close(ch)
+	}()
+	for metric := range ch {
+		written := &dto.Metric{}
+		Expect(metric.Write(written)).To(Succeed())
+		return written.GetGauge().GetValue()
+	}
+	return -1
+}
+
 var _ = Describe("recomputeVaultMetrics", func() {
 	var ctx context.Context
 
@@ -233,6 +250,48 @@ var _ = Describe("recomputeVaultMetrics", func() {
 		_, _, ok := v.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeFalse())
 		Expect(parkedProbeGaugeValue()).To(BeNumerically("==", 7))
+	})
+
+	It("sets the update-go stuck gauge from the same pass", func() {
+		// This pass is the gauge's writer, not the scan cycle: every controller on dev
+		// and prod runs POLL_INTERVAL=0s, where scanFiles is dead, so a gauge set there
+		// kept its init value for the pod's whole life and the stuck-record signal was
+		// dead everywhere. The four records are the acceptance criterion's matrix —
+		// stuck, too young, past planning, and one whose frontmatter will not parse.
+		oldStart := time.Now().Add(-25 * time.Hour).Format(time.RFC3339)
+		recentStart := time.Now().Add(-time.Hour).Format(time.RFC3339)
+		failureBody := "\n# Update Go\n\n## Failure\n\n- **Reason:** deadline_exceeded\n"
+		updateGo := func(phase, startedAt string) string {
+			return "---\ntask_type: github-update-go\nphase: " + phase +
+				"\nstatus: in_progress\njob_started_at: \"" + startedAt + "\"\n---\n" +
+				failureBody
+		}
+
+		v := metricsPassScanner(map[string]string{
+			"tasks/Update Go bborbe-alert a34dc9e.md":     updateGo("planning", oldStart),
+			"tasks/Update Go bborbe-run 1111111.md":       updateGo("planning", recentStart),
+			"tasks/Update Go bborbe-vault-cli 2222222.md": updateGo("human_review", oldStart),
+			"tasks/broken.md":                             "---\nstatus: [unclosed\n---\n",
+		}, nil, nil)
+
+		_, _, ok := v.recomputeVaultMetrics(ctx)
+		Expect(ok).To(BeTrue())
+		Expect(updateGoStuckGaugeValue()).To(BeNumerically("==", 1))
+	})
+
+	It("leaves the update-go stuck gauge untouched when the listing fails", func() {
+		// A failed listing writes nothing, exactly as the age, census and parked-probe
+		// series behave: publishing 0 for a pass that never ran would blank a real
+		// signal and read as "the backlog drained".
+		v := metricsPassScanner(map[string]string{}, nil, nil)
+		v.ops.listFiles = func(_ context.Context, _ string) ([]string, error) {
+			return nil, os.ErrNotExist
+		}
+		metrics.UpdateGoStuckPlanningTasks.Set(3)
+
+		_, _, ok := v.recomputeVaultMetrics(ctx)
+		Expect(ok).To(BeFalse())
+		Expect(updateGoStuckGaugeValue()).To(BeNumerically("==", 3))
 	})
 
 	It("reads each task file once where the two passes read it twice", func() {
