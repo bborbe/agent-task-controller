@@ -444,6 +444,11 @@ func FindTaskFilePath(
 	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
 	for _, listed := range tasks {
+		// The walk now costs one read per listed task, so a cancelled command must
+		// stop between reads rather than after the whole vault has been walked.
+		if err := ctx.Err(); err != nil {
+			return "", nil, errors.Wrapf(ctx, err, "walk tasks")
+		}
 		// The listing is a flat projection and carries no frontmatter, so each
 		// listed task's frontmatter has to be read per task. An empty title has no
 		// address to read, exactly as typedFileOps.list skips it.
