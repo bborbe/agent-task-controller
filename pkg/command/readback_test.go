@@ -6,6 +6,7 @@ package command_test
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	lib "github.com/bborbe/agent"
@@ -300,6 +301,62 @@ var _ = Describe("WriteVerifier", func() {
 
 			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 1))
 			Expect(fakeMet.ReadbackMismatchTotalArgsForCall(0)).To(Equal("create-task"))
+		})
+	})
+
+	// Shutdown is not a failure: every component in this repo runs through
+	// service.Run, which treats a component error as fatal, so returning
+	// ctx.Err() here would make an ordinary stop look like a crash.
+	Context("when the context is cancelled", func() {
+		It("returns nil instead of the context error", func() {
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+
+			Expect(verifier.Run(cancelled)).NotTo(HaveOccurred())
+		})
+	})
+
+	// An expectation that cannot name its record or its operation cannot be
+	// verified. Dropping it is the honest outcome; counting it would invent a
+	// mismatch from a caller bug.
+	Context("when an expectation cannot be verified", func() {
+		It("drops an expectation with no task identifier", func() {
+			verifier.Expect(ctx, command.ReadbackExpectation{
+				Operation: "update-frontmatter",
+			})
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+		})
+
+		It("drops an expectation with no operation", func() {
+			verifier.Expect(ctx, command.ReadbackExpectation{
+				TaskIdentifier: "task-k",
+			})
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(fakeVault.ReadTaskCallCount()).To(Equal(0))
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+		})
+	})
+
+	// A read that fails for a reason other than not-found says nothing about
+	// whether the write landed, so it is logged and dropped. Counting it would
+	// fire the detector on every write while vault-api is briefly unavailable.
+	Context("when the readback read fails", func() {
+		It("counts nothing", func() {
+			fakeVault.ReadTaskReturns(nil, errors.New("vault-api unreachable"))
+
+			verifier.Expect(ctx, command.ReadbackExpectation{
+				TaskIdentifier: "task-l",
+				Operation:      "update-frontmatter",
+				BeforeHash:     hashOf(map[string]any{"phase": "planning"}, ""),
+			})
+			command.VerifyDueForTest(verifier, ctx)
+
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+			Expect(fakeMet.ReadbackMismatchTotalCallCount()).To(Equal(0))
 		})
 	})
 })
