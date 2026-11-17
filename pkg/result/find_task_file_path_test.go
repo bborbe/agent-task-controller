@@ -30,6 +30,26 @@ func task(id, title string) vaultapi.Task {
 	}
 }
 
+// listed builds a listing item as the vault API returns it: a flat projection
+// with an id and a title and no frontmatter.
+func listed(id, title string) vaultapi.Task {
+	return vaultapi.Task{ID: id, Title: title}
+}
+
+// readStub serves per-task reads by the title-derived address the walk uses,
+// the way the real API resolves a task.
+func readStub(
+	byAddress map[string]vaultapi.Task,
+) func(context.Context, string) (*vaultapi.Task, error) {
+	return func(_ context.Context, address string) (*vaultapi.Task, error) {
+		t, ok := byAddress[address]
+		if !ok {
+			return nil, vaultapi.ErrNotFound
+		}
+		return &t, nil
+	}
+}
+
 var _ = Describe("FindTaskFilePath", func() {
 	var ctx context.Context
 
@@ -39,14 +59,19 @@ var _ = Describe("FindTaskFilePath", func() {
 
 	It("lists the vault once and matches by identifier", func() {
 		fakeVault := &mocks.VaultAPIClient{}
-		fakeVault.ListTasksReturns([]vaultapi.Task{task("foo", "a"), task("bar", "b")}, nil)
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("foo", "a"), listed("bar", "b")}, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"a": task("foo", "a"),
+			"b": task("bar", "b"),
+		})
 
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "bar", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/b.md"))
-		// One listing replaces the old list-then-read-per-file walk: the API hands
-		// back parsed frontmatter, so there is nothing left to read per file.
+		// The listing is a flat projection that carries no frontmatter, so each
+		// listed task is read once to match on its own frontmatter.
 		Expect(fakeVault.ListTasksCallCount()).To(Equal(1))
+		Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
 	})
 
 	// Regression: 2026-08-31. Two Schedule CRs sharing a name across the dev and
@@ -59,8 +84,12 @@ var _ = Describe("FindTaskFilePath", func() {
 	It("returns an error when two tasks share one task_identifier", func() {
 		fakeVault := &mocks.VaultAPIClient{}
 		fakeVault.ListTasksReturns(
-			[]vaultapi.Task{task("dup", "first"), task("dup", "second")}, nil,
+			[]vaultapi.Task{listed("dup", "first"), listed("dup", "second")}, nil,
 		)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"first":  task("dup", "first"),
+			"second": task("dup", "second"),
+		})
 
 		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "dup", nil)
 		Expect(err).To(HaveOccurred())
@@ -74,8 +103,13 @@ var _ = Describe("FindTaskFilePath", func() {
 	It("still resolves when a duplicate exists for a DIFFERENT identifier", func() {
 		fakeVault := &mocks.VaultAPIClient{}
 		fakeVault.ListTasksReturns(
-			[]vaultapi.Task{task("dup", "a"), task("dup", "b"), task("target", "c")}, nil,
+			[]vaultapi.Task{listed("dup", "a"), listed("dup", "b"), listed("target", "c")}, nil,
 		)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"a": task("dup", "a"),
+			"b": task("dup", "b"),
+			"c": task("target", "c"),
+		})
 
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -84,7 +118,10 @@ var _ = Describe("FindTaskFilePath", func() {
 
 	It("returns empty path when no task matches", func() {
 		fakeVault := &mocks.VaultAPIClient{}
-		fakeVault.ListTasksReturns([]vaultapi.Task{task("other", "a")}, nil)
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("other", "a")}, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"a": task("other", "a"),
+		})
 
 		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "missing", nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -96,11 +133,65 @@ var _ = Describe("FindTaskFilePath", func() {
 		fakeVault := &mocks.VaultAPIClient{}
 		repaired := task("new-id", "good")
 		repaired.Frontmatter["task_identifier_previous"] = "target"
-		fakeVault.ListTasksReturns([]vaultapi.Task{repaired}, nil)
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("new-id", "good")}, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"good": repaired,
+		})
 
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/good.md"))
+	})
+
+	// Regression: the listing carries no frontmatter, so a walk that matched on the
+	// listing item alone dropped every result whose identifier missed the index.
+	// The walk must read each listed task and match on the frontmatter that read
+	// returns.
+	It("resolves an identifier the index misses through a per-task read", func() {
+		fakeVault := &mocks.VaultAPIClient{}
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("x", "a")}, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"a": task("target", "a"),
+		})
+
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matchedRelPath).To(Equal("tasks/a.md"))
+		Expect(fakeVault.ReadTaskCallCount()).To(BeNumerically(">=", 1))
+		// The fake returns its stub whatever the argument is, so a call count alone
+		// cannot prove the walk addressed the task the real API would resolve.
+		_, address := fakeVault.ReadTaskArgsForCall(0)
+		Expect(address).To(Equal("a"))
+	})
+
+	It("resolves a task_identifier_previous match through the per-task read", func() {
+		fakeVault := &mocks.VaultAPIClient{}
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("new-id", "good")}, nil)
+		repaired := task("new-id", "good")
+		repaired.Frontmatter["task_identifier_previous"] = "target"
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"good": repaired,
+		})
+
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matchedRelPath).To(Equal("tasks/good.md"))
+	})
+
+	It("skips a listed task whose read reports not found and matches the next", func() {
+		fakeVault := &mocks.VaultAPIClient{}
+		fakeVault.ListTasksReturns(
+			[]vaultapi.Task{listed("gone", "gone"), listed("kept-id", "kept")}, nil,
+		)
+		match := task("target", "kept")
+		fakeVault.ReadTaskReturnsOnCall(0, nil, vaultapi.ErrNotFound)
+		fakeVault.ReadTaskReturnsOnCall(1, &match, nil)
+
+		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matchedRelPath).To(Equal("tasks/kept.md"))
+		Expect(fm).NotTo(BeNil())
+		Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
 	})
 
 	It("returns an error when the listing fails", func() {
