@@ -174,6 +174,14 @@ func (t *testVaultClient) ListTasks(
 	return t.tasks()
 }
 
+func (t *testVaultClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return t.ReadTask(ctx, id)
+}
+
 func (t *testVaultClient) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
 	if t.readErr != nil {
 		return nil, t.readErr

@@ -48,6 +48,14 @@ func (c *indexGitClient) ListTasks(
 	return fileVault{c.path}.ListTasks(ctx, filter)
 }
 
+func (c *indexGitClient) ReadTaskAt(
+	ctx context.Context,
+	id string,
+	_ string,
+) (*vaultapi.Task, error) {
+	return c.ReadTask(ctx, id)
+}
+
 func (c *indexGitClient) ReadTask(ctx context.Context, id string) (*vaultapi.Task, error) {
 	c.readFileCalls++
 	return fileVault{c.path}.ReadTask(ctx, id)

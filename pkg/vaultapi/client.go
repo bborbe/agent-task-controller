@@ -193,6 +193,14 @@ type Filter struct {
 type Client interface {
 	// ReadTask returns the task with the given identifier, or ErrNotFound.
 	ReadTask(ctx context.Context, id string) (*Task, error)
+	// ReadTaskAt returns the task as it exists at ref in the committed history,
+	// or ErrNotFound when that ref does not carry it.
+	//
+	// The view is the point: ReadTask serves the working tree, which holds a
+	// write from the moment vault-api accepts it, while a commit trails by up to
+	// one git-rest window. A caller deciding whether a write LANDED must ask this
+	// question, because the working-tree answer is the write path's own echo.
+	ReadTaskAt(ctx context.Context, id string, ref string) (*Task, error)
 	// CreateTask creates a task and returns it with the identifier the API
 	// minted. ErrAlreadyExists when one is already present — as *AlreadyExistsError,
 	// which names the occupant so the caller can decide what to do about it.
@@ -394,6 +402,16 @@ func (c *client) ReadTask(ctx context.Context, id string) (*Task, error) {
 		return nil, err
 	}
 	return decodeTask(ctx, status, raw, "read task "+id)
+}
+
+// ReadTaskAt returns one task as committed at ref.
+func (c *client) ReadTaskAt(ctx context.Context, id string, ref string) (*Task, error) {
+	query := url.Values{"ref": []string{ref}}
+	status, raw, err := c.do(ctx, http.MethodGet, taskPath(id, ""), query, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTask(ctx, status, raw, "read task "+id+" at "+ref)
 }
 
 // CreateTask creates a task and returns the stored form.

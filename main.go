@@ -81,6 +81,7 @@ type application struct {
 	NoSync                   bool              `required:"false" arg:"no-sync"                     env:"NO_SYNC"                     usage:"disable BoltDB fsync (for testing only)"`
 	VaultAPIURL              string            `required:"false" arg:"vault-api-url"               env:"VAULT_API_URL"               usage:"vault-api base URL; the typed surface the executors address tasks through. REQUIRED for any command ported to it, which fails closed at construction rather than falling back to a path-addressed write"`
 	GatewaySecret            string            `required:"false" arg:"gateway-secret"              env:"GATEWAY_SECRET"              usage:"shared secret for git-rest gateway auth (sent as X-Gateway-Secret header)"                                                                                                                                                                                        display:"length" default:""`
+	ReadbackRef              string            `required:"false" arg:"readback-ref"                env:"READBACK_REF"                usage:"git ref the post-write readback reads, so a success is verified against the committed history rather than the working tree; must name the branch consumers read"                                                                                                                   default:"origin/main"`
 	BuildGitVersion          string            `required:"false" arg:"build-git-version"           env:"BUILD_GIT_VERSION"           usage:"Build Git version (git describe --tags --always --dirty)"                                                                                                                                                                                                                          default:"dev"`
 	BuildGitCommit           string            `required:"false" arg:"build-git-commit"            env:"BUILD_GIT_COMMIT"            usage:"Build Git commit hash"                                                                                                                                                                                                                                                             default:"none"`
 	BuildDate                *libtime.DateTime `required:"false" arg:"build-date"                  env:"BUILD_DATE"                  usage:"Build timestamp (RFC3339)"`
@@ -256,6 +257,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		currentDateTime,
 		0, // default interval
 		0, // default deadline
+		a.ReadbackRef,
 	)
 	commandConsumer := factory.CreateCommandConsumer(
 		saramaClientProvider,
