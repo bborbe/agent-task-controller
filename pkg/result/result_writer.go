@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/errors"
 	notifcore "github.com/bborbe/notification"
 	notifcmd "github.com/bborbe/notification/command/notification"
+	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
@@ -458,22 +459,25 @@ func FindTaskFilePath(
 	// are still evaluated in listing order, so a duplicate error names the same two
 	// paths it always did.
 	walkResults := make([]walkResult, len(tasks))
-	jobs := make(chan int)
-	var walkGroup sync.WaitGroup
+	shards := make([]run.Func, 0, walkConcurrency)
 	for worker := 0; worker < walkConcurrency; worker++ {
-		walkGroup.Add(1)
-		go func() {
-			defer walkGroup.Done()
-			for i := range jobs {
+		shard := worker
+		shards = append(shards, func(ctx context.Context) error {
+			for i := shard; i < len(tasks); i += walkConcurrency {
+				if err := ctx.Err(); err != nil {
+					return errors.Wrapf(ctx, err, "walk tasks")
+				}
 				walkResults[i] = walkOneTask(ctx, client, taskDir, id, tasks[i])
 			}
-		}()
+			return nil
+		})
 	}
-	for i := range tasks {
-		jobs <- i
+	// run.All is the library's fan-out-and-wait, so the walk never hand-rolls a
+	// goroutine (go-concurrency/no-raw-go-func). Each shard owns a disjoint index
+	// stride, so no two shards write the same slot.
+	if err := run.All(ctx, shards...); err != nil {
+		return "", nil, errors.Wrapf(ctx, err, "walk tasks")
 	}
-	close(jobs)
-	walkGroup.Wait()
 
 	for _, res := range walkResults {
 		if res.err != nil {
