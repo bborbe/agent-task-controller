@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.33.4
 
 - perf: **the task-file walk now reads the vault concurrently, so an identifier-index miss no longer stalls the command consumer for minutes.** `FindTaskFilePath` falls back to a listing plus one `ReadTask` per listed task when the identifier index misses. That fallback is required — a match can arrive through `task_identifier` or through `task_identifier_previous`, and AC7 requires a duplicate pair spanning the two to be reported — but it ran serially. Measured on dev 2026-11-19 against a 12 764-file `25 Tasks`: 1–2 minutes per miss, inside the single-partition `agent-task-v1-request` consumer, which head-of-line blocked every command behind it (a spawn notification landed 15 m 40 s late; a prototype result 7 m 26 s late). The reads are independent, so they now run through a bounded pool (`walkConcurrency = 8`); the match rules, their listing order, and the duplicate-identifier error are unchanged, and no read is skipped. `pkg/testvault.Client`'s call counters became mutex-guarded so the concurrent walk is `-race` clean.
 
