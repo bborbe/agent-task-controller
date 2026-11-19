@@ -443,38 +443,43 @@ func FindTaskFilePath(
 	var matchedRelPath string
 	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
-	for _, listed := range tasks {
-		// The walk now costs one read per listed task, so a cancelled command must
-		// stop between reads rather than after the whole vault has been walked.
-		if err := ctx.Err(); err != nil {
-			return "", nil, errors.Wrapf(ctx, err, "walk tasks")
-		}
-		// The listing is a flat projection and carries no frontmatter, so each
-		// listed task's frontmatter has to be read per task. An empty title has no
-		// address to read, exactly as typedFileOps.list skips it.
-		relPath := taskRelPathFor(taskDir, listed)
-		if relPath == "" {
-			continue
-		}
-		task, readErr := client.ReadTask(ctx, taskAddressFromRelPath(relPath))
-		if readErr != nil {
-			// The vault moved between the listing and the read: the task is no
-			// longer there, so it is not a match.
-			if errors.Is(readErr, vaultapi.ErrNotFound) {
-				continue
+
+	// The walk costs one read per listed task, and every one of them is required:
+	// a match can arrive through the CURRENT identifier or through
+	// task_identifier_previous, and AC7 requires a duplicate pair spanning the two
+	// to be reported rather than resolved. The listing carries neither key, so the
+	// reads cannot be skipped — only overlapped.
+	//
+	// Serially this was measured on dev 2026-11-19 as 12 764 reads and 1–2 minutes
+	// per index miss, inside the single-partition command consumer, which
+	// head-of-line blocked every command behind it (a spawn notification landed
+	// 15 m 40 s late; a prototype result 7 m 26 s late). The reads are independent,
+	// so they run through a bounded pool; the match rules below are unchanged and
+	// are still evaluated in listing order, so a duplicate error names the same two
+	// paths it always did.
+	walkResults := make([]walkResult, len(tasks))
+	jobs := make(chan int)
+	var walkGroup sync.WaitGroup
+	for worker := 0; worker < walkConcurrency; worker++ {
+		walkGroup.Add(1)
+		go func() {
+			defer walkGroup.Done()
+			for i := range jobs {
+				walkResults[i] = walkOneTask(ctx, client, taskDir, id, tasks[i])
 			}
-			return "", nil, errors.Wrapf(ctx, readErr, "read task %s", relPath)
+		}()
+	}
+	for i := range tasks {
+		jobs <- i
+	}
+	close(jobs)
+	walkGroup.Wait()
+
+	for _, res := range walkResults {
+		if res.err != nil {
+			return "", nil, res.err
 		}
-		// The read task's title is the address a caller can write to, so compose
-		// the match path from it; an empty title has no address and cannot match.
-		relPath = taskRelPathFor(taskDir, *task)
-		if relPath == "" {
-			continue
-		}
-		current, _ := task.Frontmatter["task_identifier"].(string)
-		previous, _ := task.Frontmatter["task_identifier_previous"].(string)
-		matched, viaPrevious := taskIdentifierMatch(current, previous, id)
-		if !matched {
+		if !res.matched {
 			continue
 		}
 		// Two tasks sharing one identifier — whether by the current key or the
@@ -486,18 +491,84 @@ func FindTaskFilePath(
 			return "", nil, errors.Errorf(
 				ctx,
 				"duplicate task_identifier %s in %s and %s",
-				id, matchedRelPath, relPath,
+				id, matchedRelPath, res.relPath,
 			)
 		}
-		matchedRelPath = relPath
-		matchedByPrevious = viaPrevious
-		logTaskFileMatch(relPath, id, viaPrevious)
-		existingFrontmatter = lib.TaskFrontmatter(task.Frontmatter)
+		matchedRelPath = res.relPath
+		matchedByPrevious = res.viaPrevious
+		logTaskFileMatch(res.relPath, id, res.viaPrevious)
+		existingFrontmatter = res.frontmatter
 	}
 	if !matchedByPrevious {
 		recordWalkMatch(ctx, resolver, id, matchedRelPath)
 	}
 	return matchedRelPath, existingFrontmatter, nil
+}
+
+// walkConcurrency bounds how many listed tasks the walk reads at once.
+//
+// Deliberately modest: the walk is a burst against vault-api and nothing measured
+// its ceiling. It buys ~8x on the measured 1–2 minute serial walk, which is
+// enough to stop a single miss monopolising the command consumer. Raise it only
+// against a measured vault-api latency curve — never on the assumption that more
+// parallelism is free.
+const walkConcurrency = 8
+
+// walkResult is one listed task's verdict from the walk, or the error that
+// stopped it. A read that misses is neither an error nor a match — the vault
+// moved between the listing and the read — while any other read error is carried
+// so the caller fails rather than silently skipping a task it could not inspect.
+type walkResult struct {
+	relPath     string
+	viaPrevious bool
+	matched     bool
+	frontmatter lib.TaskFrontmatter
+	err         error
+}
+
+// walkOneTask reads one listed task and reports whether it matches id.
+func walkOneTask(
+	ctx context.Context,
+	client vaultapi.Client,
+	taskDir string,
+	id lib.TaskIdentifier,
+	listed vaultapi.Task,
+) walkResult {
+	if err := ctx.Err(); err != nil {
+		return walkResult{err: errors.Wrapf(ctx, err, "walk tasks")}
+	}
+	// The listing is a flat projection and carries no frontmatter, so each listed
+	// task's frontmatter has to be read per task. An empty title has no address to
+	// read, exactly as typedFileOps.list skips it.
+	relPath := taskRelPathFor(taskDir, listed)
+	if relPath == "" {
+		return walkResult{}
+	}
+	task, readErr := client.ReadTask(ctx, taskAddressFromRelPath(relPath))
+	if readErr != nil {
+		if errors.Is(readErr, vaultapi.ErrNotFound) {
+			return walkResult{}
+		}
+		return walkResult{err: errors.Wrapf(ctx, readErr, "read task %s", relPath)}
+	}
+	// The read task's title is the address a caller can write to, so compose the
+	// match path from it; an empty title has no address and cannot match.
+	relPath = taskRelPathFor(taskDir, *task)
+	if relPath == "" {
+		return walkResult{}
+	}
+	current, _ := task.Frontmatter["task_identifier"].(string)
+	previous, _ := task.Frontmatter["task_identifier_previous"].(string)
+	matched, viaPrevious := taskIdentifierMatch(current, previous, id)
+	if !matched {
+		return walkResult{}
+	}
+	return walkResult{
+		relPath:     relPath,
+		viaPrevious: viaPrevious,
+		matched:     true,
+		frontmatter: lib.TaskFrontmatter(task.Frontmatter),
+	}
 }
 
 // taskIdentifierMatch reports whether current or previous names id, and whether
