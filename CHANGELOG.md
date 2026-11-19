@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.33.5
 
 - fix: **the post-write readback reads `origin/HEAD` by default, so it verifies on every vault, and an unverifiable read no longer reads like a lost write.** v0.33.3 made the readback read the committed ref but named it `origin/main`; the `personal`, `trading` and `seibert-personal` vaults use `master`, so the ref did not resolve, vault-api's `loadCommittedDocument` fell through to `500 {"error":"read_failed"}`, and every Body-carrying `update-frontmatter` logged `readback: cannot verify …` after a write that had actually landed (measured 2026-11-19 on dev: `prototype-seed-plan-absence-probe-daily` logged the 500 at 19:33:58Z and the write is vault commit `d8f374df5a` at 19:48:02Z). The default is now `origin/HEAD`, the remote's default branch, which resolves to `origin/main` on the openclaw vault and `origin/master` on the rest — one value correct for the whole fleet. The non-not-found error branch is also reworded to `readback: verification unavailable … — the write is NOT known to have failed`, so a verification fault (an unresolvable ref, a vault-api or git failure) can no longer be mistaken for a dropped write. New spec asserts the default ref resolves through `origin/HEAD`; the existing read-failure spec continues to assert it counts no mismatch.
 ## v0.33.4
