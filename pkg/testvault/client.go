@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -29,6 +30,12 @@ type Client struct {
 
 	// Call counters, so a spec can prove an operation was not reached — the
 	// property the old GitClient double's *CallCount assertions carried.
+	//
+	// mu guards them because the walk reads the vault concurrently: without it
+	// every `-race` run of a multi-task spec reports a data race on these three
+	// fields, which is the double's problem rather than the caller's — the real
+	// vaultapi client is an http.Client and is safe.
+	mu         sync.Mutex
 	listCalls  int
 	readCalls  int
 	patchCalls int
@@ -61,13 +68,25 @@ func (f *Client) Seed(files map[string][]byte) error {
 }
 
 // ListTasksCallCount reports how many listings were issued.
-func (f *Client) ListTasksCallCount() int { return f.listCalls }
+func (f *Client) ListTasksCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
+}
 
 // ReadTaskCallCount reports how many single-task reads were issued.
-func (f *Client) ReadTaskCallCount() int { return f.readCalls }
+func (f *Client) ReadTaskCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.readCalls
+}
 
 // PatchTaskWithBodyCallCount reports how many typed writes were issued.
-func (f *Client) PatchTaskWithBodyCallCount() int { return f.patchCalls }
+func (f *Client) PatchTaskWithBodyCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.patchCalls
+}
 
 func (f *Client) tasks() ([]vaultapi.Task, error) {
 	var tasks []vaultapi.Task
@@ -169,7 +188,9 @@ func (f *Client) ListTasks(
 	_ context.Context,
 	_ vaultapi.Filter,
 ) ([]vaultapi.Task, error) {
+	f.mu.Lock()
 	f.listCalls++
+	f.mu.Unlock()
 	if f.ListErr != nil {
 		return nil, f.ListErr
 	}
@@ -178,7 +199,9 @@ func (f *Client) ListTasks(
 
 // ReadTask returns the task addressed by identifier or title.
 func (f *Client) ReadTask(_ context.Context, id string) (*vaultapi.Task, error) {
+	f.mu.Lock()
 	f.readCalls++
+	f.mu.Unlock()
 	if f.ReadErrOn != nil {
 		if err, ok := f.ReadErrOn[id]; ok {
 			return nil, err
@@ -263,7 +286,9 @@ func (f *Client) PatchTaskWithBody(
 	fields map[string]any,
 	body string,
 ) (*vaultapi.Task, error) {
+	f.mu.Lock()
 	f.patchCalls++
+	f.mu.Unlock()
 	if f.PatchErr != nil {
 		return nil, f.PatchErr
 	}
