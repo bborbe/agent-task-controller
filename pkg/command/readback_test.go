@@ -400,6 +400,41 @@ var _ = Describe("WriteVerifier", func() {
 			Expect(fakeMet.ReadbackMismatchTotalCallCount()).To(Equal(0))
 		})
 	})
+
+	// The default ref must name the vault's DEFAULT branch, not a literal one.
+	// Naming `origin/main` was wrong for every `master` vault: the ref does not
+	// resolve, vault-api answers 500 read_failed, and a landed write logged
+	// "cannot verify". origin/HEAD resolves to origin/main or origin/master
+	// depending on the vault, so one default is correct for the whole fleet.
+	Context("when no ref is configured", func() {
+		It("reads the vault's default branch", func() {
+			defaultRefVerifier := command.NewWriteVerifier(
+				fakeVault,
+				fakeMet,
+				libtime.NewCurrentDateTime(),
+				time.Nanosecond,
+				time.Nanosecond,
+				"",
+			)
+			stubRead(&vaultapi.Task{
+				ID:          "task-m",
+				Title:       "task-m",
+				Frontmatter: map[string]any{"phase": "done"},
+			}, nil)
+
+			defaultRefVerifier.Expect(ctx, command.ReadbackExpectation{
+				TaskIdentifier: "task-m",
+				Operation:      "update-frontmatter",
+				BeforeHash:     hashOf(map[string]any{"phase": "planning"}, ""),
+			})
+			command.VerifyDueForTest(defaultRefVerifier, ctx)
+
+			Expect(fakeVault.ReadTaskAtCallCount()).To(Equal(1))
+			_, _, ref := fakeVault.ReadTaskAtArgsForCall(0)
+			Expect(ref).To(Equal("origin/HEAD"))
+			Expect(testutil.ToFloat64(counter)).To(BeNumerically("==", 0))
+		})
+	})
 })
 
 // buildReadbackCreateCmd builds the create command object the executor consumes.

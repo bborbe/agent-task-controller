@@ -42,9 +42,17 @@ const DefaultReadbackInterval = 5 * time.Second
 //
 // It is the branch a consumer sees, not the local HEAD: git-rest commits and then
 // pushes, so a commit that failed to push is in HEAD while no consumer can read
-// it. Reading origin/main asks the question the task asks — did the record reach
-// the history others read.
-const DefaultReadbackRef = "origin/main"
+// it. Reading origin/HEAD asks the question the task asks — did the record reach
+// the history others read — and it names the remote's DEFAULT branch, which is
+// `origin/main` on some vaults and `origin/master` on others. Naming either
+// branch literally is wrong for the other half of the fleet: measured
+// 2026-11-19, the previous `origin/main` default made every readback on the
+// `master` vaults (personal, trading, seibert-personal) fail with
+// `500 read_failed`, because the ref does not resolve — so a write that had
+// landed logged `readback: cannot verify` and read as a lost one. `origin/HEAD`
+// is set by `git clone` and resolves to the default branch of whichever vault
+// the controller serves, so one default is correct for every vault.
+const DefaultReadbackRef = "origin/HEAD"
 
 // ReadbackExpectation is one write awaiting verification: the record it
 // addressed, the operation that reported success, and the content as it stood
@@ -214,10 +222,19 @@ func (v *writeVerifier) verify(ctx context.Context, expectation ReadbackExpectat
 			v.mismatch(expectation, "record is not readable")
 			return
 		}
+		// Any other error is a failure of the VERIFICATION, not evidence that the
+		// write was lost: the read could not be performed at all (an unresolvable
+		// ref, a vault-api fault, a git failure). Reporting that as "cannot verify"
+		// made a landed write read like a dropped one — measured 2026-11-19, every
+		// Body-carrying write on a `master` vault logged this line because the ref
+		// named `origin/main`. The wording below is load-bearing: it must say the
+		// write is not known to have failed, so a reader cannot mistake it for one.
 		glog.Warningf(
-			"readback: cannot verify %s for task %s: %v",
+			"readback: verification unavailable for %s of task %s at ref %s: %v "+
+				"— the write is NOT known to have failed",
 			expectation.Operation,
 			expectation.TaskIdentifier,
+			v.ref,
 			err,
 		)
 		return
