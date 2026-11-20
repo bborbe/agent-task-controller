@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.34.0
 
 - feat: **the walk's read concurrency becomes a measured sweep knob instead of an unmeasured constant.** `walkConcurrency = 8` was a judgement, and the measurement contradicted it: with the metrics-sweep fix already deployed, walks over 12 852 files still took **86.2 s and 102.4 s** — about 64 ms per read at 8 in flight — against the ≤30 s bound the value was chosen for, and the "8× better" claim in the old comment had never been measured at all. It is now a variable set once at startup through `SetWalkConcurrency`, overridable with `WALK_CONCURRENCY` (default 8), so the value can be swept against a measured vault-api latency curve without a rebuild per point. A value below 1 is refused, so a bad config cannot serialise the walk back into the 1–2 minute shape this change exists to remove. ⚠️ No concurrency value is chosen here: 12 852 reads at 64 ms needs ~27 in flight for 30 s *if it scales linearly*, which is the assumption the sweep must test rather than assert — and if the per-read latency holds, no value reaches the bound, which would mean the walk itself has to stop reading every file.
 
