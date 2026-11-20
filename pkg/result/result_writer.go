@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -757,7 +758,17 @@ func (r *resultWriter) writeAndPublish(
 		if splitErr != nil {
 			return errors.Wrapf(ctx, splitErr, "split task %s", taskAddress)
 		}
-		fields := changedFieldsForWrite(current.Frontmatter, nextFields)
+		fields, excluded := changedFieldsForWrite(current.Frontmatter, nextFields)
+		if len(excluded) > 0 {
+			// V(0): the drop is rare and load-bearing. Gating it behind -v=2 would
+			// make it invisible on a controller running at the default verbosity,
+			// which is where the "why did my result not land" question gets asked.
+			glog.Infof(
+				"WriteResult: excluded=[%s] task=%s — PATCH-immutable keys never ride the write",
+				strings.Join(excluded, ","),
+				taskAddress,
+			)
+		}
 		if _, patchErr := r.client.PatchTaskWithBody(
 			ctx, current.ID, fields, nextBody,
 		); patchErr != nil {
@@ -830,16 +841,43 @@ func splitRenderedForWrite(
 }
 
 // changedFieldsForWrite returns the keys whose value differs, which is what a
-// typed PATCH wants: it replaces only the keys it is given.
-func changedFieldsForWrite(current, next map[string]any) map[string]any {
+// typed PATCH wants: it replaces only the keys it is given. It also returns the
+// keys it dropped because they are immutable on PATCH, so the caller can log the
+// exclusion — the drop is otherwise silent and indistinguishable from "nothing
+// changed".
+func changedFieldsForWrite(current, next map[string]any) (map[string]any, []string) {
 	fields := make(map[string]any)
+	var excluded []string
 	for key, value := range next {
-		if existing, ok := current[key]; ok && reflect.DeepEqual(existing, value) {
+		existing, onDisk := current[key]
+		unchanged := onDisk && reflect.DeepEqual(existing, value)
+		if patchImmutableFields[key] {
+			if !unchanged {
+				excluded = append(excluded, key)
+			}
+			continue
+		}
+		if unchanged {
 			continue
 		}
 		fields[key] = value
 	}
-	return fields
+	sort.Strings(excluded)
+	return fields, excluded
+}
+
+// patchImmutableFields lists the frontmatter keys vault-api refuses on PATCH. Its
+// patch allowlist is typedTaskFields ∪ agentPipelineFields, so task_identifier —
+// which only createFields adds — is refused, and approved_by / approved_at are
+// refused by rule. fieldRefusal rejects the WHOLE request on the first such key,
+// so one immutable field vetoes every mutable key in the same write; that is
+// exactly how a result in flight across a re-address was dropped (measured on dev
+// 2026-11-19: the payload still carried the superseded identifier, the patch named
+// it, and three attempts all answered 400 unknown_field).
+var patchImmutableFields = map[string]bool{
+	"task_identifier": true,
+	"approved_by":     true,
+	"approved_at":     true,
 }
 
 // taskAddressFromRelPath is the address the API resolves for a task path: its
