@@ -233,7 +233,7 @@ var _ = Describe("recomputeVaultMetrics", func() {
 			"tasks/broken.md": "---\nstatus: [unclosed\n---\n",
 		}, nil, nil)
 
-		_, _, ok := v.recomputeVaultMetrics(ctx)
+		_, _, _, ok := v.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeTrue())
 		Expect(parkedProbeGaugeValue()).To(BeNumerically("==", 1))
 	})
@@ -247,7 +247,7 @@ var _ = Describe("recomputeVaultMetrics", func() {
 		}
 		metrics.HealthcheckParkedProbes.Set(7)
 
-		_, _, ok := v.recomputeVaultMetrics(ctx)
+		_, _, _, ok := v.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeFalse())
 		Expect(parkedProbeGaugeValue()).To(BeNumerically("==", 7))
 	})
@@ -274,7 +274,7 @@ var _ = Describe("recomputeVaultMetrics", func() {
 			"tasks/broken.md":                             "---\nstatus: [unclosed\n---\n",
 		}, nil, nil)
 
-		_, _, ok := v.recomputeVaultMetrics(ctx)
+		_, _, _, ok := v.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeTrue())
 		Expect(updateGoStuckGaugeValue()).To(BeNumerically("==", 1))
 	})
@@ -289,7 +289,7 @@ var _ = Describe("recomputeVaultMetrics", func() {
 		}
 		metrics.UpdateGoStuckPlanningTasks.Set(3)
 
-		_, _, ok := v.recomputeVaultMetrics(ctx)
+		_, _, _, ok := v.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeFalse())
 		Expect(updateGoStuckGaugeValue()).To(BeNumerically("==", 3))
 	})
