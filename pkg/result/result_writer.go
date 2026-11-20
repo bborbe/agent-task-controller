@@ -539,6 +539,13 @@ func SetWalkConcurrency(ctx context.Context, n int) error {
 	return nil
 }
 
+// WalkConcurrency reports the value the walk will fan out at. It exists so a
+// caller — and the spec — can prove the setter took effect, and so a startup log
+// line can state the effective value rather than the configured one.
+func WalkConcurrency() int {
+	return walkConcurrency
+}
+
 // walkResult is one listed task's verdict from the walk, or the error that
 // stopped it. A read that misses is neither an error nor a match — the vault
 // moved between the listing and the read — while any other read error is carried
