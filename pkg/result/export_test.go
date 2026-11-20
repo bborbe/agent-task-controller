@@ -23,3 +23,13 @@ func ApplyTriggerCapForTest(
 	w := &resultWriter{currentDateTime: libtime.NewCurrentDateTime()}
 	return w.applyTriggerCap(merged, existing, triggerCount, body)
 }
+
+// ChangedFieldsForWriteForTest exposes the patch builder's key selection, which is
+// where a PATCH-immutable key must be dropped. A spec that went through WriteResult
+// alone would assert on the file, and a key the API refuses never reaches the file
+// — so the file looks right whether or not the builder emitted it.
+func ChangedFieldsForWriteForTest(
+	current, next map[string]any,
+) (map[string]any, []string) {
+	return changedFieldsForWrite(current, next)
+}
