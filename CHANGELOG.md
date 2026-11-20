@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.33.6
 
 - fix: **the result patch no longer carries a PATCH-immutable key, so a result in flight across a re-address is written instead of dropped.** `changedFieldsForWrite` emitted every differing key, and a re-address — the planning-retry mints a new identifier per retry — leaves an in-flight result still naming the superseded one. vault-api refuses `task_identifier` on PATCH by design: its allowlist is `typedTaskFields ∪ agentPipelineFields`, only `createFields` adds that key, and `fieldRefusal` rejects the whole request on the first disallowed field, so all three attempts answered `400 {"error":"unknown_field","field":"task_identifier"}` and the command was acked with a Failure result — the message is never redelivered (measured on dev 2026-11-19 20:28:55Z on `agent-task-controller-personal-0`, task `Pi Stream Capture Smoke 4 2026-11-19`). The builder now drops `task_identifier`, `task_identifier_previous`, `approved_by` and `approved_at` — the keys vault-api refuses on PATCH — and reports the dropped set so the write path logs `excluded=[…]` at V(0); the drop is otherwise silent and indistinguishable from "nothing changed". Specs: a re-addressed write against a client that refuses the key exactly as vault-api does (it fails whole without the fix), plus the key-selection table covering each exclusion and the empty-set negative case.
 
