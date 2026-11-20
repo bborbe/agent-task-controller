@@ -868,16 +868,18 @@ func changedFieldsForWrite(current, next map[string]any) (map[string]any, []stri
 
 // patchImmutableFields lists the frontmatter keys vault-api refuses on PATCH. Its
 // patch allowlist is typedTaskFields ∪ agentPipelineFields, so task_identifier —
-// which only createFields adds — is refused, and approved_by / approved_at are
-// refused by rule. fieldRefusal rejects the WHOLE request on the first such key,
-// so one immutable field vetoes every mutable key in the same write; that is
-// exactly how a result in flight across a re-address was dropped (measured on dev
-// 2026-11-19: the payload still carried the superseded identifier, the patch named
-// it, and three attempts all answered 400 unknown_field).
+// which only createFields adds — is refused, task_identifier_previous is in
+// neither map (the re-address route writes it server-side), and approved_by /
+// approved_at are refused by rule. fieldRefusal rejects the WHOLE request on the
+// first such key, so one immutable field vetoes every mutable key in the same
+// write; that is exactly how a result in flight across a re-address was dropped
+// (measured on dev 2026-11-19: the payload still carried the superseded identifier,
+// the patch named it, and three attempts all answered 400 unknown_field).
 var patchImmutableFields = map[string]bool{
-	"task_identifier": true,
-	"approved_by":     true,
-	"approved_at":     true,
+	"task_identifier":          true,
+	"task_identifier_previous": true,
+	"approved_by":              true,
+	"approved_at":              true,
 }
 
 // taskAddressFromRelPath is the address the API resolves for a task path: its

@@ -267,6 +267,13 @@ func (f *Client) patch(
 	fields map[string]any,
 	body *string,
 ) (*vaultapi.Task, error) {
+	f.mu.Lock()
+	sent := make(map[string]any, len(fields))
+	for key, value := range fields {
+		sent[key] = value
+	}
+	f.lastPatchFields = sent
+	f.mu.Unlock()
 	path, found, err := f.pathFor(id)
 	if err != nil {
 		return nil, err
@@ -309,11 +316,6 @@ func (f *Client) PatchTaskWithBody(
 ) (*vaultapi.Task, error) {
 	f.mu.Lock()
 	f.patchCalls++
-	sent := make(map[string]any, len(fields))
-	for key, value := range fields {
-		sent[key] = value
-	}
-	f.lastPatchFields = sent
 	f.mu.Unlock()
 	if f.PatchErr != nil {
 		return nil, f.PatchErr
