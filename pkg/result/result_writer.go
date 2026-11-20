@@ -510,14 +510,41 @@ func FindTaskFilePath(
 	return matchedRelPath, existingFrontmatter, nil
 }
 
+// defaultWalkConcurrency is the value used when nothing overrides it.
+const defaultWalkConcurrency = 8
+
 // walkConcurrency bounds how many listed tasks the walk reads at once.
 //
-// Deliberately modest: the walk is a burst against vault-api and nothing measured
-// its ceiling. It buys ~8x on the measured 1–2 minute serial walk, which is
-// enough to stop a single miss monopolising the command consumer. Raise it only
-// against a measured vault-api latency curve — never on the assumption that more
-// parallelism is free.
-const walkConcurrency = 8
+// It is a VARIABLE, not a constant, so the value can be swept against a measured
+// vault-api latency curve without a rebuild per point. The shipped 8 was a
+// judgement and the measurement contradicted it: on 2026-11-20, walks over
+// 12 852 files still took 86.2 s and 102.4 s at 8 in flight — about 64 ms per
+// read — so the ≤30 s bound it was chosen for was never reached, and the
+// earlier "8× better" claim was never measured at all.
+//
+// Set once at startup through SetWalkConcurrency; changing it while the consumer
+// is running is not supported.
+var walkConcurrency = defaultWalkConcurrency
+
+// SetWalkConcurrency overrides the walk's read concurrency. It exists for the
+// sweep: the right value is a property of vault-api's latency curve, which is
+// measured on a running deployment rather than argued from the file count. A
+// value below 1 is refused, so a bad config cannot silently serialise the walk
+// back into the 1–2 minute shape this change exists to remove.
+func SetWalkConcurrency(ctx context.Context, n int) error {
+	if n < 1 {
+		return errors.Errorf(ctx, "walk concurrency must be >= 1, got %d", n)
+	}
+	walkConcurrency = n
+	return nil
+}
+
+// WalkConcurrency reports the value the walk will fan out at. It exists so a
+// caller — and the spec — can prove the setter took effect, and so a startup log
+// line can state the effective value rather than the configured one.
+func WalkConcurrency() int {
+	return walkConcurrency
+}
 
 // walkResult is one listed task's verdict from the walk, or the error that
 // stopped it. A read that misses is neither an error nor a match — the vault

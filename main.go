@@ -89,6 +89,7 @@ type application struct {
 	AutoInjectTaskIdentifier string            `required:"true"  arg:"auto-inject-task-identifier" env:"AUTO_INJECT_TASK_IDENTIFIER" usage:"allow this replica to backfill missing/invalid task_identifier fields (set true on exactly one replica per shared vault; false on all others); required"`
 	GitHubToken              string            `required:"false" arg:"github-token"                env:"GITHUB_TOKEN"                usage:"GitHub token with pull-requests:write scope for posting planning-retry COMMENT reviews; empty disables the comment (frontmatter escalation still fires)"                                                                                                          display:"length" default:""`
 	SupersedeLookback        int               `required:"false" arg:"supersede-lookback"          env:"SUPERSEDE_LOOKBACK"          usage:"max number of most-recent prior same-schedule instances the auto-supersede scan inspects per materialize (look-back bound); older priors are left open by design"                                                                                                                  default:"7"`
+	WalkConcurrency          int               `required:"false" arg:"walk-concurrency"            env:"WALK_CONCURRENCY"            usage:"how many listed tasks the index-miss walk reads at once; a sweep knob, 8 was an unmeasured judgement"                                                                                                                                                                              default:"8"`
 	CommandBatchSize         int               `required:"false" arg:"command-batch-size"          env:"COMMAND_BATCH_SIZE"          usage:"max command messages sharing one libkv.Tx per batch; 1 reproduces the per-message BoltDB transaction cost"                                                                                                                                                                         default:"100"`
 	HumanAssignees           string            `required:"false" arg:"human-assignees"             env:"HUMAN_ASSIGNEES"             usage:"comma-separated assignee values that name a human owner. A human_review record already carrying one keeps it; every other assignee is cleared as before. Empty (the default) retains nothing — every human_review record is cleared — and logs a startup warning"                  default:""`
 	RedriveEnabled           bool              `required:"false" arg:"redrive-enabled"             env:"REDRIVE_ENABLED"             usage:"enable the re-drive sweep that force re-publishes TaskUpdated for eligible never-spawned tasks"                                                                                                                                                                                    default:"true"`
@@ -113,6 +114,9 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	}
 	if a.CommandBatchSize < 1 {
 		return errors.Errorf(ctx, "COMMAND_BATCH_SIZE must be >= 1, got %d", a.CommandBatchSize)
+	}
+	if err := result.SetWalkConcurrency(ctx, a.WalkConcurrency); err != nil {
+		return errors.Wrapf(ctx, err, "set walk concurrency")
 	}
 	humanAssignees := result.ParseHumanAssignees(a.HumanAssignees)
 	// Log the EFFECTIVE set, not the raw value: an unconfigured or mistyped set is
