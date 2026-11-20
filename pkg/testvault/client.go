@@ -39,6 +39,11 @@ type Client struct {
 	listCalls  int
 	readCalls  int
 	patchCalls int
+	// lastPatchFields is the field map of the most recent typed write, so a spec
+	// can assert on what the caller actually sent rather than only on the file it
+	// produced. The two differ exactly where a refusal would land: a key the
+	// caller included and the API refused never reaches the file.
+	lastPatchFields map[string]any
 
 	// Only restricts the listing to these vault-relative paths when non-empty.
 	// Specs use it to model an index that sees a narrower set than the whole dir.
@@ -51,6 +56,10 @@ type Client struct {
 	// PatchErr makes every typed write fail, for specs that assert the caller
 	// swallows a write error.
 	PatchErr error
+	// RejectPatchFields models vault-api's PATCH allowlist: a write naming any of
+	// these keys fails whole, exactly as fieldRefusal refuses it. Left nil, every
+	// key is accepted, which is the behaviour the other specs were written against.
+	RejectPatchFields map[string]bool
 }
 
 // Seed writes a path→content map into Dir so a typed read finds it.
@@ -86,6 +95,18 @@ func (f *Client) PatchTaskWithBodyCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.patchCalls
+}
+
+// LastPatchFields reports the field map of the most recent typed write, so a spec
+// can assert on what the caller sent rather than inferring it from the file.
+func (f *Client) LastPatchFields() map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]any, len(f.lastPatchFields))
+	for key, value := range f.lastPatchFields {
+		out[key] = value
+	}
+	return out
 }
 
 func (f *Client) tasks() ([]vaultapi.Task, error) {
@@ -246,6 +267,13 @@ func (f *Client) patch(
 	fields map[string]any,
 	body *string,
 ) (*vaultapi.Task, error) {
+	f.mu.Lock()
+	sent := make(map[string]any, len(fields))
+	for key, value := range fields {
+		sent[key] = value
+	}
+	f.lastPatchFields = sent
+	f.mu.Unlock()
 	path, found, err := f.pathFor(id)
 	if err != nil {
 		return nil, err
@@ -291,6 +319,14 @@ func (f *Client) PatchTaskWithBody(
 	f.mu.Unlock()
 	if f.PatchErr != nil {
 		return nil, f.PatchErr
+	}
+	// Mirror vault-api's whole-request refusal: fieldRefusal names the first key it
+	// does not allow and the caller's write fails, so a key the real API refuses
+	// never reaches the file here either.
+	for key := range fields {
+		if f.RejectPatchFields[key] {
+			return nil, errors.New("unexpected status 400: unknown_field field=" + key)
+		}
 	}
 	return f.patch(id, fields, &body)
 }
