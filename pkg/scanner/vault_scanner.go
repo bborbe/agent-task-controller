@@ -89,6 +89,13 @@ type fileEntry struct {
 type fileOps struct {
 	listFiles func(ctx context.Context, glob string) ([]string, error)
 	readFile  func(ctx context.Context, relPath string) ([]byte, error)
+	// updatedAt reports the listing's last-modified stamp for relPath, or nil when
+	// the last listing carried none for it. It exists so a caller can skip a read
+	// that cannot return anything new: the listing is one cheap call per pass and
+	// already carries the stamp, so asking the file again for facts that only
+	// change when the file changes is pure cost. A nil answer is "unknown", never
+	// "unchanged" — a caller must read the file rather than skip it.
+	updatedAt func(relPath string) *time.Time
 }
 
 type vaultScanner struct {
@@ -109,6 +116,16 @@ type vaultScanner struct {
 	// constructor initialises it. Single-goroutine: the census runs inline in Run's
 	// goroutine and never overlaps itself.
 	openTaskPairs map[openTaskPair]struct{}
+
+	// metricsFacts caches one file's time-independent classification, keyed by
+	// vault-relative path, so the metrics pass re-reads only files whose listing
+	// stamp moved since the previous pass. It stores facts, never rendered results:
+	// the age and stuck-planning instruments depend on `now` and are recomputed
+	// from the cached anchors every pass, which is what keeps a cached file's age
+	// advancing instead of freezing at the value it had when last read. Rebuilt
+	// each pass from that pass's listing, so a deleted file's entry cannot linger.
+	// Single-goroutine: the metrics pass runs inline in Run's goroutine.
+	metricsFacts map[string]fileFacts
 
 	// indexMutex guards index. publishIndex builds the whole map and swaps it under
 	// the write lock; Resolve reads the published snapshot under the read lock. A
@@ -157,7 +174,20 @@ func newTypedFileOps(client vaultapi.Client, taskDir string) fileOps {
 		taskDir: taskDir,
 		byPath:  make(map[string]vaultapi.Task),
 	}
-	return fileOps{listFiles: typed.list, readFile: typed.read}
+	return fileOps{listFiles: typed.list, readFile: typed.read, updatedAt: typed.updatedAtOf}
+}
+
+// updatedAtOf reports the last listing's modification stamp for relPath. It reads
+// the same byPath directory list() built, so it costs no call of its own — and it
+// returns nil for a path the last listing did not cover, which a caller must treat
+// as "read it" rather than "unchanged".
+func (t *typedFileOps) updatedAtOf(relPath string) *time.Time {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+	if listed, ok := t.byPath[relPath]; ok {
+		return listed.UpdatedAt
+	}
+	return nil
 }
 
 // taskRelPath composes the vault-relative path a task's title implies. An empty

@@ -165,6 +165,13 @@ type Task struct {
 	// Reopened marks a create that replaced a terminal occupant rather than
 	// writing a free path. It is only ever set on a create response.
 	Reopened bool `json:"reopened,omitempty"`
+	// UpdatedAt is the page's last-modified time as the listing reports it. It is
+	// a pointer because an absent value is not the zero instant: the listing route
+	// serves it (vault-api's TaskItem.UpdatedAt), but a response that omits it must
+	// stay distinguishable from one that stamps the zero time. The scanner uses it
+	// to skip re-reading a file that cannot have changed, so nil means "unknown —
+	// read it", never "unchanged".
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // Filter is a typed listing question. Zero fields are not sent, so an empty

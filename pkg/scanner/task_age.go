@@ -125,22 +125,34 @@ func taskAgeFromMap(
 	fmMap map[string]interface{},
 	now time.Time,
 ) (age time.Duration, state taskAgeState) {
+	anchor, state := taskAgeAnchorOf(fmMap)
+	if state != taskAgeDated {
+		return 0, state
+	}
+	age = now.Sub(anchor).Truncate(time.Second)
+	if age < 0 {
+		age = 0
+	}
+	return age, taskAgeDated
+}
+
+// taskAgeAnchorOf returns the timestamp a record's age is measured from, without
+// measuring it. Split out so a cache can keep the anchor and re-measure on every
+// pass: an age computed once and stored would freeze the record at the age it had
+// when it was last read, which is exactly the value the gauge exists to watch grow.
+func taskAgeAnchorOf(fmMap map[string]interface{}) (anchor time.Time, state taskAgeState) {
 	status := stringField(fmMap, "status")
 	if status == "completed" || status == "aborted" {
-		return 0, taskAgeTerminal
+		return time.Time{}, taskAgeTerminal
 	}
 	for _, field := range taskAgeTimestampFields {
 		parsed, ok := taskAgeTimestampOf(fmMap, field)
 		if !ok {
 			continue
 		}
-		age := now.Sub(parsed).Truncate(time.Second)
-		if age < 0 {
-			age = 0
-		}
-		return age, taskAgeDated
+		return parsed, taskAgeDated
 	}
-	return 0, taskAgeUndated
+	return time.Time{}, taskAgeUndated
 }
 
 // taskAgeBucketOf classifies a truncated age into exactly one bucket. The one-day

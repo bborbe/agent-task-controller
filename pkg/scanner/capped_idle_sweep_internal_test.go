@@ -382,7 +382,7 @@ var _ = Describe("periodic capped-idle sweep", func() {
 		).(*vaultScanner)
 		Expect(ok).To(BeTrue())
 
-		candidates, fileCount, ok := vs.recomputeVaultMetrics(ctx)
+		candidates, fileCount, _, ok := vs.recomputeVaultMetrics(ctx)
 		Expect(ok).To(BeTrue())
 		Expect(fileCount).To(Equal(3))
 		// The unassigned capped row belongs in the set: the sweep, not the candidate
