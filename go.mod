@@ -8,7 +8,7 @@ replace (
 
 require (
 	github.com/IBM/sarama v1.61.1
-	github.com/bborbe/agent v0.136.0
+	github.com/bborbe/agent v0.148.0
 	github.com/bborbe/argument/v2 v2.13.9
 	github.com/bborbe/boltkv v1.16.5
 	github.com/bborbe/cqrs v0.6.15

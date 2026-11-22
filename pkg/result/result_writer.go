@@ -869,16 +869,25 @@ func splitRenderedForWrite(
 
 // changedFieldsForWrite returns the keys whose value differs, which is what a
 // typed PATCH wants: it replaces only the keys it is given. It also returns the
-// keys it dropped because they are immutable on PATCH, so the caller can log the
-// exclusion — the drop is otherwise silent and indistinguishable from "nothing
-// changed".
+// keys it dropped because the vault API's task-PATCH rule does not admit them, so
+// the caller can log the exclusion — the drop is otherwise silent and
+// indistinguishable from "nothing changed".
+//
+// The drop follows the vault API's own rule, lib.TaskPatchFieldAdmitted, imported
+// from github.com/bborbe/agent, rather than a list kept here: the API and this
+// writer share one definition, so the writer cannot fall one field behind the
+// schema. The failure this removes is severe: the API refuses the WHOLE request on
+// the first key it does not admit, so a single refused key vetoes every mutable key
+// in the same write. That is how an in-flight result was dropped after a re-address
+// (measured on dev 2026-11-19: the payload still carried the superseded identifier,
+// the patch named it, and three attempts all answered 400 unknown_field).
 func changedFieldsForWrite(current, next map[string]any) (map[string]any, []string) {
 	fields := make(map[string]any)
 	var excluded []string
 	for key, value := range next {
 		existing, onDisk := current[key]
 		unchanged := onDisk && reflect.DeepEqual(existing, value)
-		if patchImmutableFields[key] {
+		if !lib.TaskPatchFieldAdmitted(key) {
 			if !unchanged {
 				excluded = append(excluded, key)
 			}
@@ -891,22 +900,6 @@ func changedFieldsForWrite(current, next map[string]any) (map[string]any, []stri
 	}
 	sort.Strings(excluded)
 	return fields, excluded
-}
-
-// patchImmutableFields lists the frontmatter keys vault-api refuses on PATCH. Its
-// patch allowlist is typedTaskFields ∪ agentPipelineFields, so task_identifier —
-// which only createFields adds — is refused, task_identifier_previous is in
-// neither map (the re-address route writes it server-side), and approved_by /
-// approved_at are refused by rule. fieldRefusal rejects the WHOLE request on the
-// first such key, so one immutable field vetoes every mutable key in the same
-// write; that is exactly how a result in flight across a re-address was dropped
-// (measured on dev 2026-11-19: the payload still carried the superseded identifier,
-// the patch named it, and three attempts all answered 400 unknown_field).
-var patchImmutableFields = map[string]bool{
-	"task_identifier":          true,
-	"task_identifier_previous": true,
-	"approved_by":              true,
-	"approved_at":              true,
 }
 
 // taskAddressFromRelPath is the address the API resolves for a task path: its

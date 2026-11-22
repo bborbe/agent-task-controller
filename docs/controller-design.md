@@ -75,6 +75,8 @@ When writing a result back, the ResultWriter merges frontmatter from the existin
 
 The agent's payload is built from the `TASK_CONTENT` snapshot injected at spawn, so it always describes the task as it looked *before* the run. Without an ownership rule a stale snapshot silently rolls back anything the controller changed in the meantime.
 
+Before the merged frontmatter is written, the writer drops any frontmatter key the shared task-PATCH rule (`lib.TaskPatchFieldAdmitted`, imported from `github.com/bborbe/agent`) does not admit, because the vault API refuses the whole request on the first key it does not recognise — a single refused key would otherwise veto every mutable key in the same write.
+
 | Ownership | Fields | Rule |
 |---|---|---|
 | Controller-owned | `trigger_count` | The on-disk value always wins. An incoming value can never introduce a controller-owned key that is absent on disk. `retry_count` was removed from this list when the field was retired: no deployed component writes it any more, so there is nothing for the guard to protect, and an incoming value is now applied like any agent-owned key. The retry cap still reads whatever a legacy record carries. |

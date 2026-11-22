@@ -336,8 +336,8 @@ var _ = Describe("ResultWriter", func() {
 					Frontmatter: lib.TaskFrontmatter{
 						"task_identifier": "test-task-uuid-1234",
 						"status":          "done",
-						"tags":            []interface{}{"agent-task", "automated"},
-						"meta": map[string]interface{}{
+						"themes":          []interface{}{"agent-task", "automated"},
+						"goals": map[string]interface{}{
 							"model": "claude-sonnet-4-6",
 						},
 					},
@@ -360,13 +360,13 @@ var _ = Describe("ResultWriter", func() {
 				Expect(yaml.Unmarshal([]byte(parts[0]), &parsedFm)).To(Succeed())
 				Expect(parsedFm["status"]).To(Equal("done"))
 
-				tags, ok := parsedFm["tags"].([]interface{})
+				themes, ok := parsedFm["themes"].([]interface{})
 				Expect(ok).To(BeTrue())
-				Expect(tags).To(ContainElements("agent-task", "automated"))
+				Expect(themes).To(ContainElements("agent-task", "automated"))
 
-				meta, ok := parsedFm["meta"].(map[string]interface{})
+				goals, ok := parsedFm["goals"].(map[string]interface{})
 				Expect(ok).To(BeTrue())
-				Expect(meta["model"]).To(Equal("claude-sonnet-4-6"))
+				Expect(goals["model"]).To(Equal("claude-sonnet-4-6"))
 
 				Expect(parts[1]).To(Equal("Result content\n"))
 			})
@@ -1791,7 +1791,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 							"task_identifier": "test-task-uuid-1234",
 							"status":          "in_progress",
 							"phase":           "execution",
-							"custom_field":    "from-agent",
+							"stage":           "from-agent",
 						},
 						Content: lib.TaskContent("New body\n"),
 					}
@@ -1800,7 +1800,7 @@ Run a backtest for strategy **capitalcom-backtest-BACKTEST** from 2026-04-10 to 
 					s := string(written)
 					Expect(s).To(ContainSubstring("status: in_progress"))
 					Expect(s).To(ContainSubstring("phase: execution"))
-					Expect(s).To(ContainSubstring("custom_field: from-agent"))
+					Expect(s).To(ContainSubstring("stage: from-agent"))
 					Expect(s).NotTo(ContainSubstring("phase: ai_review"))
 				},
 			)

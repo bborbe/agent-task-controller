@@ -170,6 +170,17 @@ var _ = Describe("ResultWriter", func() {
 				[]string{"approved_by"},
 			),
 			Entry(
+				"drops a differing approved_at",
+				map[string]any{"status": "in_progress"},
+				map[string]any{
+					"status":      "completed",
+					"approved_at": "2026-11-19T20:28:55Z",
+				},
+				[]string{"approved_at"},
+				[]string{"status"},
+				[]string{"approved_at"},
+			),
+			Entry(
 				"emits nothing when only immutable keys differ",
 				map[string]any{"task_identifier": string(currentID), "status": "in_progress"},
 				map[string]any{"task_identifier": string(supersededID), "status": "in_progress"},
@@ -185,6 +196,60 @@ var _ = Describe("ResultWriter", func() {
 				[]string{"status"},
 				nil,
 			),
+		)
+
+		// The rule itself, not a hand-written key list: every key the shared
+		// task-PATCH rule enumerates must land when it differs, and the metrics_
+		// namespace the rule admits by prefix must land too even though it is
+		// deliberately absent from TaskPatchFields(). A key added upstream is
+		// covered here without editing this repository.
+		ruleEntries := make([]any, 0, len(lib.TaskPatchFields())+2)
+		for key := range lib.TaskPatchFields() {
+			ruleEntries = append(ruleEntries, Entry(
+				"admits "+key+" as the shared rule does",
+				map[string]any{key: "on-disk"},
+				map[string]any{key: "incoming"},
+				nil,
+				[]string{key},
+				nil,
+			))
+		}
+		ruleEntries = append(
+			ruleEntries,
+			Entry(
+				"admits a metrics_ key by prefix, which TaskPatchFields does not enumerate",
+				map[string]any{"status": "in_progress"},
+				map[string]any{"metrics_future_counter": 5, "status": "completed"},
+				nil,
+				[]string{"metrics_future_counter", "status"},
+				nil,
+			),
+			// The boundary this change exists to hold: a key the rule rejects and
+			// no producer here writes must not veto the mutable keys beside it.
+			Entry(
+				"drops run_claim and still lands the differing admitted key",
+				map[string]any{"status": "in_progress"},
+				map[string]any{"run_claim": "claim-1", "status": "completed"},
+				[]string{"run_claim"},
+				[]string{"status"},
+				[]string{"run_claim"},
+			),
+		)
+		tableArgs := append([]any{
+			func(current, next map[string]any, absent, present, wantExcluded []string) {
+				fields, excluded := result.ChangedFieldsForWriteForTest(current, next)
+				for _, key := range absent {
+					Expect(fields).NotTo(HaveKey(key))
+				}
+				for _, key := range present {
+					Expect(fields).To(HaveKey(key))
+				}
+				Expect(excluded).To(ConsistOf(wantExcluded))
+			},
+		}, ruleEntries...)
+		DescribeTable(
+			"admits exactly the keys the shared task-PATCH rule admits",
+			tableArgs...,
 		)
 	})
 })
