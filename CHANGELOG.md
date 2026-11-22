@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.34.1
 
 - fix: **the result writer now filters on the task SDK's shared PATCH rule instead of a local denylist, so a field the API refuses can no longer veto the whole result write.** `changedFieldsForWrite` now asks `lib.TaskPatchFieldAdmitted` (`github.com/bborbe/agent` v0.148.0) for each differing key and drops the ones the rule rejects, replacing the hand-kept `patchImmutableFields` list — the writer can no longer fall one field behind the schema, and the next write-only field needs no change here. vault-api refuses the whole request on the first key it does not recognise, which is the failure `## v0.33.6` documents; it recurred on `agent-task-controller-personal-0` at 2026-11-20 19:52 CET with `400 unknown_field field=run_claim`, three patch attempts, then a dropped result. The regression spec is driven from the rule itself (every enumerated key plus the `metrics_` prefix), so a key added upstream is covered without editing this repository; it also pins `run_claim` — rejected by the rule and written by no producer here — being dropped while the differing admitted key in the same map still lands.
 
