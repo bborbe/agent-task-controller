@@ -151,11 +151,17 @@ func (f *Client) taskAt(path string) (vaultapi.Task, error) {
 		return vaultapi.Task{}, err
 	}
 	id, _ := fields["task_identifier"].(string)
+	// The real listing projects the recorded predecessor alongside the current
+	// identifier, and the index-miss path matches candidates on both — so the fake
+	// must carry it or an alias spec would only pass by reading every file, which
+	// is the behaviour these specs exist to keep from regressing.
+	previous, _ := fields["task_identifier_previous"].(string)
 	return vaultapi.Task{
-		ID:          id,
-		Title:       strings.TrimSuffix(filepath.Base(path), ".md"),
-		Frontmatter: fields,
-		Body:        body,
+		ID:                     id,
+		TaskIdentifierPrevious: previous,
+		Title:                  strings.TrimSuffix(filepath.Base(path), ".md"),
+		Frontmatter:            fields,
+		Body:                   body,
 	}, nil
 }
 
