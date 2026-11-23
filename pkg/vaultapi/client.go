@@ -158,10 +158,16 @@ const requestTimeout = 30 * time.Second
 // halves a write touches, and they are separate routes because they are separate
 // mutations — PATCH replaces named frontmatter fields, PUT replaces the body.
 type Task struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	Frontmatter map[string]any `json:"frontmatter,omitempty"`
-	Body        string         `json:"body,omitempty"`
+	ID string `json:"id"`
+	// TaskIdentifierPrevious is the page's recorded predecessor identifier, as the
+	// listing projects it — empty when the page was never re-addressed. ID carries
+	// the CURRENT identifier, so the two together let a caller match an identifier
+	// against a whole listing without reading a single page. It is a LISTING field:
+	// a create/read response carries it only when the page happens to have one.
+	TaskIdentifierPrevious string         `json:"task_identifier_previous,omitempty"`
+	Title                  string         `json:"title"`
+	Frontmatter            map[string]any `json:"frontmatter,omitempty"`
+	Body                   string         `json:"body,omitempty"`
 	// Reopened marks a create that replaced a terminal occupant rather than
 	// writing a free path. It is only ever set on a create response.
 	Reopened bool `json:"reopened,omitempty"`

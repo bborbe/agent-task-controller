@@ -21,7 +21,6 @@ import (
 	"github.com/bborbe/errors"
 	notifcore "github.com/bborbe/notification"
 	notifcmd "github.com/bborbe/notification/command/notification"
-	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
@@ -417,7 +416,11 @@ func taskRelPathFor(taskDir string, task vaultapi.Task) string {
 // It consults resolver first: on a hit it reads exactly that one task — no listing
 // — and on a miss, on a nil resolver, and on a hit whose read fails, it falls back
 // to listing the vault's tasks. A resolver error is returned as-is and does not
-// trigger the walk.
+// trigger the listing.
+//
+// The fallback matches CANDIDATES in the listing — which carries both the current
+// identifier and the recorded predecessor — and reads only those, so a miss costs a
+// handful of reads instead of one per listed task.
 //
 // Returns ("", nil, nil) when no match is found (not an error).
 // Returns ("", nil, err) naming both paths when more than one task carries id: the
@@ -442,47 +445,39 @@ func FindTaskFilePath(
 	if err != nil {
 		return "", nil, errors.Wrapf(ctx, err, "list tasks")
 	}
+	// The listing carries both keys — the current identifier as ID and the recorded
+	// predecessor as TaskIdentifierPrevious — so the match runs in memory and only
+	// the candidates are read. Reading every listed task is what made an index miss
+	// cost 86.2 s and 102.4 s at the shipped concurrency: one ReadTask per listed
+	// task, ~13 000 of them on the personal vault, at ~64 ms each.
+	//
+	// The candidates are still READ before they are accepted, because the listing's
+	// ID is task_identifier OR a slug of the filename for a page carrying none —
+	// matching the raw listing field alone would begin resolving slug-shaped
+	// requests to tasks that never claimed them. The read restores the exact
+	// frontmatter match the old walk performed, at one read per candidate (usually
+	// zero or one) instead of one per listed task.
+	//
+	// The match rules are unchanged and are still evaluated in listing order, so a
+	// duplicate error names the same two paths it always did.
+	candidates := make([]vaultapi.Task, 0, 2)
+	for _, listed := range tasks {
+		if listedCouldCarryIdentifier(listed, id) {
+			candidates = append(candidates, listed)
+		}
+	}
+
 	var matchedRelPath string
 	var matchedByPrevious bool
 	var existingFrontmatter lib.TaskFrontmatter
-
-	// The walk costs one read per listed task, and every one of them is required:
-	// a match can arrive through the CURRENT identifier or through
-	// task_identifier_previous, and AC7 requires a duplicate pair spanning the two
-	// to be reported rather than resolved. The listing carries neither key, so the
-	// reads cannot be skipped — only overlapped.
-	//
-	// Serially this was measured on dev 2026-11-19 as 12 764 reads and 1–2 minutes
-	// per index miss, inside the single-partition command consumer, which
-	// head-of-line blocked every command behind it (a spawn notification landed
-	// 15 m 40 s late; a prototype result 7 m 26 s late). The reads are independent,
-	// so they run through a bounded pool; the match rules below are unchanged and
-	// are still evaluated in listing order, so a duplicate error names the same two
-	// paths it always did.
-	walkResults := make([]walkResult, len(tasks))
-	shards := make([]run.Func, 0, walkConcurrency)
-	for worker := 0; worker < walkConcurrency; worker++ {
-		shard := worker
-		shards = append(shards, func(ctx context.Context) error {
-			for i := shard; i < len(tasks); i += walkConcurrency {
-				if err := ctx.Err(); err != nil {
-					return errors.Wrapf(ctx, err, "walk tasks")
-				}
-				walkResults[i] = walkOneTask(ctx, client, taskDir, id, tasks[i])
-			}
-			return nil
-		})
-	}
-	// run.All is the library's fan-out-and-wait, so the walk never hand-rolls a
-	// goroutine (go-concurrency/no-raw-go-func). Each shard owns a disjoint index
-	// stride, so no two shards write the same slot.
-	if err := run.All(ctx, shards...); err != nil {
-		return "", nil, errors.Wrapf(ctx, err, "walk tasks")
-	}
-
-	for _, res := range walkResults {
+	reads := 0
+	for _, listed := range candidates {
+		res := readCandidateTask(ctx, client, taskDir, id, listed)
 		if res.err != nil {
 			return "", nil, res.err
+		}
+		if res.read {
+			reads++
 		}
 		if !res.matched {
 			continue
@@ -504,101 +499,87 @@ func FindTaskFilePath(
 		logTaskFileMatch(res.relPath, id, res.viaPrevious)
 		existingFrontmatter = res.frontmatter
 	}
+	// The ratio a measurement reads: how many pages this resolution actually read
+	// against how many the listing offered. V(2) because the personal controller runs
+	// at logLevel 2, so a V(3) line would never be emitted on the pod.
+	glog.V(2).Infof(
+		"FindTaskFilePath: index miss for task %s — reads=%d candidates=%d listing=%d",
+		id, reads, len(candidates), len(tasks),
+	)
 	if !matchedByPrevious {
 		recordWalkMatch(ctx, resolver, id, matchedRelPath)
 	}
 	return matchedRelPath, existingFrontmatter, nil
 }
 
-// defaultWalkConcurrency is the value used when nothing overrides it.
-const defaultWalkConcurrency = 8
-
-// walkConcurrency bounds how many listed tasks the walk reads at once.
-//
-// It is a VARIABLE, not a constant, so the value can be swept against a measured
-// vault-api latency curve without a rebuild per point. The shipped 8 was a
-// judgement and the measurement contradicted it: on 2026-11-20, walks over
-// 12 852 files still took 86.2 s and 102.4 s at 8 in flight — about 64 ms per
-// read — so the ≤30 s bound it was chosen for was never reached, and the
-// earlier "8× better" claim was never measured at all.
-//
-// Set once at startup through SetWalkConcurrency; changing it while the consumer
-// is running is not supported.
-var walkConcurrency = defaultWalkConcurrency
-
-// SetWalkConcurrency overrides the walk's read concurrency. It exists for the
-// sweep: the right value is a property of vault-api's latency curve, which is
-// measured on a running deployment rather than argued from the file count. A
-// value below 1 is refused, so a bad config cannot silently serialise the walk
-// back into the 1–2 minute shape this change exists to remove.
-func SetWalkConcurrency(ctx context.Context, n int) error {
-	if n < 1 {
-		return errors.Errorf(ctx, "walk concurrency must be >= 1, got %d", n)
+// listedCouldCarryIdentifier reports whether one listing row could carry id under
+// either key. It is a CANDIDATE filter, not the match: the caller reads the file and
+// applies taskIdentifierMatch to its frontmatter, because the listing's ID falls back
+// to a filename slug for a page that carries no task_identifier.
+func listedCouldCarryIdentifier(listed vaultapi.Task, id lib.TaskIdentifier) bool {
+	if lib.TaskIdentifier(listed.ID) == id {
+		return true
 	}
-	walkConcurrency = n
-	return nil
+	return listed.TaskIdentifierPrevious != "" &&
+		lib.TaskIdentifier(listed.TaskIdentifierPrevious) == id
 }
 
-// WalkConcurrency reports the value the walk will fan out at. It exists so a
-// caller — and the spec — can prove the setter took effect, and so a startup log
-// line can state the effective value rather than the configured one.
-func WalkConcurrency() int {
-	return walkConcurrency
-}
-
-// walkResult is one listed task's verdict from the walk, or the error that
-// stopped it. A read that misses is neither an error nor a match — the vault
-// moved between the listing and the read — while any other read error is carried
-// so the caller fails rather than silently skipping a task it could not inspect.
-type walkResult struct {
+// candidateResult is one candidate's verdict, or the error that stopped it. A read
+// that misses is neither an error nor a match — the vault moved between the listing
+// and the read — while any other read error is carried so the caller fails rather
+// than silently skipping a task it could not inspect. read reports whether a
+// ReadTask was actually issued, so the caller can count them for the ratio log.
+type candidateResult struct {
 	relPath     string
 	viaPrevious bool
 	matched     bool
+	read        bool
 	frontmatter lib.TaskFrontmatter
 	err         error
 }
 
-// walkOneTask reads one listed task and reports whether it matches id.
-func walkOneTask(
+// readCandidateTask reads one listing candidate and reports whether it matches id.
+func readCandidateTask(
 	ctx context.Context,
 	client vaultapi.Client,
 	taskDir string,
 	id lib.TaskIdentifier,
 	listed vaultapi.Task,
-) walkResult {
+) candidateResult {
 	if err := ctx.Err(); err != nil {
-		return walkResult{err: errors.Wrapf(ctx, err, "walk tasks")}
+		return candidateResult{err: errors.Wrapf(ctx, err, "read candidate")}
 	}
-	// The listing is a flat projection and carries no frontmatter, so each listed
-	// task's frontmatter has to be read per task. An empty title has no address to
-	// read, exactly as typedFileOps.list skips it.
+	// The listing is a flat projection and carries no frontmatter, so each candidate's
+	// frontmatter has to be read. An empty title has no address to read, exactly as
+	// typedFileOps.list skips it.
 	relPath := taskRelPathFor(taskDir, listed)
 	if relPath == "" {
-		return walkResult{}
+		return candidateResult{}
 	}
 	task, readErr := client.ReadTask(ctx, taskAddressFromRelPath(relPath))
 	if readErr != nil {
 		if errors.Is(readErr, vaultapi.ErrNotFound) {
-			return walkResult{}
+			return candidateResult{read: true}
 		}
-		return walkResult{err: errors.Wrapf(ctx, readErr, "read task %s", relPath)}
+		return candidateResult{read: true, err: errors.Wrapf(ctx, readErr, "read task %s", relPath)}
 	}
 	// The read task's title is the address a caller can write to, so compose the
 	// match path from it; an empty title has no address and cannot match.
 	relPath = taskRelPathFor(taskDir, *task)
 	if relPath == "" {
-		return walkResult{}
+		return candidateResult{read: true}
 	}
 	current, _ := task.Frontmatter["task_identifier"].(string)
 	previous, _ := task.Frontmatter["task_identifier_previous"].(string)
 	matched, viaPrevious := taskIdentifierMatch(current, previous, id)
 	if !matched {
-		return walkResult{}
+		return candidateResult{read: true}
 	}
-	return walkResult{
+	return candidateResult{
 		relPath:     relPath,
 		viaPrevious: viaPrevious,
 		matched:     true,
+		read:        true,
 		frontmatter: lib.TaskFrontmatter(task.Frontmatter),
 	}
 }

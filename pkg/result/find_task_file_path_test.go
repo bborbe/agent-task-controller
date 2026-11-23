@@ -6,6 +6,7 @@ package result_test
 
 import (
 	"context"
+	"fmt"
 	stdtime "time"
 
 	lib "github.com/bborbe/agent"
@@ -34,6 +35,26 @@ func task(id, title string) vaultapi.Task {
 // with an id and a title and no frontmatter.
 func listed(id, title string) vaultapi.Task {
 	return vaultapi.Task{ID: id, Title: title}
+}
+
+// listedAlias builds a listing item that also carries a predecessor identifier,
+// as the vault API returns a re-addressed page.
+func listedAlias(current, previous, title string) vaultapi.Task {
+	return vaultapi.Task{ID: current, TaskIdentifierPrevious: previous, Title: title}
+}
+
+// taskWithPrevious builds the typed view of a re-addressed page, carrying both the
+// current and the recorded predecessor identifier in its frontmatter.
+func taskWithPrevious(current, previous, title string) vaultapi.Task {
+	return vaultapi.Task{
+		ID:                     current,
+		TaskIdentifierPrevious: previous,
+		Title:                  title,
+		Frontmatter: map[string]any{
+			"task_identifier":          current,
+			"task_identifier_previous": previous,
+		},
+	}
 }
 
 // readStub serves per-task reads by the title-derived address the walk uses,
@@ -68,10 +89,32 @@ var _ = Describe("FindTaskFilePath", func() {
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "bar", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/b.md"))
-		// The listing is a flat projection that carries no frontmatter, so each
-		// listed task is read once to match on its own frontmatter.
+		// The listing carries the identifier, so only the matching row is read — one
+		// read for a two-row listing. Reading every listed task is what made an index
+		// miss cost 86.2 s and 102.4 s on the 13 k-file vault.
 		Expect(fakeVault.ListTasksCallCount()).To(Equal(1))
-		Expect(fakeVault.ReadTaskCallCount()).To(Equal(2))
+		Expect(fakeVault.ReadTaskCallCount()).To(Equal(1))
+	})
+
+	It("reads only the alias candidate, never every listed task", func() {
+		fakeVault := &mocks.VaultAPIClient{}
+		listing := make([]vaultapi.Task, 0, 51)
+		for i := 0; i < 50; i++ {
+			listing = append(listing, listed(fmt.Sprintf("other-%d", i), fmt.Sprintf("t%d", i)))
+		}
+		listing = append(listing, listedAlias("new-id", "old-id", "readdressed"))
+		fakeVault.ListTasksReturns(listing, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"readdressed": taskWithPrevious("new-id", "old-id", "readdressed"),
+		})
+
+		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "old-id", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matchedRelPath).To(Equal("tasks/readdressed.md"))
+		// One read for the single alias candidate against a 51-row listing. This is
+		// the assertion SC2 measures in production: the alias path reads candidates,
+		// not the listing.
+		Expect(fakeVault.ReadTaskCallCount()).To(Equal(1))
 	})
 
 	// Regression: 2026-08-31. Two Schedule CRs sharing a name across the dev and
@@ -131,11 +174,9 @@ var _ = Describe("FindTaskFilePath", func() {
 
 	It("matches through the recorded predecessor", func() {
 		fakeVault := &mocks.VaultAPIClient{}
-		repaired := task("new-id", "good")
-		repaired.Frontmatter["task_identifier_previous"] = "target"
-		fakeVault.ListTasksReturns([]vaultapi.Task{listed("new-id", "good")}, nil)
+		fakeVault.ListTasksReturns([]vaultapi.Task{listedAlias("new-id", "target", "good")}, nil)
 		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
-			"good": repaired,
+			"good": taskWithPrevious("new-id", "target", "good"),
 		})
 
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
@@ -143,13 +184,12 @@ var _ = Describe("FindTaskFilePath", func() {
 		Expect(matchedRelPath).To(Equal("tasks/good.md"))
 	})
 
-	// Regression: the listing carries no frontmatter, so a walk that matched on the
-	// listing item alone dropped every result whose identifier missed the index.
-	// The walk must read each listed task and match on the frontmatter that read
-	// returns.
+	// The listing's ID is the current identifier, so the row is already the only
+	// candidate. The read still happens — it supplies the frontmatter the caller
+	// writes with — but it is one read, not one per listed task.
 	It("resolves an identifier the index misses through a per-task read", func() {
 		fakeVault := &mocks.VaultAPIClient{}
-		fakeVault.ListTasksReturns([]vaultapi.Task{listed("x", "a")}, nil)
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("target", "a")}, nil)
 		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
 			"a": task("target", "a"),
 		})
@@ -157,7 +197,7 @@ var _ = Describe("FindTaskFilePath", func() {
 		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/a.md"))
-		Expect(fakeVault.ReadTaskCallCount()).To(BeNumerically(">=", 1))
+		Expect(fakeVault.ReadTaskCallCount()).To(Equal(1))
 		// The fake returns its stub whatever the argument is, so a call count alone
 		// cannot prove the walk addressed the task the real API would resolve.
 		_, address := fakeVault.ReadTaskArgsForCall(0)
@@ -166,24 +206,48 @@ var _ = Describe("FindTaskFilePath", func() {
 
 	It("resolves a task_identifier_previous match through the per-task read", func() {
 		fakeVault := &mocks.VaultAPIClient{}
-		fakeVault.ListTasksReturns([]vaultapi.Task{listed("new-id", "good")}, nil)
-		repaired := task("new-id", "good")
-		repaired.Frontmatter["task_identifier_previous"] = "target"
+		fakeVault.ListTasksReturns([]vaultapi.Task{listedAlias("new-id", "target", "good")}, nil)
 		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
-			"good": repaired,
+			"good": taskWithPrevious("new-id", "target", "good"),
 		})
 
-		matchedRelPath, _, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
+		matchedRelPath, fm, err := result.FindTaskFilePath(ctx, fakeVault, "tasks", "target", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matchedRelPath).To(Equal("tasks/good.md"))
+		Expect(fm["task_identifier_previous"]).To(Equal("target"))
+	})
+
+	// A listing row's ID falls back to a filename slug when the page carries no
+	// task_identifier, so the candidate read is what keeps a slug-shaped request from
+	// resolving to a task that never claimed it.
+	It("does not resolve a slug-addressed row for an identifier it never claimed", func() {
+		fakeVault := &mocks.VaultAPIClient{}
+		fakeVault.ListTasksReturns([]vaultapi.Task{listed("some-slug", "some-slug")}, nil)
+		fakeVault.ReadTaskStub = readStub(map[string]vaultapi.Task{
+			"some-slug": {Title: "some-slug", Frontmatter: map[string]any{}},
+		})
+
+		matchedRelPath, fm, err := result.FindTaskFilePath(
+			ctx,
+			fakeVault,
+			"tasks",
+			"some-slug",
+			nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matchedRelPath).To(Equal(""))
+		Expect(fm).To(BeNil())
 	})
 
 	It("skips a listed task whose read reports not found and matches the next", func() {
 		fakeVault := &mocks.VaultAPIClient{}
 		fakeVault.ListTasksReturns(
-			[]vaultapi.Task{listed("gone", "gone"), listed("kept-id", "kept")}, nil,
+			[]vaultapi.Task{
+				listedAlias("gone-id", "target", "gone"),
+				listedAlias("kept-id", "target", "kept"),
+			}, nil,
 		)
-		match := task("target", "kept")
+		match := taskWithPrevious("kept-id", "target", "kept")
 		fakeVault.ReadTaskReturnsOnCall(0, nil, vaultapi.ErrNotFound)
 		fakeVault.ReadTaskReturnsOnCall(1, &match, nil)
 
