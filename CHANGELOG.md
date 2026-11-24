@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: remove stale vulnerability ignore IDs that no longer apply (govulncheck, trivy)
+
 ## v0.35.0
 
 - fix: **an index miss no longer reads every task file.** The fallback matched by reading one task per listed task — ~13 000 reads on the personal vault — because the listing was assumed to carry neither `task_identifier` nor `task_identifier_previous`. It carries both (`TaskItem.ID` and the new `TaskIdentifierPrevious`), so the match now runs in memory and only the candidates are read: 0–2 reads instead of ~13 000. The reads are kept for the candidates because the listing's `ID` falls back to a filename slug for a page with no `task_identifier`, so the read is what restores the exact frontmatter match and keeps a slug-shaped request from resolving to a task that never claimed it. Duplicate detection and `task_identifier_previous` alias resolution are unchanged, including the AC7 duplicate pair spanning the two keys.
