@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.35.2
 
 - fix: **the result write no longer reverts a spawn notification's markers.** A result payload carries the frontmatter as the agent saw it at spawn — `job_started_at: ""` and the previous run's `claude_session_id` — and `MergeFrontmatter` merged that snapshot over the live file, undoing the spawn write (measured 2026-11-24: `7891930742` applied all four markers, `755a199342` reverted them two minutes later). A **non-empty** on-disk `job_started_at` / `claude_session_id` now wins over a differing incoming value; an absent or empty on-disk value still takes the incoming one, and `current_job` stays clearable by the result write at run end.
 
