@@ -608,4 +608,28 @@ var _ = Describe("MergeFrontmatter", func() {
 			Expect(merged["metrics_agent_turns"]).To(Equal([]any{"x"}))
 		},
 	)
+	It(
+		"keeps the on-disk spawn markers when a stale payload carries empty job_started_at and an old claude_session_id",
+		func() {
+			existing := lib.TaskFrontmatter{
+				"status":            "in_progress",
+				"job_started_at":    "2026-11-24T19:28:48Z",
+				"claude_session_id": "294f7fd5-6f1e-4dcc-aee2-9ff116fabe66",
+				"current_job":       "trading-strategy-prototype-agent-acb2dcce-20261124192843",
+			}
+			incoming := lib.TaskFrontmatter{
+				"status":             "in_progress",
+				"job_started_at":     "",
+				"claude_session_id":  "02037e59-0f15-4f23-85c2-435ed3867238",
+				"current_job":        "",
+				"last_result_status": "failed",
+			}
+			merged, decisions := result.MergeFrontmatter(existing, incoming)
+			Expect(merged["job_started_at"]).To(Equal("2026-11-24T19:28:48Z"))
+			Expect(merged["claude_session_id"]).To(Equal("294f7fd5-6f1e-4dcc-aee2-9ff116fabe66"))
+			Expect(merged["current_job"]).To(Equal(""))
+			Expect(merged["last_result_status"]).To(Equal("failed"))
+			Expect(decisions).To(HaveLen(2))
+		},
+	)
 })

@@ -1418,6 +1418,45 @@ type GuardDecision struct {
 // max_triggers belongs here because it is the cap's DEFINITION, not a measurement:
 // the cap predicate reads it, so a snapshot that raises it in the same write
 // suppresses the escalation. Nothing but a task's own create sets it.
+// applySpawnMarkerGuard keeps a non-empty on-disk spawn marker over a differing
+// incoming one, and lets an absent or empty on-disk value take the incoming one.
+// See spawnMarkerFields for the rationale.
+func applySpawnMarkerGuard(
+	existing, incoming, merged lib.TaskFrontmatter,
+	decisions []GuardDecision,
+) []GuardDecision {
+	for _, field := range spawnMarkerFields {
+		diskValue, onDisk := existing[field]
+		if !onDisk || isBlankFrontmatterValue(diskValue) {
+			continue
+		}
+		merged[field] = diskValue
+		if incomingValue, inIncoming := incoming[field]; inIncoming &&
+			!FrontmatterValueEqual(diskValue, incomingValue) {
+			decisions = append(
+				decisions,
+				GuardDecision{Field: field, Kept: diskValue, Rejected: incomingValue},
+			)
+		}
+	}
+	return decisions
+}
+
+// spawnMarkerFields lists the frontmatter keys the executor stamps on a spawn
+// notification. Unlike controllerOwnedFields, an absent or empty on-disk value
+// accepts the incoming one — only a non-empty on-disk value is pinned.
+var spawnMarkerFields = []string{
+	"job_started_at",
+	"claude_session_id",
+}
+
+// isBlankFrontmatterValue reports whether a decoded frontmatter value is an empty
+// string. A non-string value is never blank: only the string form can be "".
+func isBlankFrontmatterValue(v any) bool {
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
 var controllerOwnedFields = []string{
 	"trigger_count",
 	"trigger_scope",
@@ -1559,6 +1598,8 @@ func MergeFrontmatter(
 			)
 		}
 	}
+
+	decisions = applySpawnMarkerGuard(existing, incoming, merged, decisions)
 
 	// Terminal on-disk status is pinned: the on-disk status value is kept and the
 	// incoming status is discarded. Terminal is decided by the normalizing Status()
