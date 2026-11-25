@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/boltkv"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
@@ -182,6 +183,68 @@ var _ = Describe("parked command re-drive", func() {
 
 		Expect(redriver.RedriveOnce(ctx)).To(Succeed())
 		Expect(executed).To(Equal(0))
+	})
+
+	It("clears a command whose retry finds the file the first attempt had already made", func() {
+		// The ambiguous first attempt landed; the retry is answered with
+		// ErrTaskAlreadyExists. That is a decided success, not a failure to publish.
+		parkCommand(now.Add(-time.Minute))
+		redriver := newRedriver(executorReturning(
+			errors.Wrapf(ctx, task.ErrTaskAlreadyExists, "title occupied for task abc12345"),
+		))
+
+		Expect(redriver.RedriveOnce(ctx)).To(Succeed())
+
+		Expect(sent).To(BeEmpty())
+		parked, err := park.List(ctx)
+		Expect(err).To(Succeed())
+		Expect(parked).To(BeEmpty())
+	})
+
+	It("clears a command that no longer applies, without publishing a result", func() {
+		// A skip is a decision: the library publishes nothing for it, and neither
+		// does the loop.
+		parkCommand(now.Add(-time.Minute))
+		redriver := newRedriver(executorReturning(
+			errors.Wrapf(ctx, cdb.ErrCommandObjectSkipped, "cross-vault create"),
+		))
+
+		Expect(redriver.RedriveOnce(ctx)).To(Succeed())
+
+		Expect(sent).To(BeEmpty())
+		parked, err := park.List(ctx)
+		Expect(err).To(Succeed())
+		Expect(parked).To(BeEmpty())
+	})
+
+	It("leaves the command parked when a shutdown interrupts the re-drive", func() {
+		// A cancelled context is not transient by design, so without an explicit
+		// check it would be published as a Failure and the command dropped — purely
+		// because the pod was stopping. The cancellation happens DURING the call,
+		// which is what a shutdown looks like.
+		parkCommand(now.Add(-time.Minute))
+		sweepCtx, cancel := context.WithCancel(ctx)
+		redriver := newRedriver(
+			cdb.CommandObjectExecutorTxFunc(
+				"create-task",
+				true,
+				func(
+					_ context.Context,
+					_ libkv.Tx,
+					_ cdb.CommandObject,
+				) (*base.EventID, base.Event, error) {
+					cancel()
+					return nil, nil, context.Canceled
+				},
+			),
+		)
+
+		Expect(redriver.RedriveOnce(sweepCtx)).To(Succeed())
+
+		Expect(sent).To(BeEmpty())
+		parked, err := park.List(ctx)
+		Expect(err).To(Succeed())
+		Expect(parked).To(HaveLen(1))
 	})
 
 	It("drops a command whose re-drive window has closed, visibly", func() {

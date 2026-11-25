@@ -172,6 +172,19 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 	// writes would queue behind every re-drive attempt.
 	_, _, resultErr = r.executor.HandleCommand(ctx, nil, commandObject)
 
+	// A shutdown is not a decision. Without this, a cancelled context is not
+	// transient (by design, in vaultapi), so it would fall through to the failure
+	// branch: a spurious Failure result published and the command dropped, purely
+	// because the pod was stopping.
+	if ctx.Err() != nil {
+		glog.V(2).Infof(
+			"parked command %s (task=%s) left parked: re-drive interrupted by shutdown",
+			entry.Key,
+			entry.TaskIdentifier,
+		)
+		return nil
+	}
+
 	switch {
 	case resultErr == nil:
 		if err := r.resultObjectSender.Send(
@@ -180,44 +193,17 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 		); err != nil {
 			return errors.Wrapf(ctx, err, "send success result for parked command %s", entry.Key)
 		}
-		if err := r.park.Delete(ctx, entry.Key); err != nil {
-			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
-		}
-		glog.V(2).Infof(
-			"parked command re-driven successfully: requestID=%s operation=%s task=%s",
-			entry.Command.RequestID,
-			entry.Command.Operation,
-			entry.TaskIdentifier,
-		)
-		return nil
+		return r.clearDecided(ctx, entry, "re-driven successfully")
 	case errors.Is(resultErr, cdb.ErrCommandObjectSkipped):
 		// A skip is a decision, not a failure: the library publishes no result for
 		// it, and neither does this loop. Reachable when a parked command no longer
 		// applies after a redeploy (e.g. a cross-vault create).
-		if err := r.park.Delete(ctx, entry.Key); err != nil {
-			return errors.Wrapf(ctx, err, "delete skipped parked command %s", entry.Key)
-		}
-		glog.V(2).Infof(
-			"parked command re-driven and skipped: requestID=%s operation=%s task=%s",
-			entry.Command.RequestID,
-			entry.Command.Operation,
-			entry.TaskIdentifier,
-		)
-		return nil
+		return r.clearDecided(ctx, entry, "no longer applies, skipped")
 	case errors.Is(resultErr, task.ErrTaskAlreadyExists):
 		// The first attempt was ambiguous and had in fact landed: the retry found
 		// the file it had already created. That is a decided success, not a
 		// failure to publish — the task exists, which is what the command asked for.
-		if err := r.park.Delete(ctx, entry.Key); err != nil {
-			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
-		}
-		glog.V(2).Infof(
-			"parked command re-driven and already materialized: requestID=%s operation=%s task=%s",
-			entry.Command.RequestID,
-			entry.Command.Operation,
-			entry.TaskIdentifier,
-		)
-		return nil
+		return r.clearDecided(ctx, entry, "already materialized")
 	case vaultapi.IsTransient(resultErr):
 		glog.V(2).Infof(
 			"parked command %s (task=%s) still failing transiently, keeping it parked: %v",
@@ -233,9 +219,6 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 		); err != nil {
 			return errors.Wrapf(ctx, err, "send failure result for parked command %s", entry.Key)
 		}
-		if err := r.park.Delete(ctx, entry.Key); err != nil {
-			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
-		}
 		glog.Warningf(
 			"parked command re-driven and failed permanently: requestID=%s operation=%s task=%s error=%v",
 			entry.Command.RequestID,
@@ -243,14 +226,48 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 			entry.TaskIdentifier,
 			resultErr,
 		)
-		return nil
+		return r.clearDecided(ctx, entry, "failed permanently")
 	}
+}
+
+// clearDecided removes a parked command that has reached a decision and logs it
+// at V(2). Every decided branch ends here, so the delete-and-report cannot drift
+// between them.
+func (r *parkRedriver) clearDecided(
+	ctx context.Context,
+	entry ParkedCommand,
+	outcome string,
+) error {
+	if err := r.park.Delete(ctx, entry.Key); err != nil {
+		return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
+	}
+	glog.V(2).Infof(
+		"parked command %s: requestID=%s operation=%s task=%s",
+		outcome,
+		entry.Command.RequestID,
+		entry.Command.Operation,
+		entry.TaskIdentifier,
+	)
+	return nil
 }
 
 // drop discards a parked command whose re-drive window has closed. It is the
 // visible terminus: the command is gone, and the log line plus the counter say
 // which task it was.
+//
+// The entry is deleted BEFORE it is counted: a failed delete leaves the command
+// parked, and the next sweep would otherwise count the same drop again — a
+// counter that overstates loss is worse than one that reports it a sweep late.
 func (r *parkRedriver) drop(ctx context.Context, entry ParkedCommand) {
+	if err := r.park.Delete(ctx, entry.Key); err != nil {
+		glog.Warningf(
+			"delete expired parked command %s (task=%s) failed, it stays parked: %v",
+			entry.Key,
+			entry.TaskIdentifier,
+			err,
+		)
+		return
+	}
 	glog.Errorf(
 		"parked command expired and dropped without ever executing: requestID=%s operation=%s task=%s parkedAt=%s",
 		entry.Command.RequestID,
@@ -259,7 +276,4 @@ func (r *parkRedriver) drop(ctx context.Context, entry ParkedCommand) {
 		entry.ParkedAt.Time().Format(time.RFC3339),
 	)
 	r.metrics.CommandExpiredTotal(string(entry.Command.Operation)).Inc()
-	if err := r.park.Delete(ctx, entry.Key); err != nil {
-		glog.Warningf("delete expired parked command %s failed: %v", entry.Key, err)
-	}
 }
