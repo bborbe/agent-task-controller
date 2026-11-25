@@ -23,27 +23,35 @@ import (
 // lost.
 //
 // The wrapper delegates everything except one case. A command that failed
-// transiently is written to the park inside the handler's own transaction — so
-// the park and the offset commit that follows are one write — and is then
-// reported as SKIPPED: cdb's own result-sender wrapper turns ErrCommandObjectSkipped
-// into "no result, no error", the batch transaction commits, and ParkRedriver
-// re-executes the command later. Every other outcome reaches the library's wrapper
-// unchanged, so a success, a permanent failure and a deliberate skip behave
-// exactly as they did before.
+// transiently is written to the park inside the handler's own transaction and is
+// then reported as SKIPPED: cdb's own result-sender wrapper turns
+// ErrCommandObjectSkipped into "no result, no error", the batch transaction
+// commits, and ParkRedriver re-executes the command later. Every other outcome
+// reaches the library's wrapper unchanged, so a success, a permanent failure and
+// a deliberate skip behave exactly as they did before.
 //
-// Why a park rather than a propagated error: the handler chain's result-sender
-// wrapper publishes a Failure result and returns nil for ANY handler error
-// (cqrs/cdb/cdb_command-object-executor-tx-result-sender.go:66), so today the
-// batch commits and the offset advances past the command
-// (kafka/kafka_consumer-offset.go:489-494) — that is how three release tasks were
-// lost on 2026-11-24 while vault-api timed out. cqrs' own contract
-// (docs/command-consumer.md:144) says a transient failure "should return a normal
-// error so the framework retries", but an error that escapes the batch rolls back
-// the WHOLE batch: with COMMAND_BATCH_SIZE at 100 and RetryConsumer re-entering
-// every 5 s, one flapping command would replay up to 99 already-executed commands
-// for the length of the outage — duplicate result messages and duplicate vault
-// writes, including the delta-applying increment. Parking commits the batch and
-// retries only the command that failed.
+// Why a park rather than a propagated error, which is what cqrs documents
+// (docs/command-consumer.md:144: a transient failure "should return a normal
+// error so the framework retries"): inside this chain a propagated error cannot
+// work. cdb's result-sender wrapper converts ANY handler error into a published
+// Failure result and returns nil
+// (cqrs/cdb/cdb_command-object-executor-tx-result-sender.go:59), which is exactly
+// the loss this change exists to fix — the batch commits and the offset advances
+// past the command (kafka/kafka_consumer-offset.go:489-494), as it did for three
+// release tasks on 2026-11-24. Letting the error past that wrapper means composing
+// the chain by hand, and then the error rolls back the WHOLE batch: with
+// COMMAND_BATCH_SIZE at 100 and RetryConsumer re-entering every 5 s, one flapping
+// command replays up to 99 already-executed commands for the length of the outage
+// — duplicate result messages and duplicate vault writes, including the
+// delta-applying increment. Parking commits the batch and retries only the command
+// that failed.
+//
+// The park is committed by the same transaction as the handler work, but the
+// offset is written immediately AFTER that transaction commits
+// (kafka_offset_store.go). A crash in that gap leaves the command parked AND the
+// message re-readable, so it is executed twice at worst; a duplicate create is
+// answered with ErrTaskAlreadyExists rather than a second file, and the redriver
+// clears that case as decided.
 //
 // Only operations that are safe to repeat may be wrapped with this: a create is
 // (an identifier that already exists is answered with ErrTaskAlreadyExists rather
@@ -73,10 +81,19 @@ func NewTransientAwareExecutorTx(
 				currentDateTime.Now().Time(),
 				taskIdentifier,
 			); err != nil {
-				// Without a park the command would be lost, so the error is
-				// propagated: the batch rolls back and the message is re-read.
-				// Replaying the batch is the lesser harm when the park store
-				// itself is broken.
+				// A command that could not be parked must not be reported as
+				// skipped: that would commit the offset past it and lose it. The
+				// error is propagated so the batch transaction rolls back and the
+				// message is re-read — replaying the batch is the lesser harm when
+				// the park store itself is broken. Logged at Error because this
+				// branch is only reached when the controller is already losing
+				// commands.
+				glog.Errorf(
+					"parking command '%s' for task=%s failed, rolling the batch back: %v",
+					inner.CommandOperation(),
+					taskIdentifier,
+					err,
+				)
 				return nil, nil, errors.Wrapf(
 					ctx,
 					err,
@@ -87,13 +104,10 @@ func NewTransientAwareExecutorTx(
 			// Unconditional Warning, not V(n)-gated and not sampled: this is the
 			// line that makes a command the controller could not execute
 			// attributable from the log alone. The library's failure line
-			// (cdb_command-object-executor-tx-result-sender.go:52) names the
+			// (cdb_command-object-executor-tx-result-sender.go:55-58) names the
 			// operation and nothing else, which is why the 2026-11-24 losses could
 			// not be traced to a task.
-			glog.Warningf(
-				"%s",
-				transientRetryMessage(inner.CommandOperation(), commandObject, resultErr),
-			)
+			glog.Warning(transientRetryMessage(inner.CommandOperation(), commandObject, resultErr))
 			// Skipped, not nil: nil with SendResultEnabled would publish a Success
 			// result for a command that has not executed yet.
 			return nil, nil, cdb.ErrCommandObjectSkipped

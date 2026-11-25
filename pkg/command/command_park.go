@@ -42,12 +42,23 @@ type ParkedCommand struct {
 	TaskIdentifier string `json:"taskIdentifier,omitempty"`
 }
 
+//counterfeiter:generate -o ../../mocks/command_park.go --fake-name CommandPark . CommandPark
+
 // CommandPark stores commands whose execution failed transiently, so they can be
 // re-driven instead of lost.
+//
+// It lives in the same BoltDB as the consumer offsets. That does not make the park
+// and the offset one write — the consumer marks the offset in a separate
+// transaction immediately after the handler's — so a crash in the gap leaves the
+// command parked AND the message re-readable. The command is then executed twice
+// at worst, which is why only repeat-safe operations are parked.
+//
+// ⚠️ The database directory (DATA_DIR) must therefore be persistent: a park that
+// dies with the pod is a command lost exactly as it was before this type existed.
 type CommandPark interface {
-	// Park writes the command inside the caller's transaction, so the park and the
-	// offset commit it enables are one write: either the command is parked and the
-	// offset may advance, or neither happened.
+	// Park writes the command inside the caller's transaction, so the park commits
+	// with the handler work that failed. Re-parking the same requestID replaces the
+	// entry and refreshes ParkedAt, which restarts the re-drive window.
 	Park(
 		ctx context.Context,
 		tx libkv.Tx,
@@ -55,8 +66,8 @@ type CommandPark interface {
 		parkedAt time.Time,
 		taskIdentifier string,
 	) error
-	// List returns every parked command, oldest park first is not guaranteed — the
-	// re-drive reads each entry's own ParkedAt.
+	// List returns every parked command. Order is the bucket's key order, not park
+	// time; a caller reads each entry's own ParkedAt.
 	List(ctx context.Context) ([]ParkedCommand, error)
 	// Delete removes one parked command, by key.
 	Delete(ctx context.Context, key string) error

@@ -16,37 +16,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/agent-task-controller/mocks"
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
-
-// fakePark records what the executor asked it to park.
-type fakePark struct {
-	parked []base.Command
-	tasks  []string
-	at     []time.Time
-	err    error
-}
-
-func (f *fakePark) Park(
-	_ context.Context,
-	_ libkv.Tx,
-	command base.Command,
-	parkedAt time.Time,
-	taskIdentifier string,
-) error {
-	if f.err != nil {
-		return f.err
-	}
-	f.parked = append(f.parked, command)
-	f.tasks = append(f.tasks, taskIdentifier)
-	f.at = append(f.at, parkedAt)
-	return nil
-}
-
-func (f *fakePark) List(context.Context) ([]command.ParkedCommand, error) { return nil, nil }
-
-func (f *fakePark) Delete(context.Context, string) error { return nil }
 
 var _ = Describe("transient-aware executor", func() {
 	var ctx context.Context
@@ -83,7 +56,7 @@ var _ = Describe("transient-aware executor", func() {
 	It("parks a transiently failing command and reports it as skipped", func() {
 		// Skipped, not nil: a nil return with SendResultEnabled makes cdb's wrapper
 		// publish a Success result for a command that has not executed.
-		park := &fakePark{}
+		park := &mocks.CommandPark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -99,16 +72,18 @@ var _ = Describe("transient-aware executor", func() {
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-		Expect(park.parked).To(HaveLen(1))
-		Expect(park.parked[0].RequestID).To(Equal(base.RequestID("1234567890")))
-		Expect(park.tasks[0]).To(Equal("abc12345"))
-		Expect(park.at[0].Equal(now)).To(BeTrue())
+		Expect(park.ParkCallCount()).To(Equal(1))
+		_, _, parkedCommand, parkedAt, taskIdentifier := park.ParkArgsForCall(0)
+		Expect(parkedCommand.RequestID).To(Equal(base.RequestID("1234567890")))
+		Expect(taskIdentifier).To(Equal("abc12345"))
+		Expect(parkedAt.Equal(now)).To(BeTrue())
 	})
 
 	It("propagates the error instead of skipping when the park itself fails", func() {
 		// A command that could not be parked would be lost if it were reported as
 		// skipped, so the failure must reach the consumer and roll the batch back.
-		park := &fakePark{err: errors.Errorf(ctx, "bolt is broken")}
+		park := &mocks.CommandPark{}
+		park.ParkReturns(errors.Errorf(ctx, "bolt is broken"))
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -121,11 +96,12 @@ var _ = Describe("transient-aware executor", func() {
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
-		Expect(park.parked).To(BeEmpty())
+		// It tried, and the failure is the park's — not a decision to skip.
+		Expect(park.ParkCallCount()).To(Equal(1))
 	})
 
 	It("passes a permanent failure through untouched", func() {
-		park := &fakePark{}
+		park := &mocks.CommandPark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -138,11 +114,11 @@ var _ = Describe("transient-aware executor", func() {
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
-		Expect(park.parked).To(BeEmpty())
+		Expect(park.ParkCallCount()).To(Equal(0))
 	})
 
 	It("passes a deliberate skip through untouched", func() {
-		park := &fakePark{}
+		park := &mocks.CommandPark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -154,11 +130,11 @@ var _ = Describe("transient-aware executor", func() {
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
-		Expect(park.parked).To(BeEmpty())
+		Expect(park.ParkCallCount()).To(Equal(0))
 	})
 
 	It("passes success through untouched", func() {
-		park := &fakePark{}
+		park := &mocks.CommandPark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -169,8 +145,8 @@ var _ = Describe("transient-aware executor", func() {
 		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
-		Expect(err).To(BeNil())
-		Expect(park.parked).To(BeEmpty())
+		Expect(err).To(Succeed())
+		Expect(park.ParkCallCount()).To(Equal(0))
 	})
 
 	It("names the task in the retry log line", func() {

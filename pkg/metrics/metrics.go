@@ -227,16 +227,20 @@ var KafkaConsumePausedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total number of times Kafka consumption was paused waiting for git-rest.",
 })
 
-// CommandExpiredTotal counts commands dropped by the expiry filter, by operation.
+// CommandExpiredTotal counts commands dropped as expired, by operation.
 //
 // It is the counter the 60-minute window could not previously report: an expired command was
 // dropped silently, so "a published create never reached the controller" had no series to read.
 // A non-zero value is loss, not slowness — the command's effect never happened — so the alert is
 // a level test on increase() over a window wide enough to cover a burst, not a rate over 5m.
+//
+// Two drops share it, because they are the same loss seen from two places: the expiry filter
+// dropping a message that was never executed, and the park re-driver dropping a command whose
+// re-drive window closed. Both mean the command's effect never happened.
 var CommandExpiredTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_commands_expired_total",
-		Help: "Total number of commands dropped as expired before execution, by operation.",
+		Help: "Total number of commands dropped as expired without ever executing, by operation.",
 	},
 	[]string{"operation"},
 )

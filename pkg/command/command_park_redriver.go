@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
@@ -25,6 +26,8 @@ const (
 	DefaultParkRedriveDelay    = 30 * time.Second
 	DefaultParkRedriveInterval = 30 * time.Second
 )
+
+//counterfeiter:generate -o ../../mocks/park_redriver.go --fake-name ParkRedriver . ParkRedriver
 
 // ParkRedriver re-executes commands parked by NewTransientAwareExecutorTx and
 // removes them once they are decided.
@@ -109,7 +112,9 @@ func (r *parkRedriver) Run(ctx context.Context) error {
 func (r *parkRedriver) RedriveOnce(ctx context.Context) error {
 	parked, err := r.park.List(ctx)
 	if err != nil {
-		return errors.Wrapf(ctx, err, "list parked commands")
+		// commandPark.List already names the operation; wrapping again only
+		// doubles the message.
+		return err
 	}
 	if len(parked) == 0 {
 		return nil
@@ -117,11 +122,23 @@ func (r *parkRedriver) RedriveOnce(ctx context.Context) error {
 	now := r.currentDateTime.Now().Time()
 	for _, entry := range parked {
 		if err := ctx.Err(); err != nil {
-			return err
+			return errors.Wrapf(
+				ctx,
+				err,
+				"context done before re-driving parked command %s",
+				entry.Key,
+			)
 		}
-		age := now.Sub(entry.ParkedAt)
-		if age < r.redriveDelay {
+		if now.Sub(entry.ParkedAt) < r.redriveDelay {
 			continue
+		}
+		// The window is measured from the command's own request time, like the
+		// consumer's expiry filter, so a command cannot gain a second full window
+		// by sitting in the queue before it was parked. A command with no request
+		// time (only possible for a corrupt payload) falls back to its park time.
+		age := now.Sub(entry.ParkedAt)
+		if !entry.Command.RequestTime.IsZero() {
+			age = now.Sub(entry.Command.RequestTime)
 		}
 		if age > r.expireDuration {
 			r.drop(ctx, entry)
@@ -166,8 +183,36 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 		if err := r.park.Delete(ctx, entry.Key); err != nil {
 			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
 		}
-		glog.Infof(
+		glog.V(2).Infof(
 			"parked command re-driven successfully: requestID=%s operation=%s task=%s",
+			entry.Command.RequestID,
+			entry.Command.Operation,
+			entry.TaskIdentifier,
+		)
+		return nil
+	case errors.Is(resultErr, cdb.ErrCommandObjectSkipped):
+		// A skip is a decision, not a failure: the library publishes no result for
+		// it, and neither does this loop. Reachable when a parked command no longer
+		// applies after a redeploy (e.g. a cross-vault create).
+		if err := r.park.Delete(ctx, entry.Key); err != nil {
+			return errors.Wrapf(ctx, err, "delete skipped parked command %s", entry.Key)
+		}
+		glog.V(2).Infof(
+			"parked command re-driven and skipped: requestID=%s operation=%s task=%s",
+			entry.Command.RequestID,
+			entry.Command.Operation,
+			entry.TaskIdentifier,
+		)
+		return nil
+	case errors.Is(resultErr, task.ErrTaskAlreadyExists):
+		// The first attempt was ambiguous and had in fact landed: the retry found
+		// the file it had already created. That is a decided success, not a
+		// failure to publish — the task exists, which is what the command asked for.
+		if err := r.park.Delete(ctx, entry.Key); err != nil {
+			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
+		}
+		glog.V(2).Infof(
+			"parked command re-driven and already materialized: requestID=%s operation=%s task=%s",
 			entry.Command.RequestID,
 			entry.Command.Operation,
 			entry.TaskIdentifier,
