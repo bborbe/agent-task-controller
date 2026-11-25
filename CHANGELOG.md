@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.36.0
 
 - feat: **infrastructure for parking a command whose vault write fails transiently — no behaviour change on its own.** `vaultapi` gains `ErrTransient`: a marker set on a call the vault-api could not decide — transport failures (refused / reset / broken pipe / EOF / timeout / DNS) and the 5xx, 429 and 408 statuses. The cause stays reachable through `Unwrap` (`errors.Is(err, context.DeadlineExceeded)` still answers), a cancelled context is deliberately **not** transient (that is shutdown, not a fault), and 501 is not either (a route the server will never serve). `command.CommandPark` adds a `parked-commands` bucket in the same BoltDB as the consumer offsets, written inside the caller's transaction, so a command the controller could not execute can be recorded and re-driven instead of being committed past. The command consumer does not use either yet; the next change wires them into the create executor.
   ⚠️ The park is not atomic with the offset: the consumer marks the offset in a separate transaction immediately after the handler's, so a crash in that gap leaves a command both parked and re-readable. It is executed twice at worst, which is why only repeat-safe operations may be parked.
