@@ -4,11 +4,11 @@ package mocks
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/bborbe/agent-task-controller/pkg/command"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/kv"
+	"github.com/bborbe/time"
 )
 
 type CommandPark struct {
@@ -37,13 +37,13 @@ type CommandPark struct {
 		result1 []command.ParkedCommand
 		result2 error
 	}
-	ParkStub        func(context.Context, kv.Tx, base.Command, time.Time, string) error
+	ParkStub        func(context.Context, kv.Tx, base.Command, time.DateTime, string) error
 	parkMutex       sync.RWMutex
 	parkArgsForCall []struct {
 		arg1 context.Context
 		arg2 kv.Tx
 		arg3 base.Command
-		arg4 time.Time
+		arg4 time.DateTime
 		arg5 string
 	}
 	parkReturns struct {
@@ -182,14 +182,14 @@ func (fake *CommandPark) ListReturnsOnCall(i int, result1 []command.ParkedComman
 	}{result1, result2}
 }
 
-func (fake *CommandPark) Park(arg1 context.Context, arg2 kv.Tx, arg3 base.Command, arg4 time.Time, arg5 string) error {
+func (fake *CommandPark) Park(arg1 context.Context, arg2 kv.Tx, arg3 base.Command, arg4 time.DateTime, arg5 string) error {
 	fake.parkMutex.Lock()
 	ret, specificReturn := fake.parkReturnsOnCall[len(fake.parkArgsForCall)]
 	fake.parkArgsForCall = append(fake.parkArgsForCall, struct {
 		arg1 context.Context
 		arg2 kv.Tx
 		arg3 base.Command
-		arg4 time.Time
+		arg4 time.DateTime
 		arg5 string
 	}{arg1, arg2, arg3, arg4, arg5})
 	stub := fake.ParkStub
@@ -211,13 +211,13 @@ func (fake *CommandPark) ParkCallCount() int {
 	return len(fake.parkArgsForCall)
 }
 
-func (fake *CommandPark) ParkCalls(stub func(context.Context, kv.Tx, base.Command, time.Time, string) error) {
+func (fake *CommandPark) ParkCalls(stub func(context.Context, kv.Tx, base.Command, time.DateTime, string) error) {
 	fake.parkMutex.Lock()
 	defer fake.parkMutex.Unlock()
 	fake.ParkStub = stub
 }
 
-func (fake *CommandPark) ParkArgsForCall(i int) (context.Context, kv.Tx, base.Command, time.Time, string) {
+func (fake *CommandPark) ParkArgsForCall(i int) (context.Context, kv.Tx, base.Command, time.DateTime, string) {
 	fake.parkMutex.RLock()
 	defer fake.parkMutex.RUnlock()
 	argsForCall := fake.parkArgsForCall[i]

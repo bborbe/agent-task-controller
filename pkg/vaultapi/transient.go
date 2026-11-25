@@ -97,17 +97,21 @@ func isTransientTransportError(err error) bool {
 		stderrors.Is(err, io.ErrUnexpectedEOF) ||
 		stderrors.Is(err, syscall.ECONNREFUSED) ||
 		stderrors.Is(err, syscall.ECONNRESET) ||
+		stderrors.Is(err, syscall.ECONNABORTED) ||
 		stderrors.Is(err, syscall.ETIMEDOUT) ||
+		stderrors.Is(err, syscall.EHOSTUNREACH) ||
+		stderrors.Is(err, syscall.ENETUNREACH) ||
 		stderrors.Is(err, syscall.EPIPE) {
 		return true
 	}
 	// A name that does not resolve is usually the vault-api Service being
 	// recreated or a resolver blip, not a route the API will never serve: the
-	// request never left the process, so repeating it is free and the expiry
-	// filter bounds how long it repeats.
+	// request never left the process, so repeating it is free. A definitive
+	// "no such host" is the exception — that is a misconfigured address, and
+	// repeating it only delays the failure reaching whoever can fix it.
 	var dnsErr *net.DNSError
 	if stderrors.As(err, &dnsErr) {
-		return true
+		return !dnsErr.IsNotFound
 	}
 	var netErr net.Error
 	if stderrors.As(err, &netErr) && netErr.Timeout() {

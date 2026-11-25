@@ -84,7 +84,7 @@ var _ = Describe("parked command re-drive", func() {
 					Initiator:   "me",
 					Data:        base.Event{"taskIdentifier": "abc12345"},
 				},
-				parkedAt,
+				libtime.DateTime(parkedAt),
 				"abc12345",
 			)
 		})).To(Succeed())

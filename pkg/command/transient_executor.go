@@ -78,7 +78,7 @@ func NewTransientAwareExecutorTx(
 				ctx,
 				tx,
 				commandObject.Command,
-				currentDateTime.Now().Time(),
+				currentDateTime.Now(),
 				taskIdentifier,
 			); err != nil {
 				// A command that could not be parked must not be reported as

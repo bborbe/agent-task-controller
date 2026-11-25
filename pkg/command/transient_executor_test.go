@@ -76,7 +76,7 @@ var _ = Describe("transient-aware executor", func() {
 		_, _, parkedCommand, parkedAt, taskIdentifier := park.ParkArgsForCall(0)
 		Expect(parkedCommand.RequestID).To(Equal(base.RequestID("1234567890")))
 		Expect(taskIdentifier).To(Equal("abc12345"))
-		Expect(parkedAt.Equal(now)).To(BeTrue())
+		Expect(parkedAt.Time()).To(BeTemporally("==", now))
 	})
 
 	It("propagates the error instead of skipping when the park itself fails", func() {

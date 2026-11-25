@@ -11,6 +11,7 @@ import (
 	"github.com/bborbe/boltkv"
 	"github.com/bborbe/cqrs/base"
 	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -27,7 +28,7 @@ var _ = Describe("command park", func() {
 		ctx = context.Background()
 		var err error
 		db, err = boltkv.OpenTemp(ctx)
-		Expect(err).To(BeNil())
+		Expect(err).To(Succeed())
 		park = command.NewCommandPark(db)
 		now = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	})
@@ -48,42 +49,61 @@ var _ = Describe("command park", func() {
 
 	It("round-trips a parked command", func() {
 		Expect(db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
-			return park.Park(ctx, tx, commandFor("req-1", "abc12345"), now, "abc12345")
+			return park.Park(
+				ctx,
+				tx,
+				commandFor("req-1", "abc12345"),
+				libtime.DateTime(now),
+				"abc12345",
+			)
 		})).To(Succeed())
 
 		parked, err := park.List(ctx)
-		Expect(err).To(BeNil())
+		Expect(err).To(Succeed())
 		Expect(parked).To(HaveLen(1))
 		Expect(parked[0].Key).To(Equal("req-1"))
 		Expect(parked[0].TaskIdentifier).To(Equal("abc12345"))
-		Expect(parked[0].ParkedAt.Equal(now)).To(BeTrue())
+		Expect(parked[0].ParkedAt.Time()).To(BeTemporally("==", now))
 		Expect(string(parked[0].Command.Operation)).To(Equal("create-task"))
 		Expect(parked[0].Command.Data["taskIdentifier"]).To(Equal("abc12345"))
 
 		Expect(park.Delete(ctx, "req-1")).To(Succeed())
 		parked, err = park.List(ctx)
-		Expect(err).To(BeNil())
+		Expect(err).To(Succeed())
 		Expect(parked).To(BeEmpty())
 	})
 
 	It("keeps one entry per requestID, so a re-published command cannot multiply", func() {
 		later := now.Add(time.Minute)
 		Expect(db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
-			if err := park.Park(ctx, tx, commandFor("req-1", "abc12345"), now, "abc12345"); err != nil {
+			if err := park.Park(
+				ctx,
+				tx,
+				commandFor("req-1", "abc12345"),
+				libtime.DateTime(now),
+				"abc12345",
+			); err != nil {
 				return err
 			}
-			return park.Park(ctx, tx, commandFor("req-1", "abc12345"), later, "abc12345")
+			return park.Park(
+				ctx,
+				tx,
+				commandFor("req-1", "abc12345"),
+				libtime.DateTime(later),
+				"abc12345",
+			)
 		})).To(Succeed())
 
 		parked, err := park.List(ctx)
-		Expect(err).To(BeNil())
+		Expect(err).To(Succeed())
 		Expect(parked).To(HaveLen(1))
-		Expect(parked[0].ParkedAt.Equal(later)).To(BeTrue())
+		// A re-park refreshes the stamp; the entry does not multiply.
+		Expect(parked[0].ParkedAt.Time()).To(BeTemporally("==", later))
 	})
 
 	It("reports an empty list before anything was parked", func() {
 		parked, err := park.List(ctx)
-		Expect(err).To(BeNil())
+		Expect(err).To(Succeed())
 		Expect(parked).To(BeEmpty())
 	})
 

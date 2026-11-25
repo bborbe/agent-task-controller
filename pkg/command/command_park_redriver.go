@@ -129,14 +129,14 @@ func (r *parkRedriver) RedriveOnce(ctx context.Context) error {
 				entry.Key,
 			)
 		}
-		if now.Sub(entry.ParkedAt) < r.redriveDelay {
+		if now.Sub(entry.ParkedAt.Time()) < r.redriveDelay {
 			continue
 		}
 		// The window is measured from the command's own request time, like the
 		// consumer's expiry filter, so a command cannot gain a second full window
 		// by sitting in the queue before it was parked. A command with no request
 		// time (only possible for a corrupt payload) falls back to its park time.
-		age := now.Sub(entry.ParkedAt)
+		age := now.Sub(entry.ParkedAt.Time())
 		if !entry.Command.RequestTime.IsZero() {
 			age = now.Sub(entry.Command.RequestTime)
 		}
@@ -256,7 +256,7 @@ func (r *parkRedriver) drop(ctx context.Context, entry ParkedCommand) {
 		entry.Command.RequestID,
 		entry.Command.Operation,
 		entry.TaskIdentifier,
-		entry.ParkedAt.Format(time.RFC3339),
+		entry.ParkedAt.Time().Format(time.RFC3339),
 	)
 	r.metrics.CommandExpiredTotal(string(entry.Command.Operation)).Inc()
 	if err := r.park.Delete(ctx, entry.Key); err != nil {

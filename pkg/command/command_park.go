@@ -7,11 +7,11 @@ package command
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 )
 
@@ -31,12 +31,15 @@ const commandParkBucket = "parked-commands"
 type ParkedCommand struct {
 	// Key is the bucket key, which is the command's requestID.
 	Key string `json:"key"`
-	// Command is the original command, verbatim, so a re-drive executes exactly
-	// what the producer sent.
+	// Command is the command as it was received, so a re-drive executes the same
+	// request. It round-trips through JSON, so a numeric Data value comes back as
+	// a float64 — adequate for the identifying fields, which are strings.
 	Command base.Command `json:"command"`
-	// ParkedAt is when the command was first parked; the re-drive window and the
-	// expiry drop are both measured from it.
-	ParkedAt time.Time `json:"parkedAt"`
+	// ParkedAt is when the command was parked. A re-park of the same requestID
+	// replaces it, so this is the most recent park, not the first. The re-drive
+	// delay is measured from it; the drop window is measured from the command's own
+	// RequestTime, so a re-park cannot extend a command's life.
+	ParkedAt libtime.DateTime `json:"parkedAt"`
 	// TaskIdentifier is the task the command addresses, kept beside the payload
 	// so a drop can name it without decoding the command again.
 	TaskIdentifier string `json:"taskIdentifier,omitempty"`
@@ -58,18 +61,23 @@ type ParkedCommand struct {
 type CommandPark interface {
 	// Park writes the command inside the caller's transaction, so the park commits
 	// with the handler work that failed. Re-parking the same requestID replaces the
-	// entry and refreshes ParkedAt, which restarts the re-drive window.
+	// entry and refreshes ParkedAt.
 	Park(
 		ctx context.Context,
 		tx libkv.Tx,
 		command base.Command,
-		parkedAt time.Time,
+		parkedAt libtime.DateTime,
 		taskIdentifier string,
 	) error
 	// List returns every parked command. Order is the bucket's key order, not park
 	// time; a caller reads each entry's own ParkedAt.
+	//
+	// It opens its own read transaction, so it must not be called while a write
+	// transaction on the same database is open — bbolt allows one writer, and a
+	// nested transaction on the same DB can block until it times out.
 	List(ctx context.Context) ([]ParkedCommand, error)
-	// Delete removes one parked command, by key.
+	// Delete removes one parked command, by key. It opens its own write
+	// transaction, with the same restriction as List.
 	Delete(ctx context.Context, key string) error
 }
 
@@ -97,7 +105,7 @@ func (p *commandPark) Park(
 	ctx context.Context,
 	tx libkv.Tx,
 	command base.Command,
-	parkedAt time.Time,
+	parkedAt libtime.DateTime,
 	taskIdentifier string,
 ) error {
 	entry := ParkedCommand{
@@ -108,11 +116,11 @@ func (p *commandPark) Park(
 	}
 	raw, err := json.Marshal(entry)
 	if err != nil {
-		return errors.Wrapf(ctx, err, "marshal parked command")
+		return errors.Wrap(ctx, err, "marshal parked command")
 	}
 	bucket, err := tx.CreateBucketIfNotExists(ctx, p.bucket)
 	if err != nil {
-		return errors.Wrapf(ctx, err, "create park bucket")
+		return errors.Wrap(ctx, err, "create park bucket")
 	}
 	if err := bucket.Put(ctx, []byte(entry.Key), raw); err != nil {
 		return errors.Wrapf(ctx, err, "put parked command %s", entry.Key)
@@ -127,10 +135,10 @@ func (p *commandPark) List(ctx context.Context) ([]ParkedCommand, error) {
 		if err != nil {
 			// No bucket means nothing has ever been parked, which is the ordinary
 			// steady state rather than a failure.
-			if errors.Is(err, libkv.BucketNotFoundError) {
+			if errors.Is(err, libkv.ErrBucketNotFound) {
 				return nil
 			}
-			return errors.Wrapf(ctx, err, "get park bucket")
+			return err
 		}
 		return libkv.ForEach(ctx, bucket, func(item libkv.Item) error {
 			return item.Value(func(raw []byte) error {
@@ -138,7 +146,8 @@ func (p *commandPark) List(ctx context.Context) ([]ParkedCommand, error) {
 				if err := json.Unmarshal(raw, &entry); err != nil {
 					// A corrupt entry must not wedge the loop: log it with its key
 					// and skip it, leaving it for an operator rather than deleting
-					// evidence.
+					// evidence. It is logged once per sweep, which is what makes it
+					// impossible to miss and cheap to live with.
 					glog.Warningf(
 						"parked command %s cannot be decoded and is skipped: %v",
 						item.Key(),
@@ -152,7 +161,7 @@ func (p *commandPark) List(ctx context.Context) ([]ParkedCommand, error) {
 		})
 	})
 	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "list parked commands")
+		return nil, errors.Wrap(ctx, err, "list parked commands")
 	}
 	return result, nil
 }
@@ -161,18 +170,14 @@ func (p *commandPark) Delete(ctx context.Context, key string) error {
 	err := p.db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
 		bucket, err := tx.Bucket(ctx, p.bucket)
 		if err != nil {
-			if errors.Is(err, libkv.BucketNotFoundError) {
+			if errors.Is(err, libkv.ErrBucketNotFound) {
 				return nil
 			}
-			return errors.Wrapf(ctx, err, "get park bucket")
+			return err
 		}
-		if err := bucket.Delete(ctx, []byte(key)); err != nil {
-			if errors.Is(err, libkv.KeyNotFoundError) {
-				return nil
-			}
-			return errors.Wrapf(ctx, err, "delete parked command %s", key)
-		}
-		return nil
+		// Deleting an absent key is not an error: bbolt's Bucket.Delete returns nil
+		// for it, and libkv documents ErrKeyNotFound as currently unreturned.
+		return bucket.Delete(ctx, []byte(key))
 	})
 	if err != nil {
 		return errors.Wrapf(ctx, err, "delete parked command %s", key)
