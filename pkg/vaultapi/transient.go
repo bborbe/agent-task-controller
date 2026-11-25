@@ -58,7 +58,12 @@ func markTransient(err error) error {
 // isTransientStatus reports whether an HTTP status means "the request was not
 // decided". 5xx is the server's own admission that it could not answer; 429 and
 // 408 are the two 4xx statuses that describe the moment rather than the request.
+// 501 Not Implemented is excluded on purpose: it reports a route the server will
+// never serve, so retrying it only delays the visible failure.
 func isTransientStatus(status int) bool {
+	if status == http.StatusNotImplemented {
+		return false
+	}
 	return status >= http.StatusInternalServerError ||
 		status == http.StatusTooManyRequests ||
 		status == http.StatusRequestTimeout
@@ -92,7 +97,16 @@ func isTransientTransportError(err error) bool {
 		stderrors.Is(err, io.ErrUnexpectedEOF) ||
 		stderrors.Is(err, syscall.ECONNREFUSED) ||
 		stderrors.Is(err, syscall.ECONNRESET) ||
+		stderrors.Is(err, syscall.ETIMEDOUT) ||
 		stderrors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// A name that does not resolve is usually the vault-api Service being
+	// recreated or a resolver blip, not a route the API will never serve: the
+	// request never left the process, so repeating it is free and the expiry
+	// filter bounds how long it repeats.
+	var dnsErr *net.DNSError
+	if stderrors.As(err, &dnsErr) {
 		return true
 	}
 	var netErr net.Error

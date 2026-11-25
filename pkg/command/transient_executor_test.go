@@ -6,12 +6,13 @@ package command_test
 
 import (
 	"context"
+	"time"
 
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
-	"github.com/bborbe/log"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -19,14 +20,48 @@ import (
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
+// fakePark records what the executor asked it to park.
+type fakePark struct {
+	parked []base.Command
+	tasks  []string
+	at     []time.Time
+	err    error
+}
+
+func (f *fakePark) Park(
+	_ context.Context,
+	_ libkv.Tx,
+	command base.Command,
+	parkedAt time.Time,
+	taskIdentifier string,
+) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.parked = append(f.parked, command)
+	f.tasks = append(f.tasks, taskIdentifier)
+	f.at = append(f.at, parkedAt)
+	return nil
+}
+
+func (f *fakePark) List(context.Context) ([]command.ParkedCommand, error) { return nil, nil }
+
+func (f *fakePark) Delete(context.Context, string) error { return nil }
+
 var _ = Describe("transient-aware executor", func() {
 	var ctx context.Context
 	var schemaID cdb.SchemaID
 	var commandObject cdb.CommandObject
+	var now time.Time
+	var currentDateTime libtime.CurrentDateTimeGetter
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		schemaID = cdb.SchemaID{Group: "agent", Kind: "task", Version: "v1"}
+		now = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+		currentDateTime = libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
+			return libtime.DateTime(now)
+		})
 		commandObject = cdb.CommandObject{
 			SchemaID: schemaID,
 			Command: base.Command{
@@ -41,24 +76,14 @@ var _ = Describe("transient-aware executor", func() {
 		}
 	})
 
-	newSender := func(sent *[]cdb.ResultObject) cdb.ResultObjectSender {
-		return cdb.ResultObjectSenderFunc(
-			func(_ context.Context, resultObject cdb.ResultObject) error {
-				*sent = append(*sent, resultObject)
-				return nil
-			},
-		)
-	}
-
 	newExecutor := func(handle cdb.HandleCommandFunc) cdb.CommandObjectExecutorTx {
 		return cdb.CommandObjectExecutorTxFunc("create-task", true, handle)
 	}
 
-	It("lets a transient failure escape and publishes no result", func() {
-		// A Failure result here would tell every result-topic consumer the command
-		// is decided, while the consumer is about to retry it — and the library
-		// wrapper would then report success, committing the offset past it.
-		sent := make([]cdb.ResultObject, 0)
+	It("parks a transiently failing command and reports it as skipped", func() {
+		// Skipped, not nil: a nil return with SendResultEnabled makes cdb's wrapper
+		// publish a Success result for a command that has not executed.
+		park := &fakePark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -70,20 +95,37 @@ var _ = Describe("transient-aware executor", func() {
 				"create task: unexpected status 503",
 			)
 		})
-		wrapped := command.NewTransientAwareExecutorTx(
-			executor,
-			newSender(&sent),
-			log.DefaultSamplerFactory,
-		)
+		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
+
+		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
+		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+		Expect(park.parked).To(HaveLen(1))
+		Expect(park.parked[0].RequestID).To(Equal(base.RequestID("1234567890")))
+		Expect(park.tasks[0]).To(Equal("abc12345"))
+		Expect(park.at[0].Equal(now)).To(BeTrue())
+	})
+
+	It("propagates the error instead of skipping when the park itself fails", func() {
+		// A command that could not be parked would be lost if it were reported as
+		// skipped, so the failure must reach the consumer and roll the batch back.
+		park := &fakePark{err: errors.Errorf(ctx, "bolt is broken")}
+		executor := newExecutor(func(
+			_ context.Context,
+			_ libkv.Tx,
+			_ cdb.CommandObject,
+		) (*base.EventID, base.Event, error) {
+			return nil, nil, errors.Wrapf(ctx, vaultapi.ErrTransient, "timeout")
+		})
+		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(err).To(HaveOccurred())
-		Expect(vaultapi.IsTransient(err)).To(BeTrue())
-		Expect(sent).To(BeEmpty())
+		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+		Expect(park.parked).To(BeEmpty())
 	})
 
-	It("publishes a Failure result and reports success for a permanent failure", func() {
-		sent := make([]cdb.ResultObject, 0)
+	It("passes a permanent failure through untouched", func() {
+		park := &fakePark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -91,21 +133,16 @@ var _ = Describe("transient-aware executor", func() {
 		) (*base.EventID, base.Event, error) {
 			return nil, nil, errors.Errorf(ctx, "validate task_identifier failed")
 		})
-		wrapped := command.NewTransientAwareExecutorTx(
-			executor,
-			newSender(&sent),
-			log.DefaultSamplerFactory,
-		)
+		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
-		Expect(err).To(BeNil())
-		Expect(sent).To(HaveLen(1))
-		Expect(sent[0].Result.Success).To(BeFalse())
-		Expect(sent[0].Result.Message).To(ContainSubstring("validate task_identifier"))
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse())
+		Expect(park.parked).To(BeEmpty())
 	})
 
-	It("publishes nothing for a skipped command", func() {
-		sent := make([]cdb.ResultObject, 0)
+	It("passes a deliberate skip through untouched", func() {
+		park := &fakePark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -113,19 +150,15 @@ var _ = Describe("transient-aware executor", func() {
 		) (*base.EventID, base.Event, error) {
 			return nil, nil, errors.Wrapf(ctx, cdb.ErrCommandObjectSkipped, "cross-vault")
 		})
-		wrapped := command.NewTransientAwareExecutorTx(
-			executor,
-			newSender(&sent),
-			log.DefaultSamplerFactory,
-		)
+		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
-		Expect(err).To(BeNil())
-		Expect(sent).To(BeEmpty())
+		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeTrue())
+		Expect(park.parked).To(BeEmpty())
 	})
 
-	It("publishes a Success result when the command succeeds", func() {
-		sent := make([]cdb.ResultObject, 0)
+	It("passes success through untouched", func() {
+		park := &fakePark{}
 		executor := newExecutor(func(
 			_ context.Context,
 			_ libkv.Tx,
@@ -133,16 +166,11 @@ var _ = Describe("transient-aware executor", func() {
 		) (*base.EventID, base.Event, error) {
 			return nil, nil, nil
 		})
-		wrapped := command.NewTransientAwareExecutorTx(
-			executor,
-			newSender(&sent),
-			log.DefaultSamplerFactory,
-		)
+		wrapped := command.NewTransientAwareExecutorTx(executor, park, currentDateTime)
 
 		_, _, err := wrapped.HandleCommand(ctx, nil, commandObject)
 		Expect(err).To(BeNil())
-		Expect(sent).To(HaveLen(1))
-		Expect(sent[0].Result.Success).To(BeTrue())
+		Expect(park.parked).To(BeEmpty())
 	})
 
 	It("names the task in the retry log line", func() {
@@ -158,12 +186,16 @@ var _ = Describe("transient-aware executor", func() {
 		Expect(line).To(ContainSubstring("create-task"))
 	})
 
-	It("falls back to a dash when the payload carries no task identity", func() {
+	It("renders an absent identity as a dash rather than an empty value", func() {
 		line := command.TransientRetryMessage(
 			"update-frontmatter",
 			cdb.CommandObject{
 				SchemaID: schemaID,
-				Command:  base.Command{RequestID: "1234567890", Operation: "update-frontmatter"},
+				Command: base.Command{
+					RequestID: "1234567890",
+					Operation: "update-frontmatter",
+					Data:      base.Event{"taskIdentifier": ""},
+				},
 			},
 			errors.Errorf(ctx, "boom"),
 		)

@@ -259,7 +259,7 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		0, // default deadline
 		a.ReadbackRef,
 	)
-	commandConsumer := factory.CreateCommandConsumer(
+	commandConsumer, parkRedriver := factory.CreateCommandConsumer(
 		saramaClientProvider,
 		syncProducer,
 		db,
@@ -281,6 +281,10 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 	components := []run.Func{
 		syncLoop.Run,
 		commandConsumer,
+		// Re-drives the commands the consumer parked because the vault could not
+		// answer, so a transient vault-api failure costs a delay instead of the
+		// command.
+		parkRedriver,
 		writeVerifier.Run,
 		a.createHTTPServer(syncLoop, vaultClient),
 	}

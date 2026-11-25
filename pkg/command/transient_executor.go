@@ -12,125 +12,106 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	libkv "github.com/bborbe/kv"
-	"github.com/bborbe/log"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
 )
 
-// NewTransientAwareExecutorTx wraps one command executor so a TRANSIENT vault
-// failure is retried instead of being committed past.
+// NewTransientAwareExecutorTx wraps one command executor so a command the vault
+// could not decide is PARKED and re-driven instead of being committed past and
+// lost.
 //
-// It replaces cdb.NewCommandObjectExecutorTxResultSender for this controller,
-// because that wrapper makes every handler error look like success: it publishes
-// a Failure result and returns nil, the batch handler therefore commits its
-// transaction, and the consumer marks the offset past the command
-// (cqrs/cdb/cdb_command-object-executor-tx-result-sender.go:66). A command whose
-// vault write timed out is then gone for good — measured 2026-11-24, three
-// release tasks lost between 17:44Z and 17:51Z. cqrs' own contract
-// (docs/command-consumer.md:144) says a transient failure "should return a
-// normal error so the framework retries"; nothing in the framework does.
+// The wrapper delegates everything except one case. A command that failed
+// transiently is written to the park inside the handler's own transaction — so
+// the park and the offset commit that follows are one write — and is then
+// reported as SKIPPED: cdb's own result-sender wrapper turns ErrCommandObjectSkipped
+// into "no result, no error", the batch transaction commits, and ParkRedriver
+// re-executes the command later. Every other outcome reaches the library's wrapper
+// unchanged, so a success, a permanent failure and a deliberate skip behave
+// exactly as they did before.
 //
-// A transient error therefore escapes this wrapper (no result is published, the
-// batch transaction rolls back, the offset is not advanced, and the consumer
-// re-reads the same command). The command is retried until it succeeds or until
-// the controller's 60-minute expiry filter drops it — and that drop is visible
-// (Warning + CommandExpiredTotal), unlike the silent advance it replaces.
+// Why a park rather than a propagated error: the handler chain's result-sender
+// wrapper publishes a Failure result and returns nil for ANY handler error
+// (cqrs/cdb/cdb_command-object-executor-tx-result-sender.go:66), so today the
+// batch commits and the offset advances past the command
+// (kafka/kafka_consumer-offset.go:489-494) — that is how three release tasks were
+// lost on 2026-11-24 while vault-api timed out. cqrs' own contract
+// (docs/command-consumer.md:144) says a transient failure "should return a normal
+// error so the framework retries", but an error that escapes the batch rolls back
+// the WHOLE batch: with COMMAND_BATCH_SIZE at 100 and RetryConsumer re-entering
+// every 5 s, one flapping command would replay up to 99 already-executed commands
+// for the length of the outage — duplicate result messages and duplicate vault
+// writes, including the delta-applying increment. Parking commits the batch and
+// retries only the command that failed.
 //
-// Every other error keeps the library's behaviour exactly: ErrCommandObjectSkipped
-// publishes nothing and returns nil, and any other error publishes a Failure
-// result and returns nil.
+// Only operations that are safe to repeat may be wrapped with this: a create is
+// (an identifier that already exists is answered with ErrTaskAlreadyExists rather
+// than a second file), a delta-applying increment is not.
 func NewTransientAwareExecutorTx(
 	inner cdb.CommandObjectExecutorTx,
-	resultObjectSender cdb.ResultObjectSender,
-	logSamplerFactory log.SamplerFactory,
+	park CommandPark,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) cdb.CommandObjectExecutorTx {
-	commandOperation := inner.CommandOperation()
-	resultEnabled := inner.SendResultEnabled()
-	logSamplerFailure := logSamplerFactory.Sampler()
-	logSamplerSend := logSamplerFactory.Sampler()
 	return cdb.CommandObjectExecutorTxFunc(
-		commandOperation,
-		resultEnabled,
+		inner.CommandOperation(),
+		inner.SendResultEnabled(),
 		func(ctx context.Context, tx libkv.Tx, commandObject cdb.CommandObject) (*base.EventID, base.Event, error) {
 			resultEventID, resultEvent, resultErr := inner.HandleCommand(ctx, tx, commandObject)
-
-			if resultErr != nil && errors.Is(resultErr, cdb.CommandObjectSkippedError) {
-				glog.V(3).Infof("result returned skipped error => skip")
-				return resultEventID, resultEvent, nil
+			if resultErr == nil || errors.Is(resultErr, cdb.ErrCommandObjectSkipped) {
+				return resultEventID, resultEvent, resultErr
+			}
+			if !vaultapi.IsTransient(resultErr) {
+				return resultEventID, resultEvent, resultErr
 			}
 
-			// A transient failure is not a result. Publishing a Failure here would
-			// make the command look decided to every consumer of the result topic,
-			// while the command itself is about to be retried.
-			if vaultapi.IsTransient(resultErr) {
-				// Unconditional Warning, not V(n)-gated and not sampled: this is
-				// the line that makes a command the controller could not execute
-				// attributable from the log alone. The library's failure line
-				// (cdb_command-object-executor-tx-result-sender.go:52) names the
-				// operation and nothing else, which is why the 2026-11-24 losses
-				// could not be traced to a task.
-				glog.Warningf(
-					"%s",
-					transientRetryMessage(commandOperation, commandObject, resultErr),
-				)
-				return nil, nil, resultErr
-			}
-
-			if resultErr == nil && !resultEnabled {
-				glog.V(3).Infof("result returned no error and resultEnabled is false => skip")
-				return resultEventID, resultEvent, nil
-			}
-
-			var resultObject cdb.ResultObject
-			if resultErr != nil {
-				if logSamplerFailure.IsSample() {
-					glog.V(2).Infof(
-						"handler command '%s' failed with error: %v (task=%s vault=%s)",
-						commandOperation,
-						resultErr,
-						commandIdentity(commandObject, "taskIdentifier"),
-						commandIdentity(commandObject, "targetVault"),
-					)
-				}
-				resultObject = cdb.CreateResultObjectFailure(commandObject, resultErr)
-			} else {
-				glog.V(3).Infof(
-					"handler command '%s' successful with id '%s' and data %+v",
-					commandOperation,
-					resultEventID,
-					resultEvent,
-				)
-				resultObject = cdb.CreateResultObjectSuccess(commandObject, resultEventID, resultEvent)
-			}
-			if err := resultObjectSender.Send(ctx, resultObject); err != nil {
-				return nil, nil, errors.Wrapf(ctx, err, "send result failed")
-			}
-			if logSamplerSend.IsSample() {
-				glog.V(3).Infof(
-					"send result for request '%s' '%s' completed with success %v message: '%s' (sample)",
-					commandOperation,
-					commandObject.Command.RequestID,
-					resultObject.Result.Success,
-					resultObject.Result.Message,
+			taskIdentifier := commandIdentity(commandObject, "taskIdentifier")
+			if err := park.Park(
+				ctx,
+				tx,
+				commandObject.Command,
+				currentDateTime.Now().Time(),
+				taskIdentifier,
+			); err != nil {
+				// Without a park the command would be lost, so the error is
+				// propagated: the batch rolls back and the message is re-read.
+				// Replaying the batch is the lesser harm when the park store
+				// itself is broken.
+				return nil, nil, errors.Wrapf(
+					ctx,
+					err,
+					"park transiently failing command '%s'",
+					inner.CommandOperation(),
 				)
 			}
-			return resultEventID, resultEvent, nil
+			// Unconditional Warning, not V(n)-gated and not sampled: this is the
+			// line that makes a command the controller could not execute
+			// attributable from the log alone. The library's failure line
+			// (cdb_command-object-executor-tx-result-sender.go:52) names the
+			// operation and nothing else, which is why the 2026-11-24 losses could
+			// not be traced to a task.
+			glog.Warningf(
+				"%s",
+				transientRetryMessage(inner.CommandOperation(), commandObject, resultErr),
+			)
+			// Skipped, not nil: nil with SendResultEnabled would publish a Success
+			// result for a command that has not executed yet.
+			return nil, nil, cdb.ErrCommandObjectSkipped
 		},
 	)
 }
 
-// transientRetryMessage renders the log line for a command whose execution is
-// about to be retried. It is a separate function so the one property that
-// matters — the line names the task it could not execute — is pinned by a test
-// rather than inferred from a format string.
+// transientRetryMessage renders the log line for a command that has been parked
+// for re-drive. It is a separate function so the one property that matters — the
+// line names the task it could not execute — is pinned by a test rather than
+// inferred from a format string.
 func transientRetryMessage(
 	commandOperation base.CommandOperation,
 	commandObject cdb.CommandObject,
 	err error,
 ) string {
 	return fmt.Sprintf(
-		"command '%s' failed transiently and will be retried: task=%s vault=%s request=%s error=%v",
+		"command '%s' failed transiently and is parked for re-drive: task=%s vault=%s request=%s error=%v",
 		commandOperation,
 		commandIdentity(commandObject, "taskIdentifier"),
 		commandIdentity(commandObject, "targetVault"),
@@ -145,14 +126,14 @@ func transientRetryMessage(
 // sits in front of every operation and must not know their shapes.
 func commandIdentity(commandObject cdb.CommandObject, key base.FieldName) string {
 	value, ok := commandObject.Command.Data[key]
-	if !ok {
+	if !ok || value == nil {
 		return "-"
 	}
-	if s, ok := value.(string); ok && s != "" {
+	if s, ok := value.(string); ok {
+		if s == "" {
+			return "-"
+		}
 		return s
-	}
-	if value == nil {
-		return "-"
 	}
 	return fmt.Sprintf("%v", value)
 }

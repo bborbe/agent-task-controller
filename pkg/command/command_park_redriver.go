@@ -1,0 +1,225 @@
+// Copyright (c) 2026 Benjamin Borbe All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package command
+
+import (
+	"context"
+	"time"
+
+	"github.com/bborbe/cqrs/cdb"
+	"github.com/bborbe/errors"
+	libkv "github.com/bborbe/kv"
+	libtime "github.com/bborbe/time"
+	"github.com/golang/glog"
+
+	"github.com/bborbe/agent-task-controller/pkg/metrics"
+	"github.com/bborbe/agent-task-controller/pkg/vaultapi"
+)
+
+// Default park re-drive timings. The delay is the pause between parking a
+// command and its first re-drive attempt: an outage short enough to clear on its
+// own is then absorbed by one or two attempts instead of hammering a vault-api
+// that is already overloaded. The interval is the cadence of the whole sweep.
+const (
+	DefaultParkRedriveDelay    = 30 * time.Second
+	DefaultParkRedriveInterval = 30 * time.Second
+)
+
+// ParkRedriver re-executes commands parked by NewTransientAwareExecutorTx and
+// removes them once they are decided.
+//
+// A parked command is re-driven at most every interval and only after the park
+// is redriveDelay old, so a vault-api outage produces one attempt per interval
+// rather than a retry storm. A command still undecided when the park is
+// expireDuration old is dropped with an unconditional Error line and a
+// CommandExpiredTotal increment — the same visible terminus the expiry filter
+// gives an unprocessed message, so a command the controller could not execute is
+// never lost silently.
+type ParkRedriver interface {
+	// Run blocks until ctx is cancelled, sweeping once per interval.
+	Run(ctx context.Context) error
+	// RedriveOnce performs a single sweep. Exposed so tests do not manage tickers.
+	RedriveOnce(ctx context.Context) error
+}
+
+// NewParkRedriver builds the re-drive loop for one executor. Only operations
+// whose execution is safe to repeat are parked by the executor wrapper, so this
+// loop does not need to know which operation it is driving.
+func NewParkRedriver(
+	db libkv.DB,
+	park CommandPark,
+	executor cdb.CommandObjectExecutorTx,
+	schemaID cdb.SchemaID,
+	resultObjectSender cdb.ResultObjectSender,
+	expireDuration time.Duration,
+	redriveDelay time.Duration,
+	interval time.Duration,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	m metrics.Metrics,
+) ParkRedriver {
+	return &parkRedriver{
+		db:                 db,
+		park:               park,
+		executor:           executor,
+		schemaID:           schemaID,
+		resultObjectSender: resultObjectSender,
+		expireDuration:     expireDuration,
+		redriveDelay:       redriveDelay,
+		interval:           interval,
+		currentDateTime:    currentDateTime,
+		metrics:            m,
+	}
+}
+
+type parkRedriver struct {
+	db                 libkv.DB
+	park               CommandPark
+	executor           cdb.CommandObjectExecutorTx
+	schemaID           cdb.SchemaID
+	resultObjectSender cdb.ResultObjectSender
+	expireDuration     time.Duration
+	redriveDelay       time.Duration
+	interval           time.Duration
+	currentDateTime    libtime.CurrentDateTimeGetter
+	metrics            metrics.Metrics
+}
+
+func (r *parkRedriver) Run(ctx context.Context) error {
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+	glog.V(2).Infof(
+		"parked command re-drive started interval=%s delay=%s expire=%s",
+		r.interval,
+		r.redriveDelay,
+		r.expireDuration,
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := r.RedriveOnce(ctx); err != nil {
+				// A store failure must not tear down the controller: the parked
+				// commands are still on disk and the next tick retries them.
+				glog.Errorf("parked command re-drive tick: %v", err)
+			}
+		}
+	}
+}
+
+// RedriveOnce performs one pass over the parked commands.
+func (r *parkRedriver) RedriveOnce(ctx context.Context) error {
+	parked, err := r.park.List(ctx)
+	if err != nil {
+		return errors.Wrapf(ctx, err, "list parked commands")
+	}
+	if len(parked) == 0 {
+		return nil
+	}
+	now := r.currentDateTime.Now().Time()
+	for _, entry := range parked {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		age := now.Sub(entry.ParkedAt)
+		if age < r.redriveDelay {
+			continue
+		}
+		if age > r.expireDuration {
+			r.drop(ctx, entry)
+			continue
+		}
+		if err := r.redrive(ctx, entry); err != nil {
+			glog.Warningf(
+				"parked command %s (task=%s) re-drive failed: %v",
+				entry.Key,
+				entry.TaskIdentifier,
+				err,
+			)
+		}
+	}
+	return nil
+}
+
+// redrive executes one parked command and settles its parked entry: success and
+// a permanent failure both decide the command and publish its result, a
+// transient failure leaves it parked for the next pass.
+func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
+	commandObject := cdb.CommandObject{
+		SchemaID: r.schemaID,
+		Command:  entry.Command,
+	}
+	var resultErr error
+	if err := r.db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
+		_, _, err := r.executor.HandleCommand(ctx, tx, commandObject)
+		resultErr = err
+		return nil
+	}); err != nil {
+		return errors.Wrapf(ctx, err, "execute parked command %s", entry.Key)
+	}
+
+	switch {
+	case resultErr == nil:
+		if err := r.resultObjectSender.Send(
+			ctx,
+			cdb.CreateResultObjectSuccess(commandObject, nil, nil),
+		); err != nil {
+			return errors.Wrapf(ctx, err, "send success result for parked command %s", entry.Key)
+		}
+		if err := r.park.Delete(ctx, entry.Key); err != nil {
+			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
+		}
+		glog.Infof(
+			"parked command re-driven successfully: requestID=%s operation=%s task=%s",
+			entry.Command.RequestID,
+			entry.Command.Operation,
+			entry.TaskIdentifier,
+		)
+		return nil
+	case vaultapi.IsTransient(resultErr):
+		glog.V(2).Infof(
+			"parked command %s (task=%s) still failing transiently, keeping it parked: %v",
+			entry.Key,
+			entry.TaskIdentifier,
+			resultErr,
+		)
+		return nil
+	default:
+		if err := r.resultObjectSender.Send(
+			ctx,
+			cdb.CreateResultObjectFailure(commandObject, resultErr),
+		); err != nil {
+			return errors.Wrapf(ctx, err, "send failure result for parked command %s", entry.Key)
+		}
+		if err := r.park.Delete(ctx, entry.Key); err != nil {
+			return errors.Wrapf(ctx, err, "delete parked command %s", entry.Key)
+		}
+		glog.Warningf(
+			"parked command re-driven and failed permanently: requestID=%s operation=%s task=%s error=%v",
+			entry.Command.RequestID,
+			entry.Command.Operation,
+			entry.TaskIdentifier,
+			resultErr,
+		)
+		return nil
+	}
+}
+
+// drop discards a parked command whose re-drive window has closed. It is the
+// visible terminus: the command is gone, and the log line plus the counter say
+// which task it was.
+func (r *parkRedriver) drop(ctx context.Context, entry ParkedCommand) {
+	glog.Errorf(
+		"parked command expired and dropped without ever executing: requestID=%s operation=%s task=%s parkedAt=%s",
+		entry.Command.RequestID,
+		entry.Command.Operation,
+		entry.TaskIdentifier,
+		entry.ParkedAt.Format(time.RFC3339),
+	)
+	r.metrics.CommandExpiredTotal(string(entry.Command.Operation)).Inc()
+	if err := r.park.Delete(ctx, entry.Key); err != nil {
+		glog.Warningf("delete expired parked command %s failed: %v", entry.Key, err)
+	}
+}

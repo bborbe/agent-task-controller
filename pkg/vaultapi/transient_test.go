@@ -6,6 +6,7 @@ package vaultapi_test
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -65,6 +66,7 @@ var _ = Describe("transient classification", func() {
 		Entry("400 bad request", http.StatusBadRequest),
 		Entry("404 not found", http.StatusNotFound),
 		Entry("422 unprocessable entity", http.StatusUnprocessableEntity),
+		Entry("501 not implemented", http.StatusNotImplemented),
 	)
 
 	It("marks an unreachable vault-api as transient", func() {
@@ -78,7 +80,7 @@ var _ = Describe("transient classification", func() {
 		Expect(vaultapi.IsTransient(err)).To(BeTrue())
 	})
 
-	It("marks an expired deadline as transient but a cancelled context as not", func() {
+	It("marks an expired deadline as transient", func() {
 		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
 			w.WriteHeader(http.StatusOK)
@@ -92,12 +94,21 @@ var _ = Describe("transient classification", func() {
 		_, err := client.ReadTask(expired, "abc")
 		Expect(err).To(HaveOccurred())
 		Expect(vaultapi.IsTransient(err)).To(BeTrue())
+		// The marker must not hide the cause: callers still ask their own questions
+		// of the wrapped error.
+		Expect(stderrors.Is(err, context.DeadlineExceeded)).To(BeTrue())
+	})
 
+	It("does not mark a cancelled context as transient", func() {
 		// A cancelled context is the consumer shutting down. Retrying it would
 		// delay the shutdown and could loop the consumer through a restart.
+		server := statusServer(http.StatusOK)
+		defer server.Close()
+		client := vaultapi.NewClient(server.URL, "", "")
+
 		cancelled, cancelCancelled := context.WithCancel(ctx)
 		cancelCancelled()
-		_, err = client.ReadTask(cancelled, "abc")
+		_, err := client.ReadTask(cancelled, "abc")
 		Expect(err).To(HaveOccurred())
 		Expect(vaultapi.IsTransient(err)).To(BeFalse())
 	})
