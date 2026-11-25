@@ -92,7 +92,6 @@ var _ = Describe("parked command re-drive", func() {
 
 	newRedriver := func(executor cdb.CommandObjectExecutorTx) command.ParkRedriver {
 		return command.NewParkRedriver(
-			db,
 			park,
 			executor,
 			schemaID,

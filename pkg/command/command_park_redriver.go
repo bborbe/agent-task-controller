@@ -10,7 +10,6 @@ import (
 
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
-	libkv "github.com/bborbe/kv"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
@@ -48,7 +47,6 @@ type ParkRedriver interface {
 // whose execution is safe to repeat are parked by the executor wrapper, so this
 // loop does not need to know which operation it is driving.
 func NewParkRedriver(
-	db libkv.DB,
 	park CommandPark,
 	executor cdb.CommandObjectExecutorTx,
 	schemaID cdb.SchemaID,
@@ -60,7 +58,6 @@ func NewParkRedriver(
 	m metrics.Metrics,
 ) ParkRedriver {
 	return &parkRedriver{
-		db:                 db,
 		park:               park,
 		executor:           executor,
 		schemaID:           schemaID,
@@ -74,7 +71,6 @@ func NewParkRedriver(
 }
 
 type parkRedriver struct {
-	db                 libkv.DB
 	park               CommandPark
 	executor           cdb.CommandObjectExecutorTx
 	schemaID           cdb.SchemaID
@@ -152,13 +148,12 @@ func (r *parkRedriver) redrive(ctx context.Context, entry ParkedCommand) error {
 		Command:  entry.Command,
 	}
 	var resultErr error
-	if err := r.db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
-		_, _, err := r.executor.HandleCommand(ctx, tx, commandObject)
-		resultErr = err
-		return nil
-	}); err != nil {
-		return errors.Wrapf(ctx, err, "execute parked command %s", entry.Key)
-	}
+	// No transaction: the executor addresses the task through vault-api, so it
+	// holds no BoltDB write here on purpose. A write transaction would stay open
+	// for the length of the HTTP call — up to the client's 30 s timeout — and
+	// BoltDB serialises writers, so the consumer's own batch commits and park
+	// writes would queue behind every re-drive attempt.
+	_, _, resultErr = r.executor.HandleCommand(ctx, nil, commandObject)
 
 	switch {
 	case resultErr == nil:

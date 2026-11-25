@@ -101,7 +101,6 @@ func CreateCommandConsumer(
 	// it executes exactly the command the consumer parked, against the same vault
 	// and the same identifier->path index.
 	redriver := command.NewParkRedriver(
-		db,
 		park,
 		createTaskExecutor,
 		lib.TaskV1SchemaID,
