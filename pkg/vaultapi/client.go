@@ -303,11 +303,27 @@ func (c *client) do(
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// A refused, reset or timed-out connection is the moment's fault, not
+		// the request's: the caller must be able to retry it instead of treating
+		// the command as decided. A cancelled context is the exception — that is
+		// the consumer shutting down, and retrying would only delay it.
+		if isTransientTransportError(err) {
+			return 0, nil, errors.Wrapf(ctx, markTransient(err), "%s %s", method, path)
+		}
 		return 0, nil, errors.Wrapf(ctx, err, "%s %s", method, path)
 	}
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
+		if isTransientTransportError(readErr) {
+			return resp.StatusCode, nil, errors.Wrapf(
+				ctx,
+				markTransient(readErr),
+				"read %s %s",
+				method,
+				path,
+			)
+		}
 		return resp.StatusCode, nil, errors.Wrapf(ctx, readErr, "read %s %s", method, path)
 	}
 	return resp.StatusCode, raw, nil
@@ -331,7 +347,7 @@ func decodeTask(ctx context.Context, status int, raw []byte, what string) (*Task
 	case http.StatusUnprocessableEntity:
 		return nil, errors.Wrapf(ctx, ErrAmbiguous, "%s", what)
 	default:
-		return nil, errors.Errorf(ctx, "%s: unexpected status %d: %s", what, status, snippet(raw))
+		return nil, unexpectedStatusError(ctx, what, status, raw)
 	}
 	var task Task
 	if err := json.Unmarshal(raw, &task); err != nil {
@@ -515,7 +531,7 @@ func (c *client) PutBody(ctx context.Context, id string, body string) error {
 	case http.StatusNotFound:
 		return ErrNotFound
 	default:
-		return errors.Errorf(ctx, "put body %s: unexpected status %d: %s", id, status, snippet(raw))
+		return unexpectedStatusError(ctx, "put body "+id, status, raw)
 	}
 }
 
@@ -527,9 +543,7 @@ func (c *client) ListTasks(ctx context.Context, filter Filter) ([]Task, error) {
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, errors.Errorf(
-			ctx, "list tasks: unexpected status %d: %s", status, snippet(raw),
-		)
+		return nil, unexpectedStatusError(ctx, "list tasks", status, raw)
 	}
 	var page struct {
 		Items []Task `json:"items"`
