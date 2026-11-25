@@ -14,6 +14,7 @@ var (
 	SplitTitleToken                  = splitTitleToken
 	SupersedePriorUpdateGoTasks      = supersedePriorUpdateGoTasks
 	RecordHashForTest                = recordHash
+	TransientRetryMessage            = transientRetryMessage
 )
 
 // VerifyDueForTest runs one verification pass, so a test can assert the readback
