@@ -93,7 +93,11 @@ func CreateCommandConsumer(
 	}
 	// Composed by hand rather than through cdb.RunCommandConsumerTx; the reasons live with the
 	// composition in newCommandConsumerFunc.
-	handler := cdb.CreateCommandMessageHandlerBatch(
+	//
+	// The handler chain is composed here too, not through cdb.CreateCommandMessageHandlerBatch,
+	// because that helper turns a transient handler failure into a committed offset — see
+	// createCommandHandlerBatch.
+	handler := createCommandHandlerBatch(
 		db,
 		syncProducer,
 		lib.TaskV1SchemaID,

@@ -6,6 +6,7 @@ package factory
 
 // Test-only re-exports for the external factory_test package.
 var (
-	NewCommandOffsetManager = newCommandOffsetManager
-	NewCommandHandler       = newCommandHandler
+	NewCommandOffsetManager   = newCommandOffsetManager
+	NewCommandHandler         = newCommandHandler
+	CreateCommandHandlerBatch = createCommandHandlerBatch
 )
