@@ -80,6 +80,23 @@ var _ = Describe("transient classification", func() {
 		Expect(vaultapi.IsTransient(err)).To(BeTrue())
 	})
 
+	It("marks a truncated response body as transient", func() {
+		// The request reached the server and the status was fine; the connection
+		// died while the body was being read. Nothing was decided, so the caller
+		// must be able to retry.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "100")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"abc"`))
+		}))
+		defer server.Close()
+
+		client := vaultapi.NewClient(server.URL, "", "")
+		_, err := client.ReadTask(ctx, "abc")
+		Expect(err).To(HaveOccurred())
+		Expect(vaultapi.IsTransient(err)).To(BeTrue())
+	})
+
 	It("marks an expired deadline as transient", func() {
 		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
