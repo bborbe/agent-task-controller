@@ -26,7 +26,9 @@ import (
 // transiently is written to the park inside the handler's own transaction and is
 // then reported as SKIPPED: cdb's own result-sender wrapper turns
 // ErrCommandObjectSkipped into "no result, no error", the batch transaction
-// commits, and ParkRedriver re-executes the command later. Every other outcome
+// commits, and ParkRedriver re-executes the command later. If the park write
+// itself fails the command cannot be re-driven, so the error is returned instead
+// and the initiator receives a Failure result — see the branch below. Every other outcome
 // reaches the library's wrapper unchanged, so a success, a permanent failure and
 // a deliberate skip behave exactly as they did before.
 //
@@ -81,15 +83,22 @@ func NewTransientAwareExecutorTx(
 				currentDateTime.Now(),
 				taskIdentifier,
 			); err != nil {
-				// A command that could not be parked must not be reported as
-				// skipped: that would commit the offset past it and lose it. The
-				// error is propagated so the batch transaction rolls back and the
-				// message is re-read — replaying the batch is the lesser harm when
-				// the park store itself is broken. Logged at Error because this
-				// branch is only reached when the controller is already losing
-				// commands.
+				// The command cannot be re-driven, so the initiator is told: the error
+				// is returned (not turned into a skip) and cdb's result sender
+				// publishes a Failure result for it, which is the only recovery path
+				// left — the producer can re-publish.
+				//
+				// It does NOT roll the batch back, and saying so would be wrong: that
+				// same result sender catches every non-skip error, publishes the
+				// Failure and returns nil, so the offset still advances. This wrapper
+				// sits inside it and cannot abort the batch; the honest statement is
+				// that a park failure loses the command with a Failure result and an
+				// Error line, which is what this branch produces.
+				//
+				// It is reachable only if the BoltDB write fails, which in practice
+				// means the store the offsets also live in is already broken.
 				glog.Errorf(
-					"parking command '%s' for task=%s failed, rolling the batch back: %v",
+					"parking command '%s' for task=%s failed, the command is lost and reported as failed: %v",
 					inner.CommandOperation(),
 					taskIdentifier,
 					err,
