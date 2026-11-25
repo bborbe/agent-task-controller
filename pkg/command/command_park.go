@@ -155,6 +155,9 @@ func (p *commandPark) List(ctx context.Context) ([]ParkedCommand, error) {
 					)
 					return nil
 				}
+				// The bucket key is authoritative: a Delete by key must address the
+				// entry that was actually read, even if the stored copy disagrees.
+				entry.Key = string(item.Key())
 				result = append(result, entry)
 				return nil
 			})

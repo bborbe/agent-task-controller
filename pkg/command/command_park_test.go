@@ -110,4 +110,33 @@ var _ = Describe("command park", func() {
 	It("deletes a key that is not parked without failing", func() {
 		Expect(park.Delete(ctx, "never-parked")).To(Succeed())
 	})
+
+	It("skips an entry it cannot decode instead of failing the whole sweep", func() {
+		// A single unreadable value must not stop the other parked commands from
+		// being re-driven, and it must not be deleted — it is evidence.
+		Expect(db.Update(ctx, func(ctx context.Context, tx libkv.Tx) error {
+			bucket, err := tx.CreateBucketIfNotExists(
+				ctx,
+				libkv.NewBucketName("parked-commands"),
+			)
+			if err != nil {
+				return err
+			}
+			if err := bucket.Put(ctx, []byte("broken"), []byte("not json")); err != nil {
+				return err
+			}
+			return park.Park(
+				ctx,
+				tx,
+				commandFor("req-2", "abc12345"),
+				libtime.DateTime(now),
+				"abc12345",
+			)
+		})).To(Succeed())
+
+		parked, err := park.List(ctx)
+		Expect(err).To(Succeed())
+		Expect(parked).To(HaveLen(1))
+		Expect(parked[0].Key).To(Equal("req-2"))
+	})
 })
