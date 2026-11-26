@@ -587,16 +587,30 @@ func collapseCandidatesTyped(
 	}
 }
 
-// isRecurringTaskCommand reports whether cmd was published by the recurring-task
-// creator (created_by: recurring-task-creator). Such commands must never reopen a
-// terminal-status task file — the recurring pipeline republishes the same title
-// path every tick and the file IS the dedupe state, so a completed instance must
-// hold the slot until its period rolls. The predicate is created_by-only (unlike
-// isEligibleForSupersede, which additionally requires auto_abort_prior): monthly
-// schedules carry auto_abort_prior=false and must still be held.
+// isRecurringTaskCommand reports whether cmd's task file is its own dedupe state.
+// Such commands must never reopen a terminal-status task file — the producer
+// republishes the same title path every tick and the file IS the dedupe state,
+// so a completed instance must hold the slot until its period rolls.
+//
+// Two markers qualify. The original one is the recurring-task creator
+// (created_by: recurring-task-creator); the predicate is created_by-only for it
+// (unlike isEligibleForSupersede, which additionally requires auto_abort_prior):
+// monthly schedules carry auto_abort_prior=false and must still be held.
+//
+// The second is an explicit `recurring:` key, for producers other than the
+// creator whose file is still the dedupe state — e.g. go-version-watcher emits
+// one task per released Go version and must not re-file it once completed.
+// `recurring:` is already a first-class recurring marker in the vault's own
+// status rules, so this honours an existing convention rather than inventing one.
+// Only that key is honoured: anything without either marker keeps the previous
+// behaviour, including ReopenTerminal for a terminal file.
 func isRecurringTaskCommand(cmd task.CreateCommand) bool {
 	createdBy, _ := cmd.Frontmatter.String("created_by")
-	return createdBy == "recurring-task-creator"
+	if createdBy == "recurring-task-creator" {
+		return true
+	}
+	recurring, _ := cmd.Frontmatter.String("recurring")
+	return recurring != ""
 }
 
 // isEligibleForSupersede reports whether cmd is a recurring-task instance
