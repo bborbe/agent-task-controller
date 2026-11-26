@@ -9,6 +9,7 @@ import "context"
 // Test-only re-exports for the external command_test package.
 var (
 	BuildIncrementPatch              = buildIncrementPatch
+	IsRecurringTaskCommand           = isRecurringTaskCommand
 	ParsePeriodTokenOrdinal          = parsePeriodTokenOrdinal
 	RankSameSlugCandidatesDescending = rankSameSlugCandidatesDescending
 	SplitTitleToken                  = splitTitleToken
