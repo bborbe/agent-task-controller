@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.38.0
 
 - feat: **`isRecurringTaskCommand` also honours an explicit `recurring:` key, so a non-creator producer can own a task file whose file is its own dedupe state.** A `create-task` for a task with a terminal status normally re-materializes a fresh non-terminal task at the same path (`ReopenTerminal: true`), which is right for a one-shot command and wrong for a producer that emits one task per unit of work — `go-version-watcher` files one task per released Go version and would re-file it every day once the update task was completed. The predicate previously keyed only on `created_by: recurring-task-creator`; it now also returns true for a non-empty `recurring:` key, which is already a first-class recurring marker in the vault's own status rules. Only that key is honoured — anything carrying neither marker keeps the previous behaviour, including `ReopenTerminal` for a terminal file. `isEligibleForSupersede` is unchanged and still requires `created_by` plus `auto_abort_prior`.
 
