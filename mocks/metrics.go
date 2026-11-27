@@ -85,6 +85,28 @@ type Metrics struct {
 	kafkaConsumePausedTotalReturnsOnCall map[int]struct {
 		result1 prometheus.Counter
 	}
+	KafkaPublishFailureTotalStub        func(string) prometheus.Counter
+	kafkaPublishFailureTotalMutex       sync.RWMutex
+	kafkaPublishFailureTotalArgsForCall []struct {
+		arg1 string
+	}
+	kafkaPublishFailureTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	kafkaPublishFailureTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
+	KafkaPublishRetryTotalStub        func(string) prometheus.Counter
+	kafkaPublishRetryTotalMutex       sync.RWMutex
+	kafkaPublishRetryTotalArgsForCall []struct {
+		arg1 string
+	}
+	kafkaPublishRetryTotalReturns struct {
+		result1 prometheus.Counter
+	}
+	kafkaPublishRetryTotalReturnsOnCall map[int]struct {
+		result1 prometheus.Counter
+	}
 	OpenTasksStub        func() *prometheus.GaugeVec
 	openTasksMutex       sync.RWMutex
 	openTasksArgsForCall []struct {
@@ -599,6 +621,128 @@ func (fake *Metrics) KafkaConsumePausedTotalReturnsOnCall(i int, result1 prometh
 		})
 	}
 	fake.kafkaConsumePausedTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) KafkaPublishFailureTotal(arg1 string) prometheus.Counter {
+	fake.kafkaPublishFailureTotalMutex.Lock()
+	ret, specificReturn := fake.kafkaPublishFailureTotalReturnsOnCall[len(fake.kafkaPublishFailureTotalArgsForCall)]
+	fake.kafkaPublishFailureTotalArgsForCall = append(fake.kafkaPublishFailureTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.KafkaPublishFailureTotalStub
+	fakeReturns := fake.kafkaPublishFailureTotalReturns
+	fake.recordInvocation("KafkaPublishFailureTotal", []interface{}{arg1})
+	fake.kafkaPublishFailureTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) KafkaPublishFailureTotalCallCount() int {
+	fake.kafkaPublishFailureTotalMutex.RLock()
+	defer fake.kafkaPublishFailureTotalMutex.RUnlock()
+	return len(fake.kafkaPublishFailureTotalArgsForCall)
+}
+
+func (fake *Metrics) KafkaPublishFailureTotalCalls(stub func(string) prometheus.Counter) {
+	fake.kafkaPublishFailureTotalMutex.Lock()
+	defer fake.kafkaPublishFailureTotalMutex.Unlock()
+	fake.KafkaPublishFailureTotalStub = stub
+}
+
+func (fake *Metrics) KafkaPublishFailureTotalArgsForCall(i int) string {
+	fake.kafkaPublishFailureTotalMutex.RLock()
+	defer fake.kafkaPublishFailureTotalMutex.RUnlock()
+	argsForCall := fake.kafkaPublishFailureTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) KafkaPublishFailureTotalReturns(result1 prometheus.Counter) {
+	fake.kafkaPublishFailureTotalMutex.Lock()
+	defer fake.kafkaPublishFailureTotalMutex.Unlock()
+	fake.KafkaPublishFailureTotalStub = nil
+	fake.kafkaPublishFailureTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) KafkaPublishFailureTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.kafkaPublishFailureTotalMutex.Lock()
+	defer fake.kafkaPublishFailureTotalMutex.Unlock()
+	fake.KafkaPublishFailureTotalStub = nil
+	if fake.kafkaPublishFailureTotalReturnsOnCall == nil {
+		fake.kafkaPublishFailureTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.kafkaPublishFailureTotalReturnsOnCall[i] = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) KafkaPublishRetryTotal(arg1 string) prometheus.Counter {
+	fake.kafkaPublishRetryTotalMutex.Lock()
+	ret, specificReturn := fake.kafkaPublishRetryTotalReturnsOnCall[len(fake.kafkaPublishRetryTotalArgsForCall)]
+	fake.kafkaPublishRetryTotalArgsForCall = append(fake.kafkaPublishRetryTotalArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.KafkaPublishRetryTotalStub
+	fakeReturns := fake.kafkaPublishRetryTotalReturns
+	fake.recordInvocation("KafkaPublishRetryTotal", []interface{}{arg1})
+	fake.kafkaPublishRetryTotalMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Metrics) KafkaPublishRetryTotalCallCount() int {
+	fake.kafkaPublishRetryTotalMutex.RLock()
+	defer fake.kafkaPublishRetryTotalMutex.RUnlock()
+	return len(fake.kafkaPublishRetryTotalArgsForCall)
+}
+
+func (fake *Metrics) KafkaPublishRetryTotalCalls(stub func(string) prometheus.Counter) {
+	fake.kafkaPublishRetryTotalMutex.Lock()
+	defer fake.kafkaPublishRetryTotalMutex.Unlock()
+	fake.KafkaPublishRetryTotalStub = stub
+}
+
+func (fake *Metrics) KafkaPublishRetryTotalArgsForCall(i int) string {
+	fake.kafkaPublishRetryTotalMutex.RLock()
+	defer fake.kafkaPublishRetryTotalMutex.RUnlock()
+	argsForCall := fake.kafkaPublishRetryTotalArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Metrics) KafkaPublishRetryTotalReturns(result1 prometheus.Counter) {
+	fake.kafkaPublishRetryTotalMutex.Lock()
+	defer fake.kafkaPublishRetryTotalMutex.Unlock()
+	fake.KafkaPublishRetryTotalStub = nil
+	fake.kafkaPublishRetryTotalReturns = struct {
+		result1 prometheus.Counter
+	}{result1}
+}
+
+func (fake *Metrics) KafkaPublishRetryTotalReturnsOnCall(i int, result1 prometheus.Counter) {
+	fake.kafkaPublishRetryTotalMutex.Lock()
+	defer fake.kafkaPublishRetryTotalMutex.Unlock()
+	fake.KafkaPublishRetryTotalStub = nil
+	if fake.kafkaPublishRetryTotalReturnsOnCall == nil {
+		fake.kafkaPublishRetryTotalReturnsOnCall = make(map[int]struct {
+			result1 prometheus.Counter
+		})
+	}
+	fake.kafkaPublishRetryTotalReturnsOnCall[i] = struct {
 		result1 prometheus.Counter
 	}{result1}
 }
