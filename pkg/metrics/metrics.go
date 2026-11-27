@@ -18,6 +18,13 @@ import (
 type Metrics interface {
 	ScanCyclesTotal(outcome string) prometheus.Counter
 	TasksPublishedTotal(outcome string) prometheus.Counter
+	// KafkaPublishRetryTotal counts each retry the retry publisher performs, by
+	// event type ("changed" | "deleted").
+	KafkaPublishRetryTotal(outcome string) prometheus.Counter
+	// KafkaPublishFailureTotal counts publishes that exhausted the retry budget,
+	// by event type ("changed" | "deleted"). A non-zero value is the same failure
+	// the sync loop treats as fatal, observed at the publisher instead.
+	KafkaPublishFailureTotal(outcome string) prometheus.Counter
 	PlanningRetryTotal(result string) prometheus.Counter
 	ResultsWrittenTotal(outcome string) prometheus.Counter
 	GitPushTotal(outcome string) prometheus.Counter
@@ -61,6 +68,14 @@ func (m *defaultMetrics) ScanCyclesTotal(outcome string) prometheus.Counter {
 
 func (m *defaultMetrics) TasksPublishedTotal(outcome string) prometheus.Counter {
 	return TasksPublishedTotal.WithLabelValues(outcome)
+}
+
+func (m *defaultMetrics) KafkaPublishRetryTotal(outcome string) prometheus.Counter {
+	return KafkaPublishRetryTotal.WithLabelValues(outcome)
+}
+
+func (m *defaultMetrics) KafkaPublishFailureTotal(outcome string) prometheus.Counter {
+	return KafkaPublishFailureTotal.WithLabelValues(outcome)
 }
 
 func (m *defaultMetrics) PlanningRetryTotal(result string) prometheus.Counter {
@@ -137,6 +152,28 @@ var TasksPublishedTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "agent_controller_tasks_published_total",
 		Help: "Total number of task events published.",
+	},
+	[]string{"type"},
+)
+
+// KafkaPublishRetryTotal counts each retry the retry publisher performs, by
+// event type ("changed" | "deleted"). It is the series that shows a transient
+// Kafka outage being absorbed rather than reaching the sync loop's fatal path.
+var KafkaPublishRetryTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_kafka_publish_retry_total",
+		Help: "Total number of task-event publish retries performed, by event type.",
+	},
+	[]string{"type"},
+)
+
+// KafkaPublishFailureTotal counts publishes that exhausted the retry budget, by
+// event type ("changed" | "deleted"). A non-zero reading is the same failure the
+// sync loop treats as fatal, counted here at the point the budget ran out.
+var KafkaPublishFailureTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "agent_controller_kafka_publish_failure_total",
+		Help: "Total number of task-event publishes that exhausted the retry budget, by event type.",
 	},
 	[]string{"type"},
 )
@@ -447,6 +484,11 @@ func init() {
 	TasksPublishedTotal.WithLabelValues("changed").Add(0)
 	TasksPublishedTotal.WithLabelValues("deleted").Add(0)
 	TasksPublishedTotal.WithLabelValues("redrive").Add(0)
+
+	KafkaPublishRetryTotal.WithLabelValues("changed").Add(0)
+	KafkaPublishRetryTotal.WithLabelValues("deleted").Add(0)
+	KafkaPublishFailureTotal.WithLabelValues("changed").Add(0)
+	KafkaPublishFailureTotal.WithLabelValues("deleted").Add(0)
 
 	ResultsWrittenTotal.WithLabelValues("success").Add(0)
 	ResultsWrittenTotal.WithLabelValues("not_found").Add(0)
