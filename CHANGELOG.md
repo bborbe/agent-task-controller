@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/IBM/sarama to v1.62.0, github.com/bborbe/agent to v0.149.0, github.com/bborbe/argument/v2 to v2.13.13, github.com/bborbe/boltkv to v1.17.1, github.com/bborbe/cqrs to v0.6.18, github.com/bborbe/errors to v1.7.1, github.com/bborbe/http to v1.28.1, github.com/bborbe/kafka to v1.30.4, github.com/bborbe/kv to v1.21.31, github.com/bborbe/log to v1.7.10, github.com/bborbe/metrics to v0.6.15, github.com/bborbe/notification to v0.7.13, github.com/bborbe/run to v1.13.0, github.com/bborbe/sentry to v1.11.1, github.com/bborbe/service to v1.12.2, github.com/bborbe/time to v1.27.30, github.com/bborbe/validation to v1.5.12, github.com/bborbe/vault-cli to v0.200.6, github.com/onsi/ginkgo/v2 to v2.34.0
+
 ## v0.38.0
 
 - feat: **`isRecurringTaskCommand` also honours an explicit `recurring:` key, so a non-creator producer can own a task file whose file is its own dedupe state.** A `create-task` for a task with a terminal status normally re-materializes a fresh non-terminal task at the same path (`ReopenTerminal: true`), which is right for a one-shot command and wrong for a producer that emits one task per unit of work — `go-version-watcher` files one task per released Go version and would re-file it every day once the update task was completed. The predicate previously keyed only on `created_by: recurring-task-creator`; it now also returns true for a non-empty `recurring:` key, which is already a first-class recurring marker in the vault's own status rules. Only that key is honoured — anything carrying neither marker keeps the previous behaviour, including `ReopenTerminal` for a terminal file. `isEligibleForSupersede` is unchanged and still requires `created_by` plus `auto_abort_prior`.
