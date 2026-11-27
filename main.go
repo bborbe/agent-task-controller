@@ -175,11 +175,15 @@ func (a *application) Run(ctx context.Context, sentryClient libsentry.Client) er
 		autoInject,
 		scanner.NewVaultScanner,
 	)
-	taskPublisher := publisher.NewTaskPublisher(
-		eventObjectSender,
-		lib.TaskV1SchemaID,
-		currentDateTime,
-		a.VaultName,
+	taskPublisher := publisher.NewRetryTaskPublisher(
+		publisher.NewTaskPublisher(
+			eventObjectSender,
+			lib.TaskV1SchemaID,
+			currentDateTime,
+			a.VaultName,
+		),
+		metrics.New(),
+		run.NewWaiter(),
 	)
 	syncLoop := pkgsync.NewSyncLoop(
 		vaultScanner,

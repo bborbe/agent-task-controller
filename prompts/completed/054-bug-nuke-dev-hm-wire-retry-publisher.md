@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [bug-nuke-dev-hm]
+summary: Wired publisher.NewRetryTaskPublisher around the shared TaskPublisher in main.go (inherited by the sync loop, re-drive sweep, and result writer) and recorded the fix under CHANGELOG's Unreleased section.
+execution_id: 14db784a-3d7e-5b65-95cf-4df070e1e0b5-exec-054-bug-nuke-dev-hm-wire-retry-publisher
+dark-factory-version: dev
 created: "2026-11-27T08:00:00Z"
 queued: "2026-11-27T08:01:46Z"
+started: "2026-11-27T08:14:04Z"
+completed: "2026-11-27T08:19:42Z"
 ---
 
 # Wire the retry publisher into main and record the fix in the changelog
